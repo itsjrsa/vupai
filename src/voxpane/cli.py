@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,20 +20,60 @@ from voxpane.router import name_collides
 from voxpane.tmuxio import TmuxError
 
 PIDFILE: Path = Path.home() / ".config" / "voxpane" / "daemon.pid"
-DAEMON_CMD = f"{sys.executable} -m voxpane _daemon"
+DAEMON_LOG: Path = Path.home() / ".config" / "voxpane" / "daemon.log"
+
+
+def _daemon_running() -> bool:
+    """True if a daemon pid is recorded and that process is still alive."""
+    if not PIDFILE.exists():
+        return False
+    try:
+        pid = int(PIDFILE.read_text().strip())
+    except ValueError:
+        return False
+    try:
+        os.kill(pid, 0)  # signal 0: existence check, doesn't actually signal
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # alive but owned by someone else (shouldn't happen)
+    return True
+
+
+def _spawn_daemon() -> None:
+    """Launch the daemon as a detached background process.
+
+    CRITICAL: the daemon must NOT run inside a tmux window. A global pynput key
+    listener only receives events if its macOS "responsible process" holds Input
+    Monitoring + Accessibility. Inside tmux the responsible process is the long-
+    lived tmux server (which lacks those grants), so the hotkey silently never
+    fires. Spawned here, the daemon's responsible process is the terminal app
+    that launched `voxpane`, which the user already granted - so the hotkey works.
+    """
+    PIDFILE.parent.mkdir(parents=True, exist_ok=True)
+    # Append the daemon's stdout/stderr to a log the user can tail; the fd is
+    # inherited by the child and our copy is released when this process exits.
+    log = open(DAEMON_LOG, "a")  # noqa: SIM115 - handed to the child process
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "voxpane", "_daemon"],
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,  # detach from our controlling terminal
+    )
+    # Record the pid now (the child also writes it) to avoid a double-spawn race.
+    PIDFILE.write_text(str(proc.pid))
 
 
 def ensure_up() -> None:
-    """Start the tmux server, enable pane titles, and ensure the voice daemon window exists."""
-    cfg = load_config()
+    """Start the tmux server, enable pane titles, and ensure the voice daemon is running."""
     if not tmuxio.server_running():
         # Start a detached server. NOTE: tmuxio.run() already prepends "tmux",
         # so the argv must NOT include it again.
         tmuxio.run(["new-session", "-d", "-s", "voxpane"])
     tmuxio.enable_pane_titles()
     tmuxio.set_extended_keys_off()
-    if not tmuxio.window_exists(cfg.voice_window_name):
-        tmuxio.new_window(cfg.voice_window_name, DAEMON_CMD)
+    if not _daemon_running():
+        _spawn_daemon()
 
 
 # ---------------------------------------------------------------------------
@@ -75,8 +116,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
     for p in registry.panes:
         active = "*" if p.active else " "
         print(f"  {active} {p.id} [{p.window}/{p.index}] {p.name or '-'} ({p.command})")
-    if PIDFILE.exists():
+    if _daemon_running():
         print(f"daemon: running (pid {PIDFILE.read_text().strip()})")
+        print(f"  log: {DAEMON_LOG}  (tail -f to watch)")
     else:
         print("daemon: not running")
     status = check_permissions()

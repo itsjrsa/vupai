@@ -16,6 +16,7 @@ class FakeTmux:
         self._focused = focused
         self._kill_window_raises = kill_window_raises
         self.calls: list[tuple] = []
+        self.daemon_spawns: list = []
 
     def server_running(self) -> bool:
         return self._server
@@ -59,39 +60,64 @@ def fake_env(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "tmuxio", ft)
     pidfile = tmp_path / "daemon.pid"
     monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    # Don't launch a real background process or probe a real pid in unit tests.
+    monkeypatch.setattr(cli, "_daemon_running", lambda: False)
+    monkeypatch.setattr(cli, "_spawn_daemon", lambda: ft.daemon_spawns.append(True))
     return ft, pidfile
 
 
-def test_up_creates_voice_window_when_absent(fake_env):
+def test_up_spawns_daemon_when_not_running(fake_env):
     ft, pidfile = fake_env
     rc = cli.main(["up"])
     assert rc == 0
-    names = [c for c in ft.calls if c[0] == "new_window"]
-    assert names and names[0][1] == "voice"
-    # Fix 3: DAEMON_CMD must use the venv interpreter (sys.executable).
-    assert names[0][2].startswith(sys.executable)
-    assert names[0][2].endswith("-m voxpane _daemon")
+    # The daemon runs as a detached background process, NOT in a tmux window.
+    assert ft.daemon_spawns == [True]
+    assert not any(c[0] == "new_window" for c in ft.calls)
     assert ("enable_pane_titles",) in ft.calls
 
 
-def test_up_skips_window_when_present(fake_env):
+def test_up_skips_spawn_when_daemon_already_running(fake_env, monkeypatch):
     ft, pidfile = fake_env
-    ft.windows.add("voice")
+    monkeypatch.setattr(cli, "_daemon_running", lambda: True)
     rc = cli.main(["up"])
     assert rc == 0
-    assert not any(c[0] == "new_window" for c in ft.calls)
+    assert ft.daemon_spawns == []
 
 
 def test_up_starts_server_when_down(monkeypatch, tmp_path):
     ft = FakeTmux(server=False, windows=set())
     monkeypatch.setattr(cli, "tmuxio", ft)
     monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
+    monkeypatch.setattr(cli, "_daemon_running", lambda: False)
+    monkeypatch.setattr(cli, "_spawn_daemon", lambda: None)
     rc = cli.main(["up"])
     assert rc == 0
     # new-session issued via tmuxio.run WITHOUT a redundant leading "tmux"
     run_calls = [c for c in ft.calls if c[0] == "run"]
     assert ["new-session", "-d", "-s", "voxpane"] in [list(c[1]) for c in run_calls]
     assert all(c[1][0] != "tmux" for c in run_calls)  # run() prepends tmux itself
+
+
+def test_spawn_daemon_uses_venv_interpreter_and_detaches(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
+    monkeypatch.setattr(cli, "DAEMON_LOG", tmp_path / "daemon.log")
+    captured = {}
+
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            captured["argv"] = argv
+            captured["kwargs"] = kwargs
+            self.pid = 4321
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
+    cli._spawn_daemon()
+    # Must use the venv interpreter so the daemon imports voxpane's deps.
+    assert captured["argv"][0] == sys.executable
+    assert captured["argv"][1:] == ["-m", "voxpane", "_daemon"]
+    # Must detach from the controlling terminal.
+    assert captured["kwargs"].get("start_new_session") is True
+    # pid recorded for `down`/`status`.
+    assert (tmp_path / "daemon.pid").read_text().strip() == "4321"
 
 
 def test_default_no_subcommand_attaches(fake_env):
@@ -238,6 +264,7 @@ def test_status_prints_panes_and_pidfile_and_permissions(fake_env, monkeypatch, 
     from voxpane.permissions import PermissionStatus
     ft, pidfile = fake_env
     pidfile.write_text("999")
+    monkeypatch.setattr(cli, "_daemon_running", lambda: True)
     _stub_registry(monkeypatch, [_pane("alpha", "%1"), _pane("beta", "%2")])
     monkeypatch.setattr(
         cli, "check_permissions",
