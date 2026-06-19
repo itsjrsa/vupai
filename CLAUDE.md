@@ -2,54 +2,99 @@
 
 Push-to-talk voice control over a tmux-based multi-agent workflow on macOS.
 Hold a hotkey, speak, and the transcript is injected into the right tmux pane —
-either the focused one, or an agent addressed by name ("Nova, run the tests").
+the focused one by default, or an agent addressed by name ("Nova, run the tests").
 
 ## Status
 
-Design phase — no code yet. Full design spec lives at
-`docs/superpowers/specs/2026-06-19-voice-tmux-control-design.md`
-(**local-only**, see Conventions).
+v1 implemented and on `master` (127 unit tests pass, `ruff` clean). Validated by
+**unit tests only** — the `@integration` (real tmux) and `@slow` (real Parakeet
+model + mic) suites and the live daemon must run on a macOS Apple-Silicon machine.
+The design spec + implementation plan live under `docs/superpowers/`
+(**local-only, gitignored** — see Conventions).
 
-## Locked decisions (do not re-litigate)
+## Commands
 
-- **Hybrid routing**: speech → focused pane by default; a leading agent-name overrides.
-- **Push-to-talk**, hold-to-talk (hold **Right-Option**). No wake word.
-- **Voice input only** for v1; TTS deferred.
-- **Python daemon** — not Swift/native, not a browser app.
-- **ASR**: `parakeet-mlx` running `parakeet-tdt-0.6b-v3`, kept warm/resident.
-- **v1 targets Claude Code panes only** (Codex/OpenCode have known send-keys submit bugs).
-- **Startup**: `vtmux` wrapper boots tmux + a visible `🎙 voice` daemon window + attaches.
+```bash
+uv sync                                              # install deps (or: uv pip install -e .)
+uv run pytest -m "not integration and not slow" -q   # unit suite (no tmux/mic/model)
+uv run pytest -m integration -q                      # needs a real tmux (isolated -L socket)
+uv run pytest -m slow -q                             # needs the real Parakeet model + a wav fixture
+uv run ruff check .                                  # lint
+vtmux doctor                                         # check macOS permissions, print fix steps
+```
+
+`vtmux` CLI (entry point `vtmux.cli:main`):
+- `vtmux` — ensure tmux + the voice daemon window, then attach (default, no subcommand)
+- `vtmux up` / `vtmux down` — start / stop the daemon (`down` also kills the voice window)
+- `vtmux name <name> [pane]` — label a pane (rejects confusable names; defaults to focused)
+- `vtmux status` — list panes, daemon pid, permission state
+- `vtmux _daemon` — hidden; the long-running process the voice window executes
 
 ## Architecture
 
-Single local daemon, small modules behind narrow interfaces:
+Single local daemon, small modules behind narrow interfaces. Pipeline:
 
 ```
 hotkey → recorder → asr → router → injector → feedback   (+ tmux pane registry)
 ```
 
-Talks to tmux via the `tmux` CLI; the hotkey is global (`pynput`), so the daemon
-never owns the terminal. See the spec for component interfaces and data flow.
+| File | Responsibility |
+|---|---|
+| `src/vtmux/cli.py`, `__main__.py` | `vtmux` subcommands; `ensure_up`; spawns the daemon |
+| `src/vtmux/daemon.py` | orchestrates press→record→transcribe→route→inject→feedback |
+| `src/vtmux/hotkey.py` | global push-to-talk via `pynput`, debounced (Right-Option) |
+| `src/vtmux/recorder.py` | `sox rec` → wav, SIGINT to stop; exports `MIN_WAV_BYTES` |
+| `src/vtmux/asr.py` | `parakeet-mlx` `Transcriber` Protocol, lazy `warm()` + cache |
+| `src/vtmux/router.py` | name cascade exact→rapidfuzz→metaphone, number-in-window, focus fallback, near-tie ambiguity |
+| `src/vtmux/registry.py` | `Pane` + `PaneRegistry` parsed from `tmux list-panes` |
+| `src/vtmux/injector.py` | paste → poll `capture-pane` → Enter (the safety core) |
+| `src/vtmux/tmuxio.py` | thin exact-argv wrappers over the `tmux` CLI |
+| `src/vtmux/feedback.py` | status to stdout / `display-message` on the target pane |
+| `src/vtmux/permissions.py` | best-effort macOS permission probes + `hints` |
+| `src/vtmux/config.py` | TOML config at `~/.config/vtmux/config.toml` + defaults |
 
-**Critical injection rule:** paste via `tmux paste-buffer -p`, then **poll
-`capture-pane` until the pasted text appears before sending Enter** (avoids the
-submit race). Keep tmux `extended-keys` *off* for the injector; target immutable
-`pane_id` (`%N`), never a shiftable index.
+The daemon reaches tmux only through `tmuxio` (the `tmux` CLI); the hotkey is
+global, so the daemon never owns the terminal.
 
-## Stack
+## Invariants & gotchas (don't break these)
 
-Python ≥ 3.11 · `parakeet-mlx` · `pynput` · `rapidfuzz` · `Metaphone` · `sox` · `tmux`.
-macOS 26 (Darwin 25), Apple Silicon. Requires **Accessibility + Input-Monitoring +
-Microphone** permissions granted to the terminal app (silent-fails otherwise).
+- **Injection safety:** `injector.inject` pastes, then **polls `capture-pane`
+  until the pasted text appears before sending Enter** — never a fixed sleep,
+  retries once, and **never sends Enter on an unconfirmed paste**. This is the
+  single most important property; it has dedicated tests.
+- **`tmuxio.run(args)` prepends `tmux`** — callers pass argv WITHOUT a leading `"tmux"`.
+- **Target the immutable `pane_id` (`%N`)**, never a positional index.
+- **Keep tmux `extended-keys` off** (set in `ensure_up`) so Enter submits in Claude Code.
+- **Unnamed panes:** tmux titles an untitled pane with its own id (`%1`). Router
+  name-matching and the ASR hints **skip panes where `name == id`**; number
+  routing still considers them.
+- **ASR is kept warm** (model loaded once via `warm()`); the first call is otherwise multi-second.
+- **macOS permissions** (Accessibility + Input-Monitoring + Microphone) are granted
+  to the *terminal app*, not the script — they silent-fail otherwise. Use `vtmux doctor`.
+- Tests inject collaborators (`io=`, `lister=`, `route_fn=`, `recorder_factory=`…)
+  so units run with fakes — no real tmux/mic/model in the unit suite.
+
+## Design decisions (settled rationale)
+
+Hybrid routing (focus default + leading-name override) · push-to-talk, hold
+Right-Option, no wake word · voice input only (TTS deferred) · Python daemon (not
+Swift/native, not a browser app) · Parakeet via `parakeet-mlx` · **v1 drives Claude
+Code panes only** (Codex/OpenCode have known send-keys submit bugs).
 
 ## Conventions
 
-- Spec/plan docs under `docs/superpowers/` are **local-only — never commit them**
-  (gitignored). Keep them on disk for reference.
-- Code comments in English.
-- TDD: tests first — especially the router cascade (exact → rapidfuzz → metaphone),
-  the `list-panes` registry parser, and the injector's poll-then-Enter loop.
+- Spec/plan docs under `docs/superpowers/` (and `.superpowers/` SDD scratch) are
+  **local-only — never commit them** (gitignored). When a skill says "commit the
+  design/plan doc," skip that step in this repo.
+- Code comments in English. TDD with pytest; frequent small commits.
+- Conventional commit messages, **no Claude attribution / co-authored-by lines**.
+  Never push to `master` without asking.
 
-## Commands
+## Known limitations / deferred
 
-None yet (no code). Added as the implementation lands.
+- **ASR name biasing is a no-op** — the installed `parakeet-mlx` `transcribe()` has
+  no `hotwords` kwarg, so `asr.py` forwards-then-falls-back. Router name-matching is
+  unaffected. For real biasing, swap the `Transcriber` to whisper.cpp/faster-whisper
+  with `initial_prompt` (the Protocol keeps this contained).
+- `router.route`'s `ambiguity_margin` is hardcoded (5); not exposed in `Config`.
+- `tests/fixtures/tiny.wav` is absent → the `@slow` smoke test self-skips.
