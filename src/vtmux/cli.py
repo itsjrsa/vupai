@@ -51,18 +51,20 @@ def _cmd_default(args: argparse.Namespace) -> int:
 
 
 def _cmd_down(args: argparse.Namespace) -> int:
-    if not PIDFILE.exists():
-        return 0
-    try:
-        pid = int(PIDFILE.read_text().strip())
-        os.kill(pid, signal.SIGTERM)
-    except (ValueError, ProcessLookupError):
-        pass
+    # Terminate the daemon process if we recorded its pid.
+    if PIDFILE.exists():
+        try:
+            pid = int(PIDFILE.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+        except (ValueError, ProcessLookupError):
+            pass
+        PIDFILE.unlink(missing_ok=True)
+    # Always tear down the voice window so a later `up` can recreate the daemon,
+    # even when the pidfile is missing/stale (orphaned window).
     try:
         tmuxio.kill_window(load_config().voice_window_name)
     except TmuxError:
         pass
-    PIDFILE.unlink(missing_ok=True)
     return 0
 
 

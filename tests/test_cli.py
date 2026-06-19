@@ -200,11 +200,19 @@ def test_down_kills_window_even_if_missing(monkeypatch, tmp_path):
     assert not pidfile.exists()
 
 
-def test_down_no_pidfile_is_noop(monkeypatch, tmp_path):
-    monkeypatch.setattr(cli, "tmuxio", FakeTmux())
+def test_down_kills_orphaned_window_without_pidfile(monkeypatch, tmp_path):
+    # No pidfile (daemon crashed before writing it, or it was removed), but the
+    # voice window may still be alive: down must still tear it down so a later
+    # `up` can recreate the daemon.
+    ft = FakeTmux(server=True)
+    monkeypatch.setattr(cli, "tmuxio", ft)
     monkeypatch.setattr(cli, "PIDFILE", tmp_path / "missing.pid")
+    killed: list = []
+    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: killed.append((pid, sig)))
     rc = cli.main(["down"])
     assert rc == 0
+    assert killed == []                        # no pid -> no os.kill
+    assert ("kill_window", "voice") in ft.calls
 
 
 # ---------------------------------------------------------------------------
