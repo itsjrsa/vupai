@@ -1,7 +1,15 @@
 from pathlib import Path
 
+import pytest
+
 from voxpane import permissions
 from voxpane.permissions import PermissionStatus, check_permissions, hints
+
+
+@pytest.fixture(autouse=True)
+def _no_real_sleep(monkeypatch):
+    # Keep the mic-probe's capture wait from actually sleeping in unit tests.
+    monkeypatch.setattr(permissions.time, "sleep", lambda *_a, **_k: None)
 
 
 class _FakeRecorder:
@@ -76,6 +84,36 @@ def test_listener_probe_failure_sets_both_gates_false(tmp_path, monkeypatch):
     status = check_permissions(recorder_factory=_factory(big_wav, 50_000))
     assert status.input_monitoring is False
     assert status.accessibility is False
+
+
+def test_microphone_probe_records_before_stopping(tmp_path, monkeypatch):
+    # Regression: the probe must let sox capture audio BETWEEN start and stop,
+    # else the wav is header-only and reads as "no mic" even when granted.
+    events: list[str] = []
+
+    class _OrderRecorder:
+        def __init__(self, wav: Path) -> None:
+            self._wav = wav
+
+        def start(self) -> None:
+            events.append("start")
+            self._wav.write_bytes(b"\x00" * 50_000)
+
+        def stop(self) -> Path:
+            events.append("stop")
+            return self._wav
+
+    monkeypatch.setattr(permissions, "_probe_listener", lambda: True)
+    monkeypatch.setattr(permissions.time, "sleep",
+                        lambda s, **_k: events.append(f"sleep:{s}"))
+    wav = tmp_path / "m.wav"
+    status = check_permissions(recorder_factory=lambda: _OrderRecorder(wav))
+
+    assert status.microphone is True
+    assert events[0] == "start" and events[-1] == "stop"
+    sleeps = [e for e in events[1:-1] if e.startswith("sleep:")]
+    assert sleeps, "probe must wait between start and stop so audio is captured"
+    assert float(sleeps[0].split(":")[1]) >= 0.2
 
 
 def test_hints_all_true_is_empty():

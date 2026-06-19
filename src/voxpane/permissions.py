@@ -10,6 +10,7 @@ and grant manually.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -24,15 +25,28 @@ class PermissionStatus:
     accessibility: bool
 
 
-def _probe_microphone(recorder_factory: Callable[[], Recorder]) -> bool:
-    """Record a very short clip and assert the wav is non-trivial in size.
+# The mic probe must actually let sox capture audio before stopping. With no
+# wait, the recorder is SIGINT'd before it records anything and writes a
+# header-only WAV, which then reads as "no mic" even when permission IS granted.
+_PROBE_SECONDS = 0.5
 
-    If sox cannot access the mic (permission denied) the resulting file is empty
-    or header-only. Any exception during record/stop is treated as a failure.
+
+def _probe_microphone(recorder_factory: Callable[[], Recorder]) -> bool:
+    """Record a short clip and assert the wav is non-trivial in size.
+
+    Start the recorder, let it capture for ``_PROBE_SECONDS`` (so sox writes real
+    samples), then stop and size-check the file. If sox cannot access the mic the
+    recorder raises or the file stays header-only. Any exception during
+    record/stop is treated as a failure.
+
+    Caveat (best-effort): if macOS feeds *silence* to a denied app instead of
+    erroring, the file is still full-size, so this cannot distinguish "granted"
+    from "denied-but-silent" — which is why we always print the Settings path.
     """
     try:
         recorder = recorder_factory()
         recorder.start()
+        time.sleep(_PROBE_SECONDS)
         wav_path = recorder.stop()
     except Exception:
         return False
