@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 
-from vtmux import tmuxio
+from voxpane import tmuxio
 
 _NEEDLE_MAX = 40  # use the trailing <=40 chars of the last line as the confirmation needle
 

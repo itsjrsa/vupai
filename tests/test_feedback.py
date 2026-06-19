@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
-from vtmux.feedback import Feedback
-from vtmux.router import Route
+from voxpane.feedback import Feedback
+from voxpane.router import Route
 
 
 @dataclass

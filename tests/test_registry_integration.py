@@ -4,8 +4,8 @@ import uuid
 
 import pytest
 
-from vtmux import tmuxio
-from vtmux.registry import PaneRegistry
+from voxpane import tmuxio
+from voxpane.registry import PaneRegistry
 
 pytestmark = pytest.mark.integration
 
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.integration
 def tmux_session():
     if shutil.which("tmux") is None:
         pytest.skip("tmux not installed")
-    session = "vtmux-it-" + uuid.uuid4().hex[:8]
+    session = "voxpane-it-" + uuid.uuid4().hex[:8]
     # Detached session so the test never grabs the terminal.
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", session, "-n", "main"],

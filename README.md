@@ -1,4 +1,4 @@
-# vtmux
+# voxpane
 
 > Push-to-talk voice control for your tmux agent panes — on macOS, fully local.
 
@@ -21,7 +21,7 @@ hold Right-Option → record (sox) → transcribe (Parakeet) → route → paste
   you start with an agent's **name**, it goes there instead — even when it isn't
   focused. Say a **number** (*"two, …"*) to hit a pane by its position in the
   current window.
-- **Injection is safe.** vtmux pastes your text and waits until it actually
+- **Injection is safe.** voxpane pastes your text and waits until it actually
   appears in the pane before pressing Enter — it never blindly submits.
 - **Local & private.** The model runs on your Mac; nothing leaves the machine.
 
@@ -44,12 +44,12 @@ The Parakeet model (~0.6B, ~2 GB) downloads automatically on first transcription
 
 ## Grant macOS permissions (once)
 
-vtmux needs three permissions, granted to **your terminal app**
+voxpane needs three permissions, granted to **your terminal app**
 (Ghostty / iTerm / Terminal / …), under **System Settings → Privacy & Security**:
 **Accessibility**, **Input Monitoring**, and **Microphone**. Run:
 
 ```bash
-uv run vtmux doctor
+uv run voxpane doctor
 ```
 
 It probes each one and prints the exact System-Settings path for anything
@@ -59,13 +59,13 @@ silently fail until granted.)
 ## Usage
 
 ```bash
-uv run vtmux            # boots tmux + a "voice" daemon window, then attaches you
+uv run voxpane            # boots tmux + a "voice" daemon window, then attaches you
 ```
 
 Then:
 
 1. **Name the panes** you want to address by voice: focus a pane and run
-   `vtmux name nova` (or target one explicitly: `vtmux name nova %3`).
+   `voxpane name nova` (or target one explicitly: `voxpane name nova %3`).
 2. **Hold Right-Option, speak, release.** What you said is typed into the target
    pane and submitted.
 
@@ -75,26 +75,26 @@ Examples (Right-Option held while speaking):
 - *"nova, deploy to staging"* → the pane named **nova**, wherever it is.
 - *"two, git status"* → pane **2** in the current window.
 
-If two names are too close to tell apart, vtmux won't guess — it shows the
+If two names are too close to tell apart, voxpane won't guess — it shows the
 candidates so you can re-say.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `vtmux` | Ensure tmux + the voice daemon, then attach (default) |
-| `vtmux up` | Start the daemon without attaching |
-| `vtmux down` | Stop the daemon and remove its voice window |
-| `vtmux name <name> [pane]` | Label a pane (defaults to focused; rejects confusable names) |
-| `vtmux status` | Show panes, daemon status, and permission state |
-| `vtmux doctor` | Check permissions and print fix steps |
+| `voxpane` | Ensure tmux + the voice daemon, then attach (default) |
+| `voxpane up` | Start the daemon without attaching |
+| `voxpane down` | Stop the daemon and remove its voice window |
+| `voxpane name <name> [pane]` | Label a pane (defaults to focused; rejects confusable names) |
+| `voxpane status` | Show panes, daemon status, and permission state |
+| `voxpane doctor` | Check permissions and print fix steps |
 
 The push-to-talk daemon runs inside a dedicated **`voice`** tmux window so you
 can see its status; it survives detach/reattach.
 
 ## Configuration
 
-Optional TOML at `~/.config/vtmux/config.toml` (every field has a default):
+Optional TOML at `~/.config/voxpane/config.toml` (every field has a default):
 
 ```toml
 hotkey = "alt_r"                                  # pynput key name; alt_r = Right-Option
@@ -113,7 +113,7 @@ voice_window_name = "voice"
   TUI submit bugs and are out of scope for now.
 - **Voice input only** — agents don't talk back (no TTS) yet.
 - **Recognizer name-biasing is currently a no-op** — the installed `parakeet-mlx`
-  doesn't accept hotwords, so vtmux relies on fuzzy + phonetic matching of the
+  doesn't accept hotwords, so voxpane relies on fuzzy + phonetic matching of the
   spoken name instead (which handles most ASR slips). Pick distinctive,
   non-dictionary names for best results.
 

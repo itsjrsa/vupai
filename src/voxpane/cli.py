@@ -1,4 +1,4 @@
-"""vtmux CLI entry point — subcommand dispatch."""
+"""voxpane CLI entry point — subcommand dispatch."""
 from __future__ import annotations
 
 import argparse
@@ -7,19 +7,19 @@ import signal
 import sys
 from pathlib import Path
 
-from vtmux import tmuxio
-from vtmux.asr import ParakeetTranscriber
-from vtmux.config import load_config
-from vtmux.daemon import Daemon
-from vtmux.feedback import Feedback
-from vtmux.permissions import check_permissions, hints
-from vtmux.recorder import Recorder
-from vtmux.registry import PaneRegistry
-from vtmux.router import name_collides
-from vtmux.tmuxio import TmuxError
+from voxpane import tmuxio
+from voxpane.asr import ParakeetTranscriber
+from voxpane.config import load_config
+from voxpane.daemon import Daemon
+from voxpane.feedback import Feedback
+from voxpane.permissions import check_permissions, hints
+from voxpane.recorder import Recorder
+from voxpane.registry import PaneRegistry
+from voxpane.router import name_collides
+from voxpane.tmuxio import TmuxError
 
-PIDFILE: Path = Path.home() / ".config" / "vtmux" / "daemon.pid"
-DAEMON_CMD = f"{sys.executable} -m vtmux _daemon"
+PIDFILE: Path = Path.home() / ".config" / "voxpane" / "daemon.pid"
+DAEMON_CMD = f"{sys.executable} -m voxpane _daemon"
 
 
 def ensure_up() -> None:
@@ -28,7 +28,7 @@ def ensure_up() -> None:
     if not tmuxio.server_running():
         # Start a detached server. NOTE: tmuxio.run() already prepends "tmux",
         # so the argv must NOT include it again.
-        tmuxio.run(["new-session", "-d", "-s", "vtmux"])
+        tmuxio.run(["new-session", "-d", "-s", "voxpane"])
     tmuxio.enable_pane_titles()
     tmuxio.set_extended_keys_off()
     if not tmuxio.window_exists(cfg.voice_window_name):
@@ -129,7 +129,7 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="vtmux")
+    parser = argparse.ArgumentParser(prog="voxpane")
     parser.set_defaults(func=_cmd_default)
     sub = parser.add_subparsers(dest="command", metavar="command")
 
@@ -147,7 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Hidden: internal entrypoint the voice window runs; not shown in --help.
     # Registered directly in the name map rather than via add_parser so it
     # never appears in format_help() output.
-    hidden = argparse.ArgumentParser(prog="vtmux _daemon")
+    hidden = argparse.ArgumentParser(prog="voxpane _daemon")
     hidden.set_defaults(func=_cmd_daemon, command="_daemon")
     sub._name_parser_map["_daemon"] = hidden
 

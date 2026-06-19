@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from vtmux.config import Config, load_config
+from voxpane.config import Config, load_config
 
 
 def test_defaults_when_no_file(tmp_path: Path) -> None:
@@ -20,7 +20,7 @@ def test_defaults_when_no_file(tmp_path: Path) -> None:
 def test_default_when_path_is_none(monkeypatch, tmp_path: Path) -> None:
     # path=None falls back to CONFIG_PATH; point that at a missing file.
     monkeypatch.setattr(
-        "vtmux.config.CONFIG_PATH", tmp_path / "missing" / "config.toml"
+        "voxpane.config.CONFIG_PATH", tmp_path / "missing" / "config.toml"
     )
     cfg = load_config(None)
     assert cfg == Config()

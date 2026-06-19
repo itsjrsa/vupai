@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from vtmux.asr import ParakeetTranscriber, Transcriber
+from voxpane.asr import ParakeetTranscriber, Transcriber
 
 
 # ---- A fake Transcriber other layers (daemon, etc.) can depend on ----
@@ -50,7 +50,7 @@ class _FakeModel:
 
 @pytest.fixture
 def patched_parakeet(monkeypatch):
-    """Patch vtmux.asr.from_pretrained; record how many times it loads."""
+    """Patch voxpane.asr.from_pretrained; record how many times it loads."""
     state = {"loads": 0, "last_model_id": None, "model": _FakeModel("  routed text \n")}
 
     def fake_from_pretrained(model_id: str):
@@ -58,7 +58,7 @@ def patched_parakeet(monkeypatch):
         state["last_model_id"] = model_id
         return state["model"]
 
-    monkeypatch.setattr("vtmux.asr.from_pretrained", fake_from_pretrained)
+    monkeypatch.setattr("voxpane.asr.from_pretrained", fake_from_pretrained)
     return state
 
 
@@ -120,7 +120,7 @@ def test_transcribe_falls_back_when_model_rejects_hotwords(monkeypatch) -> None:
             return _FakeResult("hi")
 
     model = NoHotwordsModel()
-    monkeypatch.setattr("vtmux.asr.from_pretrained", lambda model_id: model)
+    monkeypatch.setattr("voxpane.asr.from_pretrained", lambda model_id: model)
     t = ParakeetTranscriber("x")
     out = t.transcribe(Path("/tmp/a.wav"), hints=["z"])
     assert out == "hi"

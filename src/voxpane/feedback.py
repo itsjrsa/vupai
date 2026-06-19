@@ -1,5 +1,5 @@
-from vtmux import tmuxio
-from vtmux.router import Route
+from voxpane import tmuxio
+from voxpane.router import Route
 
 
 class Feedback:

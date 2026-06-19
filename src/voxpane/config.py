@@ -1,4 +1,4 @@
-"""Configuration model and loader for vtmux."""
+"""Configuration model and loader for voxpane."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class Config:
     aliases: dict[str, str] = field(default_factory=dict)  # spoken alias -> pane name
 
 
-CONFIG_PATH = Path.home() / ".config" / "vtmux" / "config.toml"
+CONFIG_PATH = Path.home() / ".config" / "voxpane" / "config.toml"
 
 
 def load_config(path: Path | None = None) -> Config:

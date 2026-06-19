@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vtmux.config import Config
-from vtmux.daemon import Daemon
-from vtmux.registry import PaneRegistry
-from vtmux.router import Route
+from voxpane.config import Config
+from voxpane.daemon import Daemon
+from voxpane.registry import PaneRegistry
+from voxpane.router import Route
 
 
 class FakeRecorder:
@@ -240,7 +240,7 @@ def test_run_warms_and_starts_hotkey(tmp_path, monkeypatch):
 
     blocked: list[bool] = []
 
-    import vtmux.daemon as dmod
+    import voxpane.daemon as dmod
     monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
     # Replace the blocking wait with an immediate return so the test completes.
     monkeypatch.setattr(dmod.threading.Event, "wait", lambda self, *a, **k: blocked.append(True))

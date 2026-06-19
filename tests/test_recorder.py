@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from vtmux.recorder import Recorder
+from voxpane.recorder import Recorder
 
 
 class FakePopen:

@@ -1,5 +1,5 @@
 
-from vtmux.registry import Pane, PaneRegistry, parse_panes
+from voxpane.registry import Pane, PaneRegistry, parse_panes
 
 # Two windows. Window @0 ("main") has a named pane and an unnamed pane;
 # window @1 ("editor") has one active named pane. Fields are tab-separated

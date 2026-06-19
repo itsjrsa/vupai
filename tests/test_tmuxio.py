@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from vtmux import tmuxio
+from voxpane import tmuxio
 
 
 @dataclass
@@ -168,9 +168,9 @@ def test_window_exists_argv_and_match(monkeypatch):
 def test_new_window_argv(monkeypatch):
     fake = FakeRun()
     patch_run(monkeypatch, fake)
-    tmuxio.new_window("voice", "python -m vtmux _daemon")
+    tmuxio.new_window("voice", "python -m voxpane _daemon")
     assert fake.calls[0]["args"] == [
-        "tmux", "new-window", "-n", "voice", "python -m vtmux _daemon",
+        "tmux", "new-window", "-n", "voice", "python -m voxpane _daemon",
     ]
 
 
@@ -201,7 +201,7 @@ def test_list_panes_roundtrip_real_tmux():
     import os
     import subprocess as sp
 
-    socket = "vtmux-itest"
+    socket = "voxpane-itest"
     base = ["tmux", "-L", socket]
 
     def t(args):

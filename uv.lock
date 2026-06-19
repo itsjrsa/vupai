@@ -1497,7 +1497,7 @@ wheels = [
 ]
 
 [[package]]
-name = "vtmux"
+name = "voxpane"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -1507,7 +1507,7 @@ dependencies = [
     { name = "rapidfuzz" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
@@ -1518,8 +1518,11 @@ requires-dist = [
     { name = "metaphone" },
     { name = "parakeet-mlx" },
     { name = "pynput" },
-    { name = "pytest", marker = "extra == 'dev'" },
     { name = "rapidfuzz" },
-    { name = "ruff", marker = "extra == 'dev'" },
 ]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]

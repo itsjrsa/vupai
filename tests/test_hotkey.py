@@ -1,6 +1,6 @@
 from pynput import keyboard
 
-from vtmux.hotkey import Hotkey
+from voxpane.hotkey import Hotkey
 
 
 def _counter():

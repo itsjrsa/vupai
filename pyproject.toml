@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vtmux"
+name = "voxpane"
 version = "0.1.0"
 description = "Push-to-talk voice control over tmux agent panes"
 readme = "README.md"
@@ -16,20 +16,20 @@ dependencies = [
     "Metaphone",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest",
     "ruff",
 ]
 
 [project.scripts]
-vtmux = "vtmux.cli:main"
+voxpane = "voxpane.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/itsjrsa/tmux-agents"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/vtmux"]
+packages = ["src/voxpane"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

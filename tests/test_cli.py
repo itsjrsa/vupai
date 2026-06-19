@@ -2,8 +2,8 @@ import sys
 
 import pytest
 
-from vtmux import cli
-from vtmux.tmuxio import TmuxError
+from voxpane import cli
+from voxpane.tmuxio import TmuxError
 
 
 class FakeTmux:
@@ -70,7 +70,7 @@ def test_up_creates_voice_window_when_absent(fake_env):
     assert names and names[0][1] == "voice"
     # Fix 3: DAEMON_CMD must use the venv interpreter (sys.executable).
     assert names[0][2].startswith(sys.executable)
-    assert names[0][2].endswith("-m vtmux _daemon")
+    assert names[0][2].endswith("-m voxpane _daemon")
     assert ("enable_pane_titles",) in ft.calls
 
 
@@ -90,7 +90,7 @@ def test_up_starts_server_when_down(monkeypatch, tmp_path):
     assert rc == 0
     # new-session issued via tmuxio.run WITHOUT a redundant leading "tmux"
     run_calls = [c for c in ft.calls if c[0] == "run"]
-    assert ["new-session", "-d", "-s", "vtmux"] in [list(c[1]) for c in run_calls]
+    assert ["new-session", "-d", "-s", "voxpane"] in [list(c[1]) for c in run_calls]
     assert all(c[1][0] != "tmux" for c in run_calls)  # run() prepends tmux itself
 
 
@@ -123,7 +123,7 @@ def _stub_registry(monkeypatch, panes):
 
 
 def _pane(name, pane_id="%2"):
-    from vtmux.registry import Pane
+    from voxpane.registry import Pane
     return Pane(id=pane_id, window_id="@1", window="w", index=1,
                 name=name, command="claude", active=True)
 
@@ -161,7 +161,7 @@ def test_name_rejects_colliding_name(fake_env, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 
 def test_doctor_prints_hints(fake_env, monkeypatch, capsys):
-    from vtmux.permissions import PermissionStatus
+    from voxpane.permissions import PermissionStatus
     status = PermissionStatus(microphone=False, input_monitoring=True, accessibility=True)
     monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
     monkeypatch.setattr(cli, "hints", lambda s: ["grant Microphone in System Settings"])
@@ -220,7 +220,7 @@ def test_down_kills_orphaned_window_without_pidfile(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_status_prints_panes_and_pidfile_and_permissions(fake_env, monkeypatch, capsys):
-    from vtmux.permissions import PermissionStatus
+    from voxpane.permissions import PermissionStatus
     ft, pidfile = fake_env
     pidfile.write_text("999")
     _stub_registry(monkeypatch, [_pane("alpha", "%1"), _pane("beta", "%2")])
