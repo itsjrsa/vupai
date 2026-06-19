@@ -139,3 +139,16 @@ def test_hints_only_includes_failing_fields():
     assert "Microphone" not in joined
     assert "Accessibility" not in joined
     assert len(out) == 1
+
+
+def test_missing_tools_reports_absent_binaries(monkeypatch):
+    # rec (sox) absent, tmux present -> report the sox package only.
+    present = {"tmux"}
+    monkeypatch.setattr(permissions.shutil, "which",
+                        lambda name: ("/usr/bin/" + name) if name in present else None)
+    assert permissions.missing_tools() == ["sox"]
+
+
+def test_missing_tools_empty_when_all_present(monkeypatch):
+    monkeypatch.setattr(permissions.shutil, "which", lambda name: "/usr/bin/" + name)
+    assert permissions.missing_tools() == []

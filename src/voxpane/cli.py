@@ -12,7 +12,7 @@ from voxpane.asr import ParakeetTranscriber
 from voxpane.config import load_config
 from voxpane.daemon import Daemon
 from voxpane.feedback import Feedback
-from voxpane.permissions import check_permissions, hints
+from voxpane.permissions import check_permissions, hints, missing_tools
 from voxpane.recorder import Recorder
 from voxpane.registry import PaneRegistry
 from voxpane.router import name_collides
@@ -106,9 +106,20 @@ def _cmd_name(args: argparse.Namespace) -> int:
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
+    missing = missing_tools()
+    for pkg in missing:
+        print(f"{pkg}: not found on PATH - install it with `brew install {pkg}`")
     status = check_permissions()
-    for line in hints(status):
+    sox_missing = "sox" in missing
+    hint_lines = hints(status)
+    for line in hint_lines:
+        # Without sox the mic probe can't even run, so its "grant Microphone"
+        # hint is misleading - the real fix (install sox) is printed above.
+        if sox_missing and line.startswith("Microphone"):
+            continue
         print(line)
+    if not missing and not hint_lines:
+        print("All checks passed.")
     return 0
 
 

@@ -163,12 +163,27 @@ def test_name_rejects_colliding_name(fake_env, monkeypatch, capsys):
 def test_doctor_prints_hints(fake_env, monkeypatch, capsys):
     from voxpane.permissions import PermissionStatus
     status = PermissionStatus(microphone=False, input_monitoring=True, accessibility=True)
+    monkeypatch.setattr(cli, "missing_tools", lambda: [])
     monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
     monkeypatch.setattr(cli, "hints", lambda s: ["grant Microphone in System Settings"])
     rc = cli.main(["doctor"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "grant Microphone in System Settings" in out
+
+
+def test_doctor_reports_missing_sox_and_skips_mic_hint(fake_env, monkeypatch, capsys):
+    # When sox is absent, the real fix is "install sox" - NOT "grant Microphone".
+    from voxpane.permissions import PermissionStatus
+    status = PermissionStatus(microphone=False, input_monitoring=True, accessibility=True)
+    monkeypatch.setattr(cli, "missing_tools", lambda: ["sox"])
+    monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
+    # use the real hints() (its mic line starts with "Microphone:")
+    rc = cli.main(["doctor"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "brew install sox" in out
+    assert "Microphone" not in out  # misleading mic hint suppressed when sox missing
 
 
 def test_down_terminates_and_removes_pidfile(monkeypatch, tmp_path):

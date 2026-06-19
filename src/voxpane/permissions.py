@@ -10,12 +10,23 @@ and grant manually.
 
 from __future__ import annotations
 
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from .recorder import MIN_WAV_BYTES, Recorder
+
+# External binaries voxpane needs at runtime. `rec` is provided by sox; a missing
+# `rec` is the usual reason the mic probe fails (it can't even spawn the
+# recorder), so doctor checks this before blaming the Microphone permission.
+REQUIRED_TOOLS: dict[str, str] = {"rec": "sox", "tmux": "tmux"}
+
+
+def missing_tools() -> list[str]:
+    """brew package names for required CLIs that are not on PATH."""
+    return [pkg for binary, pkg in REQUIRED_TOOLS.items() if shutil.which(binary) is None]
 
 
 @dataclass(frozen=True)
