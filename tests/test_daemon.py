@@ -198,12 +198,26 @@ def test_empty_wav_reports_permission_hint(tmp_path):
         tmp_path, transcript="alpha run the tests", lines=[PANE_LINE], focused="%1")
     # shrink the wav to a suspiciously empty size
     recorder._wav.write_bytes(b"\x00" * 10)
+
+    # First cycle: must mention microphone/permission (one-time hint).
     daemon.on_press()
     daemon.on_release()
     assert inject_calls == []
     assert route_calls == []
-    assert any("microphone" in e.lower() or "permission" in e.lower()
-               for e in feedback.errors)
+    assert len(feedback.errors) == 1
+    first_error = feedback.errors[0].lower()
+    assert "microphone" in first_error or "permission" in first_error
+
+    # Second cycle: wav is still tiny; must emit the GENERIC message only.
+    daemon.on_press()
+    daemon.on_release()
+    assert inject_calls == []
+    assert route_calls == []
+    assert len(feedback.errors) == 2
+    second_error = feedback.errors[1].lower()
+    assert "no audio captured" in second_error
+    assert "microphone" not in second_error
+    assert "permission" not in second_error
 
 
 def test_run_warms_and_starts_hotkey(tmp_path, monkeypatch):
