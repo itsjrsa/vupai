@@ -58,6 +58,15 @@ def test_default_sample_rate_is_16000(fake_popen):
     assert argv[argv.index("-r") + 1] == "16000"
 
 
+def test_start_silences_sox_output(fake_popen):
+    # sox's device warnings must not leak to the terminal / doctor output.
+    rec = Recorder()
+    rec.start()
+    kw = fake_popen.instances[0].kwargs
+    assert kw.get("stdout") == subprocess.DEVNULL
+    assert kw.get("stderr") == subprocess.DEVNULL
+
+
 def test_is_recording_reflects_active_proc(fake_popen):
     rec = Recorder()
     assert rec.is_recording is False

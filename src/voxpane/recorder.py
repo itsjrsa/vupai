@@ -47,7 +47,11 @@ class Recorder:
             "16",
             str(self._wav_path),
         ]
-        self._proc = subprocess.Popen(argv)
+        # Silence sox's own stdout/stderr (e.g. the harmless "can't set sample
+        # rate 16000; using 24000" device warning) so it never leaks into the
+        # doctor output or the daemon pane.
+        self._proc = subprocess.Popen(
+            argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def stop(self) -> Path:
         if self._proc is None or self._wav_path is None:
