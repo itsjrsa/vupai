@@ -1,6 +1,9 @@
 # Local-only design/plan docs — never committed (see CLAUDE.md)
 docs/superpowers/
 
+# Subagent-driven-development scratch: briefs, reports, review diffs, ledger
+.superpowers/
+
 # Python
 __pycache__/
 *.py[cod]
