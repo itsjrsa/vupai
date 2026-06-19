@@ -6,7 +6,7 @@ the focused one by default, or an agent addressed by name ("Nova, run the tests"
 
 ## Status
 
-v1 implemented and on `master` (127 unit tests pass, `ruff` clean). Validated by
+v1 implemented and on `master` (133 unit tests pass, `ruff` clean). Validated by
 **unit tests only** — the `@integration` (real tmux) and `@slow` (real Parakeet
 model + mic) suites and the live daemon must run on a macOS Apple-Silicon machine.
 The design spec + implementation plan live under `docs/superpowers/`
@@ -24,11 +24,11 @@ voxpane doctor                                         # check macOS permissions
 ```
 
 `voxpane` CLI (entry point `voxpane.cli:main`):
-- `voxpane` — ensure tmux + the voice daemon window, then attach (default, no subcommand)
-- `voxpane up` / `voxpane down` — start / stop the daemon (`down` also kills the voice window)
+- `voxpane` — ensure tmux + spawn the voice daemon (detached), then attach (default, no subcommand)
+- `voxpane up` / `voxpane down` — start / stop the daemon (`down` SIGTERMs the pid; also clears a legacy voice window)
 - `voxpane name <name> [pane]` — label a pane (rejects confusable names; defaults to focused)
-- `voxpane status` — list panes, daemon pid, permission state
-- `voxpane _daemon` — hidden; the long-running process the voice window executes
+- `voxpane status` — list panes, daemon pid + log path, permission state
+- `voxpane _daemon` — hidden; the long-running daemon process (spawned detached, logs to `~/.config/voxpane/daemon.log`)
 
 ## Architecture
 
@@ -40,8 +40,8 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 
 | File | Responsibility |
 |---|---|
-| `src/voxpane/cli.py`, `__main__.py` | `voxpane` subcommands; `ensure_up`; spawns the daemon |
-| `src/voxpane/daemon.py` | orchestrates press→record→transcribe→route→inject→feedback |
+| `src/voxpane/cli.py`, `__main__.py` | `voxpane` subcommands; `ensure_up`; spawns the daemon **detached** (`_spawn_daemon`, `start_new_session=True`) |
+| `src/voxpane/daemon.py` | orchestrates press→record→transcribe→route→inject→feedback; listener callbacks enqueue, main-thread consumer processes |
 | `src/voxpane/hotkey.py` | global push-to-talk via `pynput`, debounced (Right-Option) |
 | `src/voxpane/recorder.py` | `sox rec` → wav, SIGINT to stop; exports `MIN_WAV_BYTES` |
 | `src/voxpane/asr.py` | `parakeet-mlx` `Transcriber` Protocol, lazy `warm()` + cache |
@@ -54,7 +54,9 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 | `src/voxpane/config.py` | TOML config at `~/.config/voxpane/config.toml` + defaults |
 
 The daemon reaches tmux only through `tmuxio` (the `tmux` CLI); the hotkey is
-global, so the daemon never owns the terminal.
+global, so the daemon never owns the terminal. It runs as a **detached
+background process under the terminal app, NOT inside a tmux window** (see
+Invariants) and talks to tmux purely via the CLI.
 
 ## Invariants & gotchas (don't break these)
 
@@ -69,6 +71,21 @@ global, so the daemon never owns the terminal.
   name-matching and the ASR hints **skip panes where `name == id`**; number
   routing still considers them.
 - **ASR is kept warm** (model loaded once via `warm()`); the first call is otherwise multi-second.
+- **Daemon must run OUTSIDE tmux** (`_spawn_daemon` detaches it under the terminal
+  app). A process *inside* a tmux window has the long-lived tmux server as its
+  macOS "responsible process", which lacks Input Monitoring — so the global
+  `pynput` listener is silently never fed key events (the hotkey looks dead).
+  Running detached under the terminal app inherits the grants the user already
+  gave it. **Never move the daemon back into a tmux window.**
+- **MLX is thread-local:** `parakeet-mlx`/MLX bind the GPU stream to the thread
+  that first uses it, so **`warm()` and every `transcribe()` MUST run on the same
+  OS thread** or you get `RuntimeError: no Stream(gpu, 0) in current thread`.
+  Therefore the `pynput` listener callbacks (`on_press`/`on_release`) stay thin —
+  they only start/stop the recorder and **enqueue the wav** — and `daemon.run()`
+  consumes that queue on the **main thread**, where it also called `warm()`,
+  doing transcribe→route→inject there. Keeping heavy work off the listener thread
+  also prevents macOS from disabling the (slow) event tap. Don't call MLX, tmux,
+  or `inject` from the listener thread.
 - **macOS permissions** (Accessibility + Input-Monitoring + Microphone) are granted
   to the *terminal app*, not the script — they silent-fail otherwise. Use `voxpane doctor`.
 - Tests inject collaborators (`io=`, `lister=`, `route_fn=`, `recorder_factory=`…)

@@ -1,11 +1,24 @@
 from __future__ import annotations
 
+import queue
 from pathlib import Path
 
 from voxpane.config import Config
 from voxpane.daemon import Daemon
 from voxpane.registry import PaneRegistry
 from voxpane.router import Route
+
+
+def _release_and_process(daemon) -> None:
+    """Production splits the listener-thread release (enqueue) from the main-
+    thread consumer (process). Drive both synchronously in unit tests so the
+    pipeline (transcribe/route/inject) runs before the assertions."""
+    daemon.on_release()
+    try:
+        job = daemon._jobs.get_nowait()
+    except queue.Empty:
+        return  # release without a matching start enqueues nothing
+    daemon._process(job)
 
 
 class FakeRecorder:
@@ -111,7 +124,7 @@ def test_release_routes_and_injects_stripped_text(tmp_path):
     daemon, recorder, transcriber, feedback, route_calls, inject_calls = make_daemon(
         tmp_path, transcript="alpha run the tests", lines=[PANE_LINE], focused="%1")
     daemon.on_press()
-    daemon.on_release()
+    _release_and_process(daemon)
 
     assert recorder.stopped == 1
     # hints are the live pane names
@@ -131,7 +144,7 @@ def test_blank_transcript_injects_nothing(tmp_path):
     daemon, _, _, feedback, route_calls, inject_calls = make_daemon(
         tmp_path, transcript="   ", lines=[PANE_LINE], focused="%1")
     daemon.on_press()
-    daemon.on_release()
+    _release_and_process(daemon)
     assert inject_calls == []
     assert route_calls == []
     assert any("catch" in s.lower() for s in feedback.statuses)
@@ -142,7 +155,7 @@ def test_no_target_reports_error_and_no_inject(tmp_path):
     daemon, _, _, feedback, _, inject_calls = make_daemon(
         tmp_path, transcript="run the tests", lines=[PANE_LINE], focused=None)
     daemon.on_press()
-    daemon.on_release()
+    _release_and_process(daemon)
     assert inject_calls == []
     assert feedback.errors and "no target" in feedback.errors[0].lower()
 
@@ -152,7 +165,7 @@ def test_inject_failure_reports_error(tmp_path):
         tmp_path, transcript="alpha run the tests", lines=[PANE_LINE],
         focused="%1", inject_ok=False)
     daemon.on_press()
-    daemon.on_release()
+    _release_and_process(daemon)
     assert inject_calls  # inject was attempted
     assert feedback.errors  # failure surfaced
     assert not feedback.announced
@@ -184,7 +197,7 @@ def test_inject_failure_falls_back_to_focused(tmp_path):
     daemon = Daemon(Config(), recorder, transcriber, registry, feedback,
                     route_fn=route_fn, inject_fn=inject_fn)
     daemon.on_press()
-    daemon.on_release()
+    _release_and_process(daemon)
 
     assert attempts == ["%9", "%1"]  # tried named target, then focused fallback
     assert feedback.announced and feedback.announced[0].pane_id == "%1"
@@ -199,7 +212,7 @@ def test_empty_wav_reports_permission_hint(tmp_path):
 
     # First cycle: must mention microphone/permission (one-time hint).
     daemon.on_press()
-    daemon.on_release()
+    _release_and_process(daemon)
     assert inject_calls == []
     assert route_calls == []
     assert len(feedback.errors) == 1
@@ -208,7 +221,7 @@ def test_empty_wav_reports_permission_hint(tmp_path):
 
     # Second cycle: wav is still tiny; must emit the GENERIC message only.
     daemon.on_press()
-    daemon.on_release()
+    _release_and_process(daemon)
     assert inject_calls == []
     assert route_calls == []
     assert len(feedback.errors) == 2
@@ -238,17 +251,15 @@ def test_run_warms_and_starts_hotkey(tmp_path, monkeypatch):
         def stop(self):
             started.append("stop")
 
-    blocked: list[bool] = []
-
     import voxpane.daemon as dmod
     monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
-    # Replace the blocking wait with an immediate return so the test completes.
-    monkeypatch.setattr(dmod.threading.Event, "wait", lambda self, *a, **k: blocked.append(True))
+    # Pre-arm shutdown so the consumer loop exits immediately and run() returns.
+    daemon.stop()
 
     daemon.run()
-    assert transcriber.warmed == 1
+    assert transcriber.warmed == 1          # warmed on the main (run) thread
     assert "alt_r" in started and "start" in started
-    assert blocked  # run() blocked on the event
+    assert "stop" in started                # run()'s finally stops the hotkey
     # the listener received the daemon's real bound callbacks (wiring proof)
     assert instances[0].on_press == daemon.on_press
     assert instances[0].on_release == daemon.on_release
@@ -265,7 +276,7 @@ def test_unnamed_pane_excluded_from_asr_hints(tmp_path):
     daemon, _, transcriber, _, _, _ = make_daemon(
         tmp_path, transcript="alpha hi", lines=[named_line, unnamed_line], focused="%1")
     daemon.on_press()
-    daemon.on_release()
+    _release_and_process(daemon)
     assert transcriber.last_hints is not None
     assert "alpha" in transcriber.last_hints
     assert "%2" not in transcriber.last_hints
@@ -295,7 +306,7 @@ def test_ambiguous_route_surfaces_candidates_without_inject(tmp_path):
     daemon = Daemon(Config(), recorder, transcriber, registry, feedback,
                     route_fn=route_fn, inject_fn=inject_fn)
     daemon.on_press()
-    daemon.on_release()
+    _release_and_process(daemon)
 
     assert inject_calls == []          # ambiguous -> never injected
     assert not feedback.announced

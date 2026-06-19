@@ -5,6 +5,8 @@ v1 scope: targets Claude Code panes only. Injecting into other agent CLIs
 """
 from __future__ import annotations
 
+import logging
+import queue
 import threading
 from pathlib import Path
 
@@ -16,6 +18,11 @@ from .injector import inject
 from .recorder import MIN_WAV_BYTES, Recorder
 from .registry import PaneRegistry
 from .router import Route, route
+
+logger = logging.getLogger(__name__)
+
+# Sentinel enqueued by stop() to unblock the consumer loop for a clean shutdown.
+_SHUTDOWN = object()
 
 
 class Daemon:
@@ -34,14 +41,35 @@ class Daemon:
         self._hotkey: Hotkey | None = None
         self._stop_event = threading.Event()
         self._mic_hint_shown = False
+        # Push-to-talk is serial, but the listener thread must never block on the
+        # heavy pipeline (a slow pynput tap callback gets disabled by macOS), so
+        # on_release hands the wav to this queue and the main-thread consumer in
+        # run() does transcribe/route/inject. Bounded so a stuck consumer can't
+        # grow memory without bound; a full queue drops the utterance with a warn.
+        self._jobs: queue.Queue = queue.Queue(maxsize=8)
 
     def on_press(self) -> None:
         self._recorder.start()
         self._feedback.status("listening...")
 
     def on_release(self) -> None:
-        wav: Path = self._recorder.stop()
+        # Listener-thread hot path: stop sox and hand the wav to the main-thread
+        # consumer. MUST stay cheap - no MLX, no tmux, no inject here - so the
+        # pynput event tap is never blocked and overlapping presses can't starve
+        # the listener.
+        try:
+            wav: Path = self._recorder.stop()
+        except RuntimeError:
+            return  # release without a matching start (debounce edge); ignore
+        try:
+            self._jobs.put_nowait(wav)
+        except queue.Full:
+            self._feedback.error("busy - dropped (still processing previous)")
 
+    def _process(self, wav: Path) -> None:
+        """Full pipeline for one utterance. Runs on the same OS thread as warm()
+        (the main thread) so MLX's thread-local GPU stream matches. Synchronous
+        and side-effect-only, so unit tests can drive it directly."""
         # Guard against an empty capture (mic permission / device issue).
         try:
             size = wav.stat().st_size
@@ -105,9 +133,43 @@ class Daemon:
         self._feedback.error("injection failed - text not confirmed in pane")
 
     def run(self) -> None:
+        # warm() establishes MLX's thread-local GPU stream on THIS (main) thread;
+        # every _process -> transcribe below runs on the same thread, so the
+        # stream always matches. Heavy work is kept off the listener thread (see
+        # on_release), so the consumer loop lives here on the warm thread.
         self._transcriber.warm()
         self._hotkey = Hotkey(self._config.hotkey, self.on_press, self.on_release)
         self._hotkey.start()
         self._feedback.status("ready")
-        # Block forever; on_press/on_release fire from the listener thread.
-        self._stop_event.wait()
+        try:
+            while not self._stop_event.is_set():
+                job = self._jobs.get()  # blocks until an utterance or the sentinel
+                if job is _SHUTDOWN:
+                    break
+                try:
+                    self._process(job)
+                except Exception:
+                    # One bad utterance must never kill the daemon loop.
+                    logger.exception("utterance processing failed")
+                    try:
+                        self._feedback.error("internal error - see daemon log")
+                    except Exception:
+                        pass
+        finally:
+            self._hotkey.stop()
+
+    def stop(self) -> None:
+        """Request a clean shutdown of the consumer loop (e.g. from a signal)."""
+        self._stop_event.set()
+        try:
+            self._jobs.put_nowait(_SHUTDOWN)
+        except queue.Full:
+            # Make room so the consumer observes the sentinel promptly.
+            try:
+                self._jobs.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._jobs.put_nowait(_SHUTDOWN)
+            except queue.Full:
+                pass
