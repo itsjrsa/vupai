@@ -31,8 +31,6 @@ def ensure_up() -> None:
     tmuxio.set_extended_keys_off()
     if not tmuxio.window_exists(cfg.voice_window_name):
         tmuxio.new_window(cfg.voice_window_name, DAEMON_CMD)
-        PIDFILE.parent.mkdir(parents=True, exist_ok=True)
-        PIDFILE.write_text(str(os.getpid()))
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +105,8 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def _cmd_daemon(args: argparse.Namespace) -> int:
+    PIDFILE.parent.mkdir(parents=True, exist_ok=True)
+    PIDFILE.write_text(str(os.getpid()))
     cfg = load_config()
     recorder = Recorder(sample_rate=cfg.sample_rate)
     transcriber = ParakeetTranscriber(cfg.model_id)

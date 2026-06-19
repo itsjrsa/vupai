@@ -142,7 +142,7 @@ def test_name_rejects_colliding_name(fake_env, monkeypatch, capsys):
     rc = cli.main(["name", "alpha"])
     assert rc != 0
     assert not any(c[0] == "set_pane_title" for c in ft.calls)
-    out = capsys.readouterr().out + capsys.readouterr().err
+    captured = capsys.readouterr(); out = captured.out + captured.err
     assert "alpha" in out
 
 
@@ -204,8 +204,11 @@ def test_status_prints_panes_and_pidfile_and_permissions(fake_env, monkeypatch, 
     assert "microphone" in out.lower()
 
 
-def test_daemon_builds_and_runs(monkeypatch):
+def test_daemon_builds_and_runs(monkeypatch, tmp_path):
+    import os as _os
     monkeypatch.setattr(cli, "tmuxio", FakeTmux())
+    pidfile = tmp_path / "daemon.pid"
+    monkeypatch.setattr(cli, "PIDFILE", pidfile)
     built = {}
 
     class FakeDaemon:
@@ -228,6 +231,8 @@ def test_daemon_builds_and_runs(monkeypatch):
     assert rc == 0
     assert built["ran"] is True
     assert built["transcriber"][0] == "T"
+    assert pidfile.exists()
+    assert pidfile.read_text().strip() == str(_os.getpid())
 
 
 # ---------------------------------------------------------------------------
