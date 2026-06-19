@@ -270,3 +270,36 @@ def test_unnamed_pane_excluded_from_asr_hints(tmp_path):
     assert transcriber.last_hints is not None
     assert "alpha" in transcriber.last_hints
     assert "%2" not in transcriber.last_hints
+
+
+# ---------------------------------------------------------------------------
+# #2: an ambiguous route surfaces candidates and never injects
+# ---------------------------------------------------------------------------
+
+def test_ambiguous_route_surfaces_candidates_without_inject(tmp_path):
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    recorder = FakeRecorder(wav)
+    transcriber = FakeTranscriber("nov run it")
+    registry = make_registry([PANE_LINE], "%1")
+    feedback = FakeFeedback()
+    inject_calls: list[str] = []
+
+    def route_fn(text, panes, focused_id, *, fuzzy_cutoff=82):
+        return Route(pane_id=None, text=text, matched_name=None,
+                     confidence=85.7, fallback=False, candidates=("nova", "novo"))
+
+    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05, io=None):
+        inject_calls.append(pane_id)
+        return True
+
+    daemon = Daemon(Config(), recorder, transcriber, registry, feedback,
+                    route_fn=route_fn, inject_fn=inject_fn)
+    daemon.on_press()
+    daemon.on_release()
+
+    assert inject_calls == []          # ambiguous -> never injected
+    assert not feedback.announced
+    assert feedback.errors
+    msg = feedback.errors[0].lower()
+    assert "nova" in msg and "novo" in msg

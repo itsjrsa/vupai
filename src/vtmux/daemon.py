@@ -70,6 +70,13 @@ class Daemon:
             text, self._registry.panes, focused_id,
             fuzzy_cutoff=self._config.fuzzy_cutoff)
 
+        if route_obj.candidates:
+            # Ambiguous near-tie: don't guess. Surface the candidates and bail.
+            self._feedback.error(
+                "ambiguous: " + " / ".join(route_obj.candidates)
+                + " - say the name again")
+            return
+
         if route_obj.pane_id is None:
             self._feedback.error("no target")
             return

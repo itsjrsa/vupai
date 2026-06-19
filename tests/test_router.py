@@ -172,3 +172,38 @@ def test_name_collides_skips_pseudo_titles():
     assert name_collides("alpha", ["%1", "%3", "beta"]) is None
     # Real names are still checked.
     assert name_collides("alpha", ["alpha", "%2"]) == "alpha"
+
+
+# ---------------------------------------------------------------------------
+# #2: ambiguous near-tie name match surfaces candidates instead of guessing
+# ---------------------------------------------------------------------------
+
+def test_fuzzy_near_tie_is_ambiguous():
+    # token "nov" scores ~85.7 against BOTH "nova" and "novo" (within margin):
+    # too close to call -> ambiguous, route nowhere, surface both candidates.
+    p = [mk("%1", "@1", "main", 1, "nova"), mk("%2", "@1", "main", 2, "novo")]
+    r = route("nov run the tests", p, focused_id="%1")
+    assert r.pane_id is None
+    assert r.fallback is False
+    assert set(r.candidates) == {"nova", "novo"}
+    # transcript left intact so the user can re-say a clearer name
+    assert r.text == "nov run the tests"
+
+
+def test_fuzzy_clear_winner_is_not_ambiguous():
+    # Only "nova" clears the cutoff ("zebra" scores 0) -> single unambiguous match.
+    p = [mk("%1", "@1", "main", 1, "nova"), mk("%2", "@1", "main", 2, "zebra")]
+    r = route("nov ship it", p, focused_id="%2")
+    assert r.pane_id == "%1"
+    assert r.matched_name == "nova"
+    assert r.candidates == ()
+    assert r.text == "ship it"
+
+
+def test_exact_match_wins_over_fuzzy_near_tie():
+    # An exact name match short-circuits before ambiguity detection.
+    p = [mk("%1", "@1", "main", 1, "nova"), mk("%2", "@1", "main", 2, "novo")]
+    r = route("nova deploy", p, focused_id="%2")
+    assert r.pane_id == "%1"
+    assert r.matched_name == "nova"
+    assert r.candidates == ()

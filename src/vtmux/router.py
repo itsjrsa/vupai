@@ -19,11 +19,12 @@ _STRIP = ".,!?;:'\"()[]{}"
 
 @dataclass(frozen=True)
 class Route:
-    pane_id: str | None   # None only if no focus AND no name match
+    pane_id: str | None   # None if no focus and no match, or on an ambiguous near-tie
     text: str             # transcript with any matched leading name token stripped
     matched_name: str | None
     confidence: float     # 0..100; 100 exact, rapidfuzz score for fuzzy, 0 for focus fallback
     fallback: bool        # True when routed to focused pane (no confident name match)
+    candidates: tuple[str, ...] = ()  # non-empty only on an ambiguous near-tie name match
 
 
 def _first_token(transcript: str) -> tuple[str, str]:
@@ -54,17 +55,30 @@ def _exact(token: str, panes: list[Pane]) -> Pane | None:
     return None
 
 
-def _fuzzy(token: str, panes: list[Pane], cutoff: int) -> tuple[Pane | None, float]:
-    best: Pane | None = None
-    best_score = 0.0
-    for p in _named(panes):
-        score = fuzz.ratio(token, p.name.lower())
-        if score > best_score:
-            best_score = score
-            best = p
-    if best is not None and best_score >= cutoff:
-        return best, best_score
-    return None, 0.0
+def _fuzzy_match(
+    token: str, panes: list[Pane], cutoff: int, margin: int
+) -> tuple[Pane | None, float, tuple[str, ...]]:
+    """Best fuzzy name match, with near-tie ambiguity detection.
+
+    Returns ``(winner, score, candidates)``:
+      - a single clear winner above the cutoff -> ``(pane, score, ())``
+      - an ambiguous near-tie (>=2 names within ``margin`` of the top, all
+        >= ``cutoff``) -> ``(None, top_score, (name, ...))``
+      - nothing above the cutoff -> ``(None, 0.0, ())``
+    """
+    scored = sorted(
+        ((p, fuzz.ratio(token, p.name.lower())) for p in _named(panes)),
+        key=lambda ps: ps[1],
+        reverse=True,
+    )
+    above = [(p, s) for p, s in scored if s >= cutoff]
+    if not above:
+        return None, 0.0, ()
+    best_p, best_s = above[0]
+    near = [p for p, s in above if best_s - s <= margin]
+    if len(near) > 1:
+        return None, best_s, tuple(p.name for p in near)
+    return best_p, best_s, ()
 
 
 def _phonetic(token: str, panes: list[Pane]) -> Pane | None:
@@ -88,7 +102,7 @@ def _number(token: str) -> int | None:
 
 
 def route(transcript: str, panes: list[Pane], focused_id: str | None,
-          *, fuzzy_cutoff: int = 82) -> Route:
+          *, fuzzy_cutoff: int = 82, ambiguity_margin: int = 5) -> Route:
     token, remainder = _first_token(transcript)
 
     def fallback() -> Route:
@@ -105,8 +119,13 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
         return Route(pane_id=hit.id, text=remainder, matched_name=hit.name,
                      confidence=100.0, fallback=False)
 
-    # 2. Fuzzy name match via rapidfuzz.
-    hit, score = _fuzzy(token, panes, fuzzy_cutoff)
+    # 2. Fuzzy name match (with near-tie ambiguity detection).
+    hit, score, candidates = _fuzzy_match(token, panes, fuzzy_cutoff, ambiguity_margin)
+    if candidates:
+        # Two or more names are too close to call: surface them, route nowhere,
+        # and leave the transcript intact so the user can re-say it.
+        return Route(pane_id=None, text=transcript, matched_name=None,
+                     confidence=score, fallback=False, candidates=candidates)
     if hit is not None:
         return Route(pane_id=hit.id, text=remainder, matched_name=hit.name,
                      confidence=score, fallback=False)
