@@ -15,9 +15,9 @@ _NEEDLE_MAX = 40  # use the trailing <=40 chars of the last line as the confirma
 
 
 def _needle(text: str) -> str:
-    """Trailing <=40 chars of the last non-empty-stripped line of `text`."""
-    lines = text.splitlines() or [text]
-    last = lines[-1].strip()
+    """Trailing <=40 chars of the last non-empty (after strip) line of `text`."""
+    lines = [ln for ln in text.splitlines() if ln.strip()] or [""]
+    last = lines[-1]
     return last[-_NEEDLE_MAX:]
 
 

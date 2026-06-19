@@ -97,6 +97,32 @@ def test_needle_uses_trailing_40_chars_of_last_line() -> None:
     assert io.entered == ["%9"]
 
 
+def test_needle_ignores_trailing_newline_no_spurious_enter() -> None:
+    # "submit\n" -> needle must NOT be ""; pane never shows "submit" -> must return False.
+    text = "submit\n"
+    io = FakeIO(capture_frames=["unrelated"])
+
+    result = injector.inject(
+        "%1", text, confirm_timeout=0.05, poll_interval=0.01, io=io
+    )
+
+    assert result is False
+    assert io.entered == []  # Enter must never fire without confirmation
+
+
+def test_needle_matches_last_nonempty_line_with_trailing_newline() -> None:
+    # "submit\n" -> needle is "submit"; pane shows "submit" -> must return True.
+    text = "submit\n"
+    io = FakeIO(capture_frames=["submit"])
+
+    result = injector.inject(
+        "%1", text, confirm_timeout=0.2, poll_interval=0.01, io=io
+    )
+
+    assert result is True
+    assert io.entered == ["%1"]  # exactly one Enter sent
+
+
 @pytest.mark.integration
 def test_inject_delivers_line_to_real_cat_pane() -> None:
     if shutil.which("tmux") is None:
