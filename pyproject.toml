@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vtmux"
+version = "0.1.0"
+description = "Push-to-talk voice control over tmux agent panes"
+requires-python = ">=3.11"
+dependencies = [
+    "parakeet-mlx",
+    "pynput",
+    "rapidfuzz",
+    "Metaphone",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[project.scripts]
+vtmux = "vtmux.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vtmux"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "integration: requires a real tmux server (deselect with -m 'not integration')",
+    "slow: requires the real ASR model (deselect with -m 'not slow')",
+]
+
+[tool.ruff]
+src = ["src", "tests"]
+target-version = "py311"
+line-length = 100
