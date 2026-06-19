@@ -37,6 +37,7 @@ def test_exact_match_strips_trailing_punctuation_on_token(panes):
     assert r.pane_id == "%2"
     assert r.matched_name == "backend"
     assert r.confidence == 100
+    assert r.fallback is False
     assert r.text == "run the tests"
 
 
@@ -86,6 +87,7 @@ def test_number_word_routes_within_focused_window(panes):
 def test_number_digit_routes_within_focused_window(panes):
     r = route("2 stop the server", panes, focused_id="%1")
     assert r.pane_id == "%2"
+    assert r.confidence == 100
     assert r.text == "stop the server"
     assert r.fallback is False
 
@@ -121,3 +123,9 @@ def test_name_collides_detects_confusable(panes):
 
 def test_name_collides_allows_distinct(panes):
     assert name_collides("database", ["frontend", "backend"]) is None
+
+
+def test_name_collides_detects_phonetic_only():
+    # "kris" vs "chris": rapidfuzz.fuzz.ratio ~66.7 (below 82 cutoff) but
+    # both share doublemetaphone primary code "KRS", so collision is phonetic only.
+    assert name_collides("kris", ["chris"]) == "chris"
