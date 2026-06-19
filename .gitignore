@@ -1,0 +1,14 @@
+# Local-only design/plan docs — never committed (see CLAUDE.md)
+docs/superpowers/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
