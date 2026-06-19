@@ -115,11 +115,14 @@ def test_send_enter_argv(monkeypatch):
     assert fake.calls[0]["args"] == ["tmux", "send-keys", "-t", "%3", "Enter"]
 
 
-def test_set_pane_title_argv(monkeypatch):
+def test_set_pane_name_argv(monkeypatch):
     fake = FakeRun()
     patch_run(monkeypatch, fake)
-    tmuxio.set_pane_title("%3", "backend")
-    assert fake.calls[0]["args"] == ["tmux", "select-pane", "-t", "%3", "-T", "backend"]
+    tmuxio.set_pane_name("%3", "backend")
+    # Stored in a per-pane user option, not the app-owned pane title.
+    assert fake.calls[0]["args"] == [
+        "tmux", "set", "-p", "-t", "%3", "@voxpane_name", "backend",
+    ]
 
 
 def test_enable_pane_titles_runs_both_set_commands(monkeypatch):
@@ -127,7 +130,10 @@ def test_enable_pane_titles_runs_both_set_commands(monkeypatch):
     patch_run(monkeypatch, fake)
     tmuxio.enable_pane_titles()
     assert fake.calls[0]["args"] == ["tmux", "set", "-g", "pane-border-status", "top"]
-    assert fake.calls[1]["args"] == ["tmux", "set", "-g", "pane-border-format", "#{pane_title}"]
+    assert fake.calls[1]["args"] == [
+        "tmux", "set", "-g", "pane-border-format",
+        "#{?@voxpane_name,#{@voxpane_name},#{pane_title}}",
+    ]
 
 
 def test_set_extended_keys_off_argv(monkeypatch):

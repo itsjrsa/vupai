@@ -43,8 +43,8 @@ class FakeTmux:
     def attach(self) -> None:
         self.calls.append(("attach",))
 
-    def set_pane_title(self, pane_id: str, title: str) -> None:
-        self.calls.append(("set_pane_title", pane_id, title))
+    def set_pane_name(self, pane_id: str, name: str) -> None:
+        self.calls.append(("set_pane_name", pane_id, name))
 
     def focused_pane_id(self):
         return self._focused
@@ -154,13 +154,13 @@ def _pane(name, pane_id="%2"):
                 name=name, command="claude", active=True)
 
 
-def test_name_sets_pane_title_on_focused(fake_env, monkeypatch):
+def test_name_sets_pane_name_on_focused(fake_env, monkeypatch):
     ft, pidfile = fake_env
     _stub_registry(monkeypatch, [_pane("alpha")])
     rc = cli.main(["name", "beta"])
     assert rc == 0
-    titled = [c for c in ft.calls if c[0] == "set_pane_title"]
-    assert titled == [("set_pane_title", "%1", "beta")]
+    named = [c for c in ft.calls if c[0] == "set_pane_name"]
+    assert named == [("set_pane_name", "%1", "beta")]
 
 
 def test_name_explicit_pane_arg(fake_env, monkeypatch):
@@ -168,7 +168,7 @@ def test_name_explicit_pane_arg(fake_env, monkeypatch):
     _stub_registry(monkeypatch, [_pane("alpha")])
     rc = cli.main(["name", "beta", "%7"])
     assert rc == 0
-    assert ("set_pane_title", "%7", "beta") in ft.calls
+    assert ("set_pane_name", "%7", "beta") in ft.calls
 
 
 def test_name_rejects_colliding_name(fake_env, monkeypatch, capsys):
@@ -176,7 +176,7 @@ def test_name_rejects_colliding_name(fake_env, monkeypatch, capsys):
     _stub_registry(monkeypatch, [_pane("alpha")])
     rc = cli.main(["name", "alpha"])
     assert rc != 0
-    assert not any(c[0] == "set_pane_title" for c in ft.calls)
+    assert not any(c[0] == "set_pane_name" for c in ft.calls)
     captured = capsys.readouterr()
     out = captured.out + captured.err
     assert "alpha" in out

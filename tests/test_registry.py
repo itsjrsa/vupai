@@ -4,10 +4,10 @@ from voxpane.registry import Pane, PaneRegistry, parse_panes
 # Two windows. Window @0 ("main") has a named pane and an unnamed pane;
 # window @1 ("editor") has one active named pane. Fields are tab-separated
 # in PANE_FORMAT order:
-#   pane_id  window_id  window_name  pane_index  pane_title  pane_current_command  pane_active
+#   pane_id  window_id  window_name  pane_index  @voxpane_name  pane_current_command  pane_active
 SAMPLE = [
     "%0\t@0\tmain\t0\tbackend\tclaude\t1",
-    "%1\t@0\tmain\t1\t%1\tzsh\t0",          # unnamed pane: tmux echoes the pane id as title
+    "%1\t@0\tmain\t1\t\tzsh\t0",            # unnamed pane: @voxpane_name unset (empty field)
     "%2\t@1\teditor\t0\tnotes\tnvim\t1",
 ]
 

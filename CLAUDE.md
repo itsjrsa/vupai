@@ -67,9 +67,16 @@ Invariants) and talks to tmux purely via the CLI.
 - **`tmuxio.run(args)` prepends `tmux`** — callers pass argv WITHOUT a leading `"tmux"`.
 - **Target the immutable `pane_id` (`%N`)**, never a positional index.
 - **Keep tmux `extended-keys` off** (set in `ensure_up`) so Enter submits in Claude Code.
-- **Unnamed panes:** tmux titles an untitled pane with its own id (`%1`). Router
-  name-matching and the ASR hints **skip panes where `name == id`**; number
-  routing still considers them.
+- **Voice names live in the `@voxpane_name` per-pane user option, NOT `pane_title`.**
+  The target apps own the pane title: Claude Code overwrites it with `✳ Claude Code`
+  on startup, so a name stored via `select-pane -T` is clobbered (and every Claude
+  pane ends up with the *same* title → routing breaks). `voxpane name` writes
+  `set -p @voxpane_name`; `PANE_FORMAT` reads `#{@voxpane_name}`; the pane border
+  shows the voice name when set, else the app title. **Never store the name in
+  `pane_title`.**
+- **Unnamed panes:** when `@voxpane_name` is unset the field is empty; `parse_panes`
+  falls back to the pane id so `name == id`. Router name-matching and the ASR hints
+  **skip panes where `name == id`**; number routing still considers them.
 - **ASR is kept warm** (model loaded once via `warm()`); the first call is otherwise multi-second.
 - **Daemon must run OUTSIDE tmux** (`_spawn_daemon` detaches it under the terminal
   app). A process *inside* a tmux window has the long-lived tmux server as its

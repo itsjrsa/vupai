@@ -12,7 +12,7 @@ class Pane:
     window_id: str   # @N
     window: str      # window_name
     index: int       # pane_index within its window
-    name: str        # pane_title
+    name: str        # voice name (@voxpane_name); == id when unset (unnamed)
     command: str     # pane_current_command
     active: bool     # pane_active "1" -> True
 
@@ -21,8 +21,10 @@ def parse_panes(lines: Iterable[str]) -> list[Pane]:
     """Parse stripped PANE_FORMAT lines (tab-separated) into Pane objects.
 
     Field order matches tmuxio.PANE_FORMAT:
-      pane_id, window_id, window_name, pane_index, pane_title,
+      pane_id, window_id, window_name, pane_index, @voxpane_name,
       pane_current_command, pane_active
+    The voice-name field is empty when the @voxpane_name option is unset; we
+    fall back to the pane id there so unnamed panes keep the name == id contract.
     Blank/whitespace-only lines are skipped.
     """
     panes: list[Pane] = []
@@ -31,9 +33,10 @@ def parse_panes(lines: Iterable[str]) -> list[Pane]:
             continue
         parts = line.split("\t")
         if len(parts) != 7:
-            # Malformed row (e.g. a tab inside a title); skip defensively.
+            # Malformed row (e.g. a tab inside a name); skip defensively.
             continue
         pane_id, window_id, window, index, name, command, active = parts
+        name = name or pane_id  # unset @voxpane_name -> treat as unnamed
         panes.append(
             Pane(
                 id=pane_id,

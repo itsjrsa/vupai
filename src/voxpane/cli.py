@@ -143,7 +143,7 @@ def _cmd_name(args: argparse.Namespace) -> int:
     if target is None:
         print("no focused pane to name")
         return 1
-    tmuxio.set_pane_title(target, args.name)
+    tmuxio.set_pane_name(target, args.name)
     return 0
 
 

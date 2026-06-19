@@ -9,13 +9,17 @@ from __future__ import annotations
 import os
 import subprocess
 
+# Field 5 is the voice name, stored in the per-pane user option @voxpane_name
+# (NOT pane_title): the target apps - Claude Code in particular - overwrite
+# pane_title with their own string, but never touch @ user options. The option
+# is empty when unset; registry.parse_panes falls back to the pane id there.
 PANE_FORMAT = "\t".join(
     [
         "#{pane_id}",
         "#{window_id}",
         "#{window_name}",
         "#{pane_index}",
-        "#{pane_title}",
+        "#{@voxpane_name}",
         "#{pane_current_command}",
         "#{pane_active}",
     ]
@@ -77,13 +81,17 @@ def send_enter(pane_id: str) -> None:
     run(["send-keys", "-t", pane_id, "Enter"])
 
 
-def set_pane_title(pane_id: str, title: str) -> None:
-    run(["select-pane", "-t", pane_id, "-T", title])
+def set_pane_name(pane_id: str, name: str) -> None:
+    # Store the voice name in a per-pane user option the target app can't clobber
+    # (unlike pane_title). Read back via @voxpane_name in PANE_FORMAT.
+    run(["set", "-p", "-t", pane_id, "@voxpane_name", name])
 
 
 def enable_pane_titles() -> None:
     run(["set", "-g", "pane-border-status", "top"])
-    run(["set", "-g", "pane-border-format", "#{pane_title}"])
+    # Show the voice name when one is set, else fall back to the app's own title.
+    run(["set", "-g", "pane-border-format",
+         "#{?@voxpane_name,#{@voxpane_name},#{pane_title}}"])
 
 
 def set_extended_keys_off() -> None:

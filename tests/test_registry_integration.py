@@ -28,9 +28,10 @@ def tmux_session():
 
 def test_registry_lists_real_pane(tmux_session):
     session = tmux_session
-    # Give the single pane a deterministic title.
+    # Give the single pane a deterministic voice name (the @voxpane_name option,
+    # which is what the registry reads - pane_title is owned by the running app).
     subprocess.run(
-        ["tmux", "select-pane", "-t", f"{session}:main.0", "-T", "backend"],
+        ["tmux", "set", "-p", "-t", f"{session}:main.0", "@voxpane_name", "backend"],
         check=True,
     )
 
