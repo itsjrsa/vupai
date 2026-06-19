@@ -58,7 +58,7 @@ class Daemon:
             return
 
         self._registry.refresh()
-        hints = [p.name for p in self._registry.panes]
+        hints = [p.name for p in self._registry.panes if p.name != p.id]
         text = self._transcriber.transcribe(wav, hints=hints)
         if not text or not text.strip():
             self._feedback.status("didn't catch that")

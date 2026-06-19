@@ -1,4 +1,3 @@
-import pytest
 
 from vtmux.registry import Pane, PaneRegistry, parse_panes
 

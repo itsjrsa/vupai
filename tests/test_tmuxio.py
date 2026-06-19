@@ -174,6 +174,13 @@ def test_new_window_argv(monkeypatch):
     ]
 
 
+def test_kill_window_argv(monkeypatch):
+    fake = FakeRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.kill_window("voice")
+    assert fake.calls[0]["args"] == ["tmux", "kill-window", "-t", "voice"]
+
+
 def test_attach_execs_tmux_attach(monkeypatch):
     captured = {}
 

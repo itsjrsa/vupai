@@ -42,8 +42,13 @@ def _first_token(transcript: str) -> tuple[str, str]:
     return token, remainder
 
 
+def _named(panes: list[Pane]) -> list[Pane]:
+    """Return panes that have a real name (i.e. name != pane id)."""
+    return [p for p in panes if p.name != p.id]
+
+
 def _exact(token: str, panes: list[Pane]) -> Pane | None:
-    for p in panes:
+    for p in _named(panes):
         if p.name.lower() == token:
             return p
     return None
@@ -52,7 +57,7 @@ def _exact(token: str, panes: list[Pane]) -> Pane | None:
 def _fuzzy(token: str, panes: list[Pane], cutoff: int) -> tuple[Pane | None, float]:
     best: Pane | None = None
     best_score = 0.0
-    for p in panes:
+    for p in _named(panes):
         score = fuzz.ratio(token, p.name.lower())
         if score > best_score:
             best_score = score
@@ -66,7 +71,7 @@ def _phonetic(token: str, panes: list[Pane]) -> Pane | None:
     primary = doublemetaphone(token)[0]
     if not primary:
         return None
-    for p in panes:
+    for p in _named(panes):
         if doublemetaphone(p.name)[0] == primary:
             return p
     return None
@@ -138,6 +143,9 @@ def name_collides(candidate: str, existing: list[str],
     cand = candidate.strip(_STRIP).lower()
     cand_code = doublemetaphone(cand)[0]
     for name in existing:
+        # Skip pseudo-titles that tmux sets when no real name is assigned (%N).
+        if name.startswith("%"):
+            continue
         other = name.lower()
         if other == cand:
             return name

@@ -1,7 +1,7 @@
 import pytest
 
 from vtmux.registry import Pane
-from vtmux.router import Route, route, name_collides
+from vtmux.router import route, name_collides
 
 
 def mk(id: str, window_id: str, window: str, index: int, name: str,
@@ -129,3 +129,46 @@ def test_name_collides_detects_phonetic_only():
     # "kris" vs "chris": rapidfuzz.fuzz.ratio ~66.7 (below 82 cutoff) but
     # both share doublemetaphone primary code "KRS", so collision is phonetic only.
     assert name_collides("kris", ["chris"]) == "chris"
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: unnamed panes (name == id) must not be matched by name tiers
+# ---------------------------------------------------------------------------
+
+def test_unnamed_pane_not_matched_by_name_tiers():
+    # Pane %2 has name == id (tmux pseudo-title): name routing must skip it.
+    unnamed = mk("%2", "@1", "main", 2, "%2")
+    named = mk("%1", "@1", "main", 1, "frontend")
+    panes = [named, unnamed]
+
+    # Exact: token "%2" should NOT route to the unnamed pane via name matching.
+    r = route("%2 do the thing", panes, focused_id="%1")
+    # Should fall through to number or fallback, not match by name.
+    # "%2" is not a digit/number-word so it falls back to focus.
+    assert r.fallback is True
+    assert r.pane_id == "%1"
+
+    # Named pane is still routable by its real name.
+    r2 = route("frontend run tests", panes, focused_id="%2")
+    assert r2.pane_id == "%1"
+    assert r2.matched_name == "frontend"
+
+
+def test_number_routing_still_works_with_unnamed_panes():
+    # Number routing (pane_index) must still consider all panes,
+    # including unnamed ones.
+    unnamed = mk("%2", "@1", "main", 2, "%2")
+    named = mk("%1", "@1", "main", 1, "frontend", active=True)
+    panes = [named, unnamed]
+
+    r = route("two run the tests", panes, focused_id="%1")
+    assert r.pane_id == "%2"   # number routing reached the unnamed pane
+    assert r.fallback is False
+    assert r.confidence == 100
+
+
+def test_name_collides_skips_pseudo_titles():
+    # A pseudo-title like "%3" should not be treated as a colliding real name.
+    assert name_collides("alpha", ["%1", "%3", "beta"]) is None
+    # Real names are still checked.
+    assert name_collides("alpha", ["alpha", "%2"]) == "alpha"

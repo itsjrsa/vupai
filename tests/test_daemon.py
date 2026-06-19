@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from vtmux.config import Config
 from vtmux.daemon import Daemon
-from vtmux.registry import Pane, PaneRegistry
+from vtmux.registry import PaneRegistry
 from vtmux.router import Route
 
 
@@ -254,3 +253,20 @@ def test_run_warms_and_starts_hotkey(tmp_path, monkeypatch):
     # the listener received the daemon's real bound callbacks (wiring proof)
     assert instances[0].on_press == daemon.on_press
     assert instances[0].on_release == daemon.on_release
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: unnamed panes must not appear in transcriber hints
+# ---------------------------------------------------------------------------
+
+def test_unnamed_pane_excluded_from_asr_hints(tmp_path):
+    # A pane whose name == id (pseudo-title set by tmux) must not be included.
+    named_line = "\t".join(["%1", "@1", "main", "0", "alpha", "node", "1"])
+    unnamed_line = "\t".join(["%2", "@1", "main", "1", "%2", "zsh", "0"])
+    daemon, _, transcriber, _, _, _ = make_daemon(
+        tmp_path, transcript="alpha hi", lines=[named_line, unnamed_line], focused="%1")
+    daemon.on_press()
+    daemon.on_release()
+    assert transcriber.last_hints is not None
+    assert "alpha" in transcriber.last_hints
+    assert "%2" not in transcriber.last_hints

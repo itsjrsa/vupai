@@ -93,3 +93,35 @@ def test_cannot_start_twice(fake_popen):
     rec.start()
     with pytest.raises(RuntimeError, match="already recording"):
         rec.start()
+
+
+# ---------------------------------------------------------------------------
+# Fix 4: stop() must clear state even if proc.wait() raises TimeoutExpired
+# ---------------------------------------------------------------------------
+
+def test_stop_clears_state_on_timeout_expired(monkeypatch):
+    """After stop() raises/returns despite TimeoutExpired, recorder is reusable."""
+    import subprocess as _subprocess
+
+    class TimeoutPopen:
+        def __init__(self, argv, *a, **kw):
+            self.argv = argv
+            self.signals: list[int] = []
+
+        def send_signal(self, sig: int) -> None:
+            self.signals.append(sig)
+
+        def wait(self, timeout=None):
+            raise _subprocess.TimeoutExpired(cmd="rec", timeout=timeout)
+
+    monkeypatch.setattr(_subprocess, "Popen", TimeoutPopen)
+    rec = Recorder()
+    rec.start()
+    assert rec.is_recording is True
+    # stop() should propagate or absorb the TimeoutExpired but must reset state.
+    try:
+        rec.stop()
+    except _subprocess.TimeoutExpired:
+        pass
+    # State must be cleared regardless.
+    assert rec.is_recording is False

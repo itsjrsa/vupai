@@ -55,8 +55,10 @@ class Recorder:
         proc = self._proc
         wav_path = self._wav_path
         # SIGINT lets sox flush the WAV header (SIGKILL would corrupt it).
-        proc.send_signal(signal.SIGINT)
-        proc.wait(timeout=5)
-        self._proc = None
-        self._wav_path = None
+        try:
+            proc.send_signal(signal.SIGINT)
+            proc.wait(timeout=5)
+        finally:
+            self._proc = None
+            self._wav_path = None
         return wav_path

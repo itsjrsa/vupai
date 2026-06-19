@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import pytest
 
 from vtmux import permissions
 from vtmux.permissions import PermissionStatus, check_permissions, hints

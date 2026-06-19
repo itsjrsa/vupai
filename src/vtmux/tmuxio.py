@@ -114,6 +114,10 @@ def new_window(name: str, command: str) -> None:
     run(["new-window", "-n", name, command])
 
 
+def kill_window(name: str) -> None:
+    run(["kill-window", "-t", name])
+
+
 def attach() -> None:
     """Replace the current process with ``tmux attach``."""
     os.execvp("tmux", ["tmux", "attach"])

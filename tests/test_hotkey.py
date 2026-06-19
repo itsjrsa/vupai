@@ -71,3 +71,41 @@ def test_release_without_held_does_not_fire():
     hk._release(keyboard.Key.alt_r)
 
     assert rbox["n"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Fix 5: exceptions in callbacks must not propagate out of _press/_release
+# ---------------------------------------------------------------------------
+
+def test_press_exception_does_not_propagate():
+    def bad_press():
+        raise RuntimeError("boom")
+
+    rbox, rinc = _counter()
+    hk = Hotkey("alt_r", on_press=bad_press, on_release=rinc)
+
+    # Must not raise even though on_press raises.
+    hk._press(keyboard.Key.alt_r)
+    # _held must still be True so the release is handled correctly.
+    assert hk._held is True
+
+    # A subsequent release must still work (listener thread stays alive).
+    hk._release(keyboard.Key.alt_r)
+    assert rbox["n"] == 1
+    assert hk._held is False
+
+
+def test_release_exception_does_not_propagate():
+    pbox, pinc = _counter()
+
+    def bad_release():
+        raise ValueError("oops")
+
+    hk = Hotkey("alt_r", on_press=pinc, on_release=bad_release)
+    hk._press(keyboard.Key.alt_r)
+    assert pbox["n"] == 1
+
+    # Must not raise.
+    hk._release(keyboard.Key.alt_r)
+    # _held reset before callback, so it's False even after the exception.
+    assert hk._held is False

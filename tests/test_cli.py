@@ -1,19 +1,20 @@
 import sys
-import types
-from pathlib import Path
 
 import pytest
 
 from vtmux import cli
+from vtmux.tmuxio import TmuxError
 
 
 class FakeTmux:
     """In-memory stand-in for the tmuxio module."""
 
-    def __init__(self, *, server=True, windows=None, focused="%1"):
+    def __init__(self, *, server=True, windows=None, focused="%1",
+                 kill_window_raises=False):
         self._server = server
         self.windows = set(windows or [])
         self._focused = focused
+        self._kill_window_raises = kill_window_raises
         self.calls: list[tuple] = []
 
     def server_running(self) -> bool:
@@ -31,6 +32,12 @@ class FakeTmux:
     def new_window(self, name: str, command: str) -> None:
         self.calls.append(("new_window", name, command))
         self.windows.add(name)
+
+    def kill_window(self, name: str) -> None:
+        self.calls.append(("kill_window", name))
+        if self._kill_window_raises:
+            raise TmuxError("no window named voice")
+        self.windows.discard(name)
 
     def attach(self) -> None:
         self.calls.append(("attach",))
@@ -61,7 +68,9 @@ def test_up_creates_voice_window_when_absent(fake_env):
     assert rc == 0
     names = [c for c in ft.calls if c[0] == "new_window"]
     assert names and names[0][1] == "voice"
-    assert names[0][2] == "python -m vtmux _daemon"
+    # Fix 3: DAEMON_CMD must use the venv interpreter (sys.executable).
+    assert names[0][2].startswith(sys.executable)
+    assert names[0][2].endswith("-m vtmux _daemon")
     assert ("enable_pane_titles",) in ft.calls
 
 
@@ -142,7 +151,8 @@ def test_name_rejects_colliding_name(fake_env, monkeypatch, capsys):
     rc = cli.main(["name", "alpha"])
     assert rc != 0
     assert not any(c[0] == "set_pane_title" for c in ft.calls)
-    captured = capsys.readouterr(); out = captured.out + captured.err
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
     assert "alpha" in out
 
 
@@ -172,6 +182,21 @@ def test_down_terminates_and_removes_pidfile(monkeypatch, tmp_path):
     rc = cli.main(["down"])
     assert rc == 0
     assert killed == [(4242, cli.signal.SIGTERM)]
+    # Fix 2: voice window must be killed so `up` can restart the daemon.
+    assert ("kill_window", "voice") in ft.calls
+    assert not pidfile.exists()
+
+
+def test_down_kills_window_even_if_missing(monkeypatch, tmp_path):
+    # kill_window raises TmuxError (window doesn't exist); down must not crash.
+    ft = FakeTmux(server=True, kill_window_raises=True)
+    monkeypatch.setattr(cli, "tmuxio", ft)
+    pidfile = tmp_path / "daemon.pid"
+    pidfile.write_text("9999")
+    monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: None)
+    rc = cli.main(["down"])
+    assert rc == 0
     assert not pidfile.exists()
 
 

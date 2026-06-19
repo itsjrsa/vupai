@@ -4,10 +4,12 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import sys
 from pathlib import Path
 
 from vtmux import tmuxio
 from vtmux.asr import ParakeetTranscriber
+from vtmux.tmuxio import TmuxError
 from vtmux.config import load_config
 from vtmux.daemon import Daemon
 from vtmux.feedback import Feedback
@@ -17,7 +19,7 @@ from vtmux.registry import PaneRegistry
 from vtmux.router import name_collides
 
 PIDFILE: Path = Path.home() / ".config" / "vtmux" / "daemon.pid"
-DAEMON_CMD = "python -m vtmux _daemon"
+DAEMON_CMD = f"{sys.executable} -m vtmux _daemon"
 
 
 def ensure_up() -> None:
@@ -55,6 +57,10 @@ def _cmd_down(args: argparse.Namespace) -> int:
         pid = int(PIDFILE.read_text().strip())
         os.kill(pid, signal.SIGTERM)
     except (ValueError, ProcessLookupError):
+        pass
+    try:
+        tmuxio.kill_window(load_config().voice_window_name)
+    except TmuxError:
         pass
     PIDFILE.unlink(missing_ok=True)
     return 0

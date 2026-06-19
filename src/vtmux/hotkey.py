@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
 from pynput import keyboard
+
+_log = logging.getLogger(__name__)
 
 
 class Hotkey:
@@ -10,6 +13,9 @@ class Hotkey:
 
     pynput's on_press fires repeatedly while a key is held; the _held flag
     ensures on_press/on_release each fire once per physical press cycle.
+
+    Exceptions from the user callbacks are caught and logged so that the
+    pynput listener thread is never killed by application errors.
     """
 
     def __init__(self, key_name: str, on_press: Callable[[], None],
@@ -27,7 +33,10 @@ class Hotkey:
         if self._held:
             return  # ignore auto-repeat while held
         self._held = True
-        self._on_press()
+        try:
+            self._on_press()
+        except Exception:
+            _log.exception("on_press callback raised")
 
     def _release(self, key) -> None:
         if key != self._key:
@@ -35,7 +44,10 @@ class Hotkey:
         if not self._held:
             return
         self._held = False
-        self._on_release()
+        try:
+            self._on_release()
+        except Exception:
+            _log.exception("on_release callback raised")
 
     def start(self) -> None:
         # Listener runs on its own background thread (non-blocking).
