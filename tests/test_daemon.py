@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 from vtmux.config import Config
 from vtmux.daemon import Daemon
 from vtmux.registry import PaneRegistry

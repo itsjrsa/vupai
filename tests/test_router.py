@@ -1,7 +1,7 @@
 import pytest
 
 from vtmux.registry import Pane
-from vtmux.router import route, name_collides
+from vtmux.router import name_collides, route
 
 
 def mk(id: str, window_id: str, window: str, index: int, name: str,

@@ -9,7 +9,6 @@ from pathlib import Path
 
 from vtmux import tmuxio
 from vtmux.asr import ParakeetTranscriber
-from vtmux.tmuxio import TmuxError
 from vtmux.config import load_config
 from vtmux.daemon import Daemon
 from vtmux.feedback import Feedback
@@ -17,6 +16,7 @@ from vtmux.permissions import check_permissions, hints
 from vtmux.recorder import Recorder
 from vtmux.registry import PaneRegistry
 from vtmux.router import name_collides
+from vtmux.tmuxio import TmuxError
 
 PIDFILE: Path = Path.home() / ".config" / "vtmux" / "daemon.pid"
 DAEMON_CMD = f"{sys.executable} -m vtmux _daemon"

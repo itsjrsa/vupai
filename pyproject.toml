@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "vtmux"
 version = "0.1.0"
 description = "Push-to-talk voice control over tmux agent panes"
+readme = "README.md"
+authors = [{ name = "José Andrade", email = "jrsa2012@gmail.com" }]
 requires-python = ">=3.11"
 dependencies = [
     "parakeet-mlx",
@@ -23,6 +25,9 @@ dev = [
 [project.scripts]
 vtmux = "vtmux.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/itsjrsa/tmux-agents"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/vtmux"]
 
@@ -38,3 +43,12 @@ markers = [
 src = ["src", "tests"]
 target-version = "py311"
 line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]   # pycodestyle, pyflakes, isort (import ordering)
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+extraPaths = ["src"]
+pythonVersion = "3.11"

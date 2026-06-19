@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rapidfuzz import fuzz
 from metaphone import doublemetaphone
+from rapidfuzz import fuzz
 
 from vtmux.registry import Pane
 
