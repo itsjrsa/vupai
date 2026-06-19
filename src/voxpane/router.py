@@ -151,6 +151,28 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
     return fallback()
 
 
+# Curated callsigns auto-assigned to new panes: short, easy to say, and chosen
+# to be mutually distinct under the router's fuzzy/phonetic matching so the ASR
+# rarely confuses them. Assignment walks this list in order and skips any that
+# collide with a name already in use.
+CALLSIGNS: tuple[str, ...] = (
+    "nova", "atlas", "sage", "echo", "orion", "river", "ember", "juno",
+    "lyra", "vega", "koda", "slate", "raven", "quill", "tango", "pixel",
+)
+
+
+def next_callsign(used: list[str], *, fuzzy_cutoff: int = 82) -> str | None:
+    """First CALLSIGN not confusable with any name in `used`, else None.
+
+    Reuses :func:`name_collides` so an auto-assigned callsign can never clash
+    with an existing pane name (exact, fuzzy, or phonetic).
+    """
+    for cand in CALLSIGNS:
+        if name_collides(cand, used, fuzzy_cutoff=fuzzy_cutoff) is None:
+            return cand
+    return None
+
+
 def name_collides(candidate: str, existing: list[str],
                   *, fuzzy_cutoff: int = 82) -> str | None:
     """Return an existing name confusable with `candidate`, else None.

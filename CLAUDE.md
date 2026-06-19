@@ -6,7 +6,7 @@ the focused one by default, or an agent addressed by name ("Nova, run the tests"
 
 ## Status
 
-v1 implemented and on `master` (133 unit tests pass, `ruff` clean). Validated by
+v1 implemented and on `master` (148 unit tests pass, `ruff` clean). Validated by
 **unit tests only** — the `@integration` (real tmux) and `@slow` (real Parakeet
 model + mic) suites and the live daemon must run on a macOS Apple-Silicon machine.
 The design spec + implementation plan live under `docs/superpowers/`
@@ -27,6 +27,7 @@ voxpane doctor                                         # check macOS permissions
 - `voxpane` — ensure tmux + spawn the voice daemon (detached), then attach (default, no subcommand)
 - `voxpane up` / `voxpane down` — start / stop the daemon (`down` SIGTERMs the pid; also clears a legacy voice window)
 - `voxpane name <name> [pane]` — label a pane (rejects confusable names; defaults to focused)
+- `voxpane autoname [pane]` — assign the next free callsign from the pool to a pane unless already named; driven by the tmux pane-creation hooks (also usable by hand). `<prefix>+R` renames the active pane via this path's sibling `voxpane name`
 - `voxpane status` — list panes, daemon pid + log path, permission state
 - `voxpane _daemon` — hidden; the long-running daemon process (spawned detached, logs to `~/.config/voxpane/daemon.log`)
 
@@ -45,7 +46,7 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 | `src/voxpane/hotkey.py` | global push-to-talk via `pynput`, debounced (Right-Option) |
 | `src/voxpane/recorder.py` | `sox rec` → wav, SIGINT to stop; exports `MIN_WAV_BYTES` |
 | `src/voxpane/asr.py` | `parakeet-mlx` `Transcriber` Protocol, lazy `warm()` + cache |
-| `src/voxpane/router.py` | name cascade exact→rapidfuzz→metaphone, number-in-window, focus fallback, near-tie ambiguity |
+| `src/voxpane/router.py` | name cascade exact→rapidfuzz→metaphone, number-in-window, focus fallback, near-tie ambiguity; `CALLSIGNS` pool + `next_callsign` (auto-name picker) |
 | `src/voxpane/registry.py` | `Pane` + `PaneRegistry` parsed from `tmux list-panes` |
 | `src/voxpane/injector.py` | paste → poll `capture-pane` → Enter (the safety core) |
 | `src/voxpane/tmuxio.py` | thin exact-argv wrappers over the `tmux` CLI |
@@ -77,6 +78,18 @@ Invariants) and talks to tmux purely via the CLI.
 - **Unnamed panes:** when `@voxpane_name` is unset the field is empty; `parse_panes`
   falls back to the pane id so `name == id`. Router name-matching and the ASR hints
   **skip panes where `name == id`**; number routing still considers them.
+- **Auto-naming:** `ensure_up` sets `after-split-window` + `after-new-window` hooks
+  (and binds `<prefix>+R`) so every newly created pane runs `voxpane autoname` and
+  gets the next free `CALLSIGNS` entry. The hook targets `#{pane_id}` (the pane
+  active *after* the split), so it relies on the new pane being focused (the tmux
+  default for an interactive split); a detached `split-window -d` would name the
+  wrong pane. `autoname` is **idempotent** (skips a pane whose `name != id`).
+  The hooks fire only for panes created *after* they're installed, so `new-session`'s
+  **initial pane fires no hook** — `ensure_up` therefore also runs
+  `_autoname_unnamed_panes()`, a one-time idempotent sweep that names the initial
+  pane (and any pre-existing unnamed panes when attaching to a running server).
+  Hook/binding callbacks run via tmux `run-shell` (`/bin/sh`, no venv on PATH), so
+  `_self_cmd()` invokes them with the absolute `sys.executable -m voxpane`.
 - **ASR is kept warm** (model loaded once via `warm()`); the first call is otherwise multi-second.
 - **Daemon must run OUTSIDE tmux** (`_spawn_daemon` detaches it under the terminal
   app). A process *inside* a tmux window has the long-lived tmux server as its

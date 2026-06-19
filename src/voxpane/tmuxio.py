@@ -94,6 +94,29 @@ def enable_pane_titles() -> None:
          "#{?@voxpane_name,#{@voxpane_name},#{pane_title}}"])
 
 
+def set_pane_autoname_hooks(self_cmd: str) -> None:
+    """Auto-assign a callsign to every newly created pane.
+
+    `self_cmd` is how to invoke this CLI (e.g. "/path/python -m voxpane"); tmux
+    expands #{pane_id} to the new pane. Output is discarded so splits stay quiet.
+    Hooked on split + new-window so manually created panes get named too.
+    """
+    inner = f"{self_cmd} autoname #{{pane_id}} >/dev/null 2>&1"
+    hookcmd = f'run-shell "{inner}"'
+    for hook in ("after-split-window", "after-new-window"):
+        run(["set-hook", "-g", hook, hookcmd])
+
+
+def bind_rename_key(self_cmd: str, key: str = "R") -> None:
+    """Bind <prefix>+`key` to prompt for a name and apply it to the active pane.
+
+    Lets the user override an auto-assigned callsign from inside any pane,
+    without needing a separate shell pane to run `voxpane name`.
+    """
+    inner = f"{self_cmd} name '%%' #{{pane_id}}"
+    run(["bind-key", key, "command-prompt", "-p", "rename pane:", f'run-shell "{inner}"'])
+
+
 def set_extended_keys_off() -> None:
     # Keep the CR from send-keys delivered as a plain Enter so Claude Code
     # submits on it. extended-keys (CSI-u) can re-encode Enter into an escape

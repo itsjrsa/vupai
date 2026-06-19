@@ -16,7 +16,7 @@ from voxpane.feedback import Feedback
 from voxpane.permissions import check_permissions, hints, missing_tools
 from voxpane.recorder import Recorder
 from voxpane.registry import PaneRegistry
-from voxpane.router import name_collides
+from voxpane.router import name_collides, next_callsign
 from voxpane.tmuxio import TmuxError
 
 PIDFILE: Path = Path.home() / ".config" / "voxpane" / "daemon.pid"
@@ -64,14 +64,52 @@ def _spawn_daemon() -> None:
     PIDFILE.write_text(str(proc.pid))
 
 
+def _self_cmd() -> str:
+    """How tmux hooks/bindings should re-invoke this CLI.
+
+    Uses the absolute venv interpreter so `voxpane` need not be on tmux's PATH
+    (run-shell executes via /bin/sh, which lacks the venv activation).
+    """
+    return f"{sys.executable} -m voxpane"
+
+
+def _autoname_unnamed_panes() -> None:
+    """One-time sweep: give every currently-unnamed pane a callsign.
+
+    The pane-creation hooks only fire for panes created *after* they are
+    installed, so the session's initial pane (created by `new-session`, which
+    fires no split/new-window hook) and any pre-existing panes when attaching to
+    a running server would otherwise stay nameless. Idempotent and silent.
+    """
+    try:
+        registry = PaneRegistry()
+        registry.refresh()
+    except TmuxError:
+        return
+    used = [p.name for p in registry.panes if p.name != p.id]
+    cutoff = load_config().fuzzy_cutoff
+    for pane in registry.panes:
+        if pane.name != pane.id:
+            continue  # already named
+        callsign = next_callsign(used, fuzzy_cutoff=cutoff)
+        if callsign is None:
+            break  # pool exhausted
+        tmuxio.set_pane_name(pane.id, callsign)
+        used.append(callsign)
+
+
 def ensure_up() -> None:
-    """Start the tmux server, enable pane titles, and ensure the voice daemon is running."""
+    """Start the tmux server, configure naming, and ensure the voice daemon is running."""
     if not tmuxio.server_running():
         # Start a detached server. NOTE: tmuxio.run() already prepends "tmux",
         # so the argv must NOT include it again.
         tmuxio.run(["new-session", "-d", "-s", "voxpane"])
     tmuxio.enable_pane_titles()
     tmuxio.set_extended_keys_off()
+    self_cmd = _self_cmd()
+    tmuxio.set_pane_autoname_hooks(self_cmd)  # new panes auto-get a callsign
+    tmuxio.bind_rename_key(self_cmd)          # <prefix>+R renames the active pane
+    _autoname_unnamed_panes()                 # name the initial pane the hooks miss
     if not _daemon_running():
         _spawn_daemon()
 
@@ -147,6 +185,34 @@ def _cmd_name(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_autoname(args: argparse.Namespace) -> int:
+    """Assign the next free callsign to a pane, unless it is already named.
+
+    Invoked by the tmux after-split/after-new-window hooks for each new pane;
+    also usable by hand. Idempotent: a pane that already has a name is left
+    alone, so re-firing the hook never relabels an agent.
+    """
+    registry = PaneRegistry()
+    registry.refresh()
+    target = args.pane or tmuxio.focused_pane_id()
+    if target is None:
+        print("no pane to name")
+        return 1
+    pane = next((p for p in registry.panes if p.id == target), None)
+    # name == id means unnamed; anything else is a real, user-or-auto name.
+    if pane is not None and pane.name != pane.id:
+        print(f"{target} already named '{pane.name}'")
+        return 0
+    used = [p.name for p in registry.panes if p.name != p.id]
+    callsign = next_callsign(used, fuzzy_cutoff=load_config().fuzzy_cutoff)
+    if callsign is None:
+        print("no free callsign available")
+        return 0
+    tmuxio.set_pane_name(target, callsign)
+    print(f"named {target} '{callsign}'")
+    return 0
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     missing = missing_tools()
     for pkg in missing:
@@ -194,6 +260,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_name.add_argument("name")
     p_name.add_argument("pane", nargs="?", default=None)
     p_name.set_defaults(func=_cmd_name)
+
+    p_autoname = sub.add_parser("autoname")
+    p_autoname.add_argument("pane", nargs="?", default=None)
+    p_autoname.set_defaults(func=_cmd_autoname)
 
     sub.add_parser("doctor").set_defaults(func=_cmd_doctor)
 

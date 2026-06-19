@@ -136,6 +136,25 @@ def test_enable_pane_titles_runs_both_set_commands(monkeypatch):
     ]
 
 
+def test_set_pane_autoname_hooks_argv(monkeypatch):
+    fake = FakeRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.set_pane_autoname_hooks("PY -m voxpane")
+    expected = 'run-shell "PY -m voxpane autoname #{pane_id} >/dev/null 2>&1"'
+    assert fake.calls[0]["args"] == ["tmux", "set-hook", "-g", "after-split-window", expected]
+    assert fake.calls[1]["args"] == ["tmux", "set-hook", "-g", "after-new-window", expected]
+
+
+def test_bind_rename_key_argv(monkeypatch):
+    fake = FakeRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.bind_rename_key("PY -m voxpane")
+    assert fake.calls[0]["args"] == [
+        "tmux", "bind-key", "R", "command-prompt", "-p", "rename pane:",
+        "run-shell \"PY -m voxpane name '%%' #{pane_id}\"",
+    ]
+
+
 def test_set_extended_keys_off_argv(monkeypatch):
     fake = FakeRun()
     patch_run(monkeypatch, fake)

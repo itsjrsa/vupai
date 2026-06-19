@@ -46,6 +46,12 @@ class FakeTmux:
     def set_pane_name(self, pane_id: str, name: str) -> None:
         self.calls.append(("set_pane_name", pane_id, name))
 
+    def set_pane_autoname_hooks(self, self_cmd: str) -> None:
+        self.calls.append(("set_pane_autoname_hooks", self_cmd))
+
+    def bind_rename_key(self, self_cmd: str, key: str = "R") -> None:
+        self.calls.append(("bind_rename_key", self_cmd, key))
+
     def focused_pane_id(self):
         return self._focused
 
@@ -63,6 +69,9 @@ def fake_env(monkeypatch, tmp_path):
     # Don't launch a real background process or probe a real pid in unit tests.
     monkeypatch.setattr(cli, "_daemon_running", lambda: False)
     monkeypatch.setattr(cli, "_spawn_daemon", lambda: ft.daemon_spawns.append(True))
+    # ensure_up sweeps unnamed panes via PaneRegistry; default to an empty
+    # registry so unit tests never touch a real tmux. Tests override as needed.
+    _stub_registry(monkeypatch, [])
     return ft, pidfile
 
 
@@ -74,6 +83,43 @@ def test_up_spawns_daemon_when_not_running(fake_env):
     assert ft.daemon_spawns == [True]
     assert not any(c[0] == "new_window" for c in ft.calls)
     assert ("enable_pane_titles",) in ft.calls
+
+
+def test_up_installs_naming_hooks_and_binding(fake_env):
+    ft, pidfile = fake_env
+    rc = cli.main(["up"])
+    assert rc == 0
+    kinds = [c[0] for c in ft.calls]
+    assert "set_pane_autoname_hooks" in kinds  # new panes auto-named
+    assert "bind_rename_key" in kinds          # prefix+R renames active pane
+
+
+def test_up_names_unnamed_initial_pane(fake_env, monkeypatch):
+    # The session's first pane is created by new-session (no split hook fires),
+    # so ensure_up's sweep must give it a callsign.
+    from voxpane.router import CALLSIGNS
+    ft, pidfile = fake_env
+    _stub_registry(monkeypatch, [_pane("%0", "%0")])  # one unnamed pane
+    rc = cli.main(["up"])
+    assert rc == 0
+    assert ("set_pane_name", "%0", CALLSIGNS[0]) in ft.calls
+
+
+def test_autoname_unnamed_panes_sweeps_only_unnamed(fake_env, monkeypatch):
+    from voxpane.router import CALLSIGNS
+    ft, pidfile = fake_env
+    _stub_registry(monkeypatch, [
+        _pane(CALLSIGNS[0], "%1"),  # already named -> skipped, but its name is "used"
+        _pane("%2", "%2"),          # unnamed
+        _pane("%3", "%3"),          # unnamed
+    ])
+    cli._autoname_unnamed_panes()
+    named = [c for c in ft.calls if c[0] == "set_pane_name"]
+    # Each unnamed pane gets a distinct callsign, skipping the one already in use.
+    assert named == [
+        ("set_pane_name", "%2", CALLSIGNS[1]),
+        ("set_pane_name", "%3", CALLSIGNS[2]),
+    ]
 
 
 def test_up_skips_spawn_when_daemon_already_running(fake_env, monkeypatch):
@@ -90,6 +136,7 @@ def test_up_starts_server_when_down(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
     monkeypatch.setattr(cli, "_daemon_running", lambda: False)
     monkeypatch.setattr(cli, "_spawn_daemon", lambda: None)
+    _stub_registry(monkeypatch, [])  # ensure_up sweeps the registry; keep it hermetic
     rc = cli.main(["up"])
     assert rc == 0
     # new-session issued via tmuxio.run WITHOUT a redundant leading "tmux"
@@ -180,6 +227,47 @@ def test_name_rejects_colliding_name(fake_env, monkeypatch, capsys):
     captured = capsys.readouterr()
     out = captured.out + captured.err
     assert "alpha" in out
+
+
+# ---------------------------------------------------------------------------
+# autoname subcommand (called by the tmux pane-creation hooks)
+# ---------------------------------------------------------------------------
+
+def test_autoname_assigns_callsign_to_unnamed_focused(fake_env, monkeypatch):
+    from voxpane.router import CALLSIGNS
+    ft, pidfile = fake_env                       # focused pane is %1
+    _stub_registry(monkeypatch, [_pane("%1", "%1")])  # unnamed: name == id
+    rc = cli.main(["autoname"])
+    assert rc == 0
+    assert ("set_pane_name", "%1", CALLSIGNS[0]) in ft.calls
+
+
+def test_autoname_skips_already_named_pane(fake_env, monkeypatch, capsys):
+    ft, pidfile = fake_env
+    _stub_registry(monkeypatch, [_pane("alpha", "%1")])  # already named
+    rc = cli.main(["autoname"])
+    assert rc == 0
+    assert not any(c[0] == "set_pane_name" for c in ft.calls)
+    assert "alpha" in capsys.readouterr().out
+
+
+def test_autoname_explicit_pane_arg(fake_env, monkeypatch):
+    from voxpane.router import CALLSIGNS
+    ft, pidfile = fake_env
+    _stub_registry(monkeypatch, [_pane("%7", "%7")])
+    rc = cli.main(["autoname", "%7"])
+    assert rc == 0
+    assert ("set_pane_name", "%7", CALLSIGNS[0]) in ft.calls
+
+
+def test_autoname_avoids_callsign_already_in_use(fake_env, monkeypatch):
+    from voxpane.router import CALLSIGNS
+    ft, pidfile = fake_env
+    # CALLSIGNS[0] is taken by another pane; the unnamed one must get CALLSIGNS[1].
+    _stub_registry(monkeypatch, [_pane(CALLSIGNS[0], "%2"), _pane("%1", "%1")])
+    rc = cli.main(["autoname"])
+    assert rc == 0
+    assert ("set_pane_name", "%1", CALLSIGNS[1]) in ft.calls
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +404,8 @@ def test_daemon_builds_and_runs(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("argv", [
     [], ["up"], ["down"], ["status"], ["doctor"],
-    ["name", "x"], ["name", "x", "%3"], ["_daemon"],
+    ["name", "x"], ["name", "x", "%3"], ["autoname"], ["autoname", "%3"],
+    ["_daemon"],
 ])
 def test_parser_accepts_all_subcommands(argv):
     parser = cli.build_parser()

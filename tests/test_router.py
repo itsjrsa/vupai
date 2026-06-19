@@ -1,7 +1,7 @@
 import pytest
 
 from voxpane.registry import Pane
-from voxpane.router import name_collides, route
+from voxpane.router import CALLSIGNS, name_collides, next_callsign, route
 
 
 def mk(id: str, window_id: str, window: str, index: int, name: str,
@@ -172,6 +172,30 @@ def test_name_collides_skips_pseudo_titles():
     assert name_collides("alpha", ["%1", "%3", "beta"]) is None
     # Real names are still checked.
     assert name_collides("alpha", ["alpha", "%2"]) == "alpha"
+
+
+# ---------------------------------------------------------------------------
+# Auto-assigned callsigns for new panes
+# ---------------------------------------------------------------------------
+
+def test_next_callsign_picks_first_when_none_used():
+    assert next_callsign([]) == CALLSIGNS[0]
+
+
+def test_next_callsign_skips_used_and_confusable():
+    # CALLSIGNS[0] taken outright; CALLSIGNS[1] blocked by a fuzzy near-match.
+    used = [CALLSIGNS[0], CALLSIGNS[1] + "x"]
+    pick = next_callsign(used)
+    assert pick == CALLSIGNS[2]
+
+
+def test_next_callsign_ignores_unnamed_pseudo_titles():
+    # Pseudo-titles (%N) are not real names; the first callsign stays available.
+    assert next_callsign(["%1", "%2"]) == CALLSIGNS[0]
+
+
+def test_next_callsign_returns_none_when_pool_exhausted():
+    assert next_callsign(list(CALLSIGNS)) is None
 
 
 # ---------------------------------------------------------------------------
