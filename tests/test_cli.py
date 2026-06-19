@@ -187,8 +187,8 @@ def test_down_terminates_and_removes_pidfile(monkeypatch, tmp_path):
     assert not pidfile.exists()
 
 
-def test_down_kills_window_even_if_missing(monkeypatch, tmp_path):
-    # kill_window raises TmuxError (window doesn't exist); down must not crash.
+def test_down_with_pidfile_survives_kill_window_error(monkeypatch, tmp_path):
+    # pidfile present; kill_window raises TmuxError (window gone); down must not crash.
     ft = FakeTmux(server=True, kill_window_raises=True)
     monkeypatch.setattr(cli, "tmuxio", ft)
     pidfile = tmp_path / "daemon.pid"
