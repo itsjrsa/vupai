@@ -155,6 +155,21 @@ Invariants) and talks to tmux purely via the CLI.
   not shadow reserved verbs (create/close/focus/swap/zoom). **Unvalidated on a live
   daemon:** Claude's `/` autocomplete overlay may make the injector's `capture-pane`
   confirm-poll behave differently or have Enter pick a menu item; verify before trust.
+- **ASR mishearing aliases (curated, per-token).** "pane" and the command verbs
+  mishear as near-homophones; each is recovered by an explicit alias set in
+  `commands.py`, same one-line-edit-plus-a-test pattern as `_FILLERS`. Scoring is
+  deliberately avoided (it over-matches real words like "plans"/"lanes"), so the
+  sets list only known mis-transcriptions and OMIT real-word lookalikes. Current
+  sets: `_UNIT_ALIASES` (pain/pen/paint -> pane; windo* -> window), `_CREATE_VERB_ALIASES`
+  (ate/hate/eight/crate), `_CLOSE_VERB_ALIASES` (clothes/cloze),
+  `_SWAP_VERB_ALIASES` (swab/swamp), `_ZOOM_VERB_ALIASES` (zoo). **Precision over
+  recall, scaled to blast radius:** destructive verbs keep tighter sets, and every
+  alias is safe by construction because the parse still requires its operands (create
+  needs a 1-9 count; close needs a target; swap needs two names) - a misfire with no
+  valid operand returns None and **falls through to verbatim inject**, never an action.
+  `focus`/`kill`/`unzoom` are intentionally un-aliased (no clean real-word homophone).
+  The `create` unit noun is also **optional** ("create two" == "create two panes",
+  default pane) with homophone-free synonyms `agent(s)`/`split(s)` -> pane.
 
 ## Design decisions (settled rationale)
 
