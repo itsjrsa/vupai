@@ -38,6 +38,14 @@ class Route:
     candidates: tuple[str, ...] = ()  # non-empty only on an ambiguous near-tie name match
 
 
+@dataclass(frozen=True)
+class NameMatch:
+    pane_id: str | None
+    matched_name: str | None
+    confidence: float
+    candidates: tuple[str, ...] = ()
+
+
 def _first_token(transcript: str) -> tuple[str, str]:
     """Return (normalized_first_token, remainder_with_original_casing).
 
@@ -102,6 +110,32 @@ def _phonetic(token: str, panes: list[Pane]) -> Pane | None:
     return None
 
 
+def resolve_pane_by_name(
+    token: str, panes: list[Pane], *, fuzzy_cutoff: int = 82, ambiguity_margin: int = 5
+) -> NameMatch:
+    """Resolve a single spoken name token to a pane via the router cascade.
+
+    exact (100) -> fuzzy (score, with near-tie ambiguity) -> phonetic (70).
+    Returns a NameMatch; pane_id is None on no match or an ambiguous near-tie
+    (candidates non-empty only in the ambiguous case).
+    """
+    token = token.strip(_STRIP).lower()
+    if not token:
+        return NameMatch(None, None, 0.0)
+    hit = _exact(token, panes)
+    if hit is not None:
+        return NameMatch(hit.id, hit.name, 100.0)
+    hit, score, candidates = _fuzzy_match(token, panes, fuzzy_cutoff, ambiguity_margin)
+    if candidates:
+        return NameMatch(None, None, score, candidates)
+    if hit is not None:
+        return NameMatch(hit.id, hit.name, score)
+    hit = _phonetic(token, panes)
+    if hit is not None:
+        return NameMatch(hit.id, hit.name, 70.0)
+    return NameMatch(None, None, 0.0)
+
+
 def _number(token: str) -> int | None:
     n = word_to_int(token)
     return n if n is not None and 1 <= n <= 9 else None
@@ -119,28 +153,15 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
     if not token:
         return fallback()
 
-    # 1. Exact (case-insensitive) name match.
-    hit = _exact(token, panes)
-    if hit is not None:
-        return Route(pane_id=hit.id, text=remainder, matched_name=hit.name,
-                     confidence=100.0, fallback=False)
-
-    # 2. Fuzzy name match (with near-tie ambiguity detection).
-    hit, score, candidates = _fuzzy_match(token, panes, fuzzy_cutoff, ambiguity_margin)
-    if candidates:
-        # Two or more names are too close to call: surface them, route nowhere,
-        # and leave the transcript intact so the user can re-say it.
+    # 1-3. Name cascade (exact -> fuzzy/ambiguity -> phonetic), reused by commands.
+    m = resolve_pane_by_name(
+        token, panes, fuzzy_cutoff=fuzzy_cutoff, ambiguity_margin=ambiguity_margin)
+    if m.candidates:
         return Route(pane_id=None, text=transcript, matched_name=None,
-                     confidence=score, fallback=False, candidates=candidates)
-    if hit is not None:
-        return Route(pane_id=hit.id, text=remainder, matched_name=hit.name,
-                     confidence=score, fallback=False)
-
-    # 3. Phonetic match via double-metaphone primary code.
-    hit = _phonetic(token, panes)
-    if hit is not None:
-        return Route(pane_id=hit.id, text=remainder, matched_name=hit.name,
-                     confidence=70.0, fallback=False)
+                     confidence=m.confidence, fallback=False, candidates=m.candidates)
+    if m.pane_id is not None:
+        return Route(pane_id=m.pane_id, text=remainder, matched_name=m.matched_name,
+                     confidence=m.confidence, fallback=False)
 
     # 4. Number (digit or word 1..9) -> pane_index within the FOCUSED window.
     n = _number(token)

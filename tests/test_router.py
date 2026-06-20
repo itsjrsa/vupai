@@ -1,7 +1,7 @@
 import pytest
 
 from voxpane.registry import Pane
-from voxpane.router import CALLSIGNS, name_collides, next_callsign, route, word_to_int
+from voxpane.router import CALLSIGNS, NameMatch, name_collides, next_callsign, resolve_pane_by_name, route, word_to_int
 
 
 def test_word_to_int_digits_and_words():
@@ -28,6 +28,27 @@ def panes() -> list[Pane]:
         mk("%2", "@1", "main", 2, "backend"),
         mk("%3", "@2", "side", 1, "docs"),
     ]
+
+
+def test_resolve_exact(panes):
+    m = resolve_pane_by_name("backend", panes, fuzzy_cutoff=82)
+    assert (m.pane_id, m.matched_name, m.confidence, m.candidates) == ("%2", "backend", 100.0, ())
+
+
+def test_resolve_fuzzy(panes):
+    m = resolve_pane_by_name("frontnd", panes, fuzzy_cutoff=82)
+    assert m.pane_id == "%1" and 82 <= m.confidence < 100 and m.candidates == ()
+
+
+def test_resolve_no_match(panes):
+    m = resolve_pane_by_name("zzzz", panes, fuzzy_cutoff=82)
+    assert m.pane_id is None and m.candidates == ()
+
+
+def test_resolve_ambiguous():
+    p = [mk("%1", "@1", "main", 1, "nova"), mk("%2", "@1", "main", 2, "novo")]
+    m = resolve_pane_by_name("nov", p, fuzzy_cutoff=82)
+    assert m.pane_id is None and set(m.candidates) == {"nova", "novo"}
 
 
 def test_exact_match_case_insensitive(panes):
