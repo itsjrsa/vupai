@@ -111,6 +111,30 @@ def test_parse_create_default_program():
     assert c.kind == "create" and c.count == 4 and c.program is None and c.unit == "pane"
 
 
+def test_parse_create_article_means_one():
+    # "create a pane" == "create one pane".
+    c = _parse_btn("create a pane")
+    assert c.kind == "create" and c.count == 1 and c.program is None and c.unit == "pane"
+
+
+def test_parse_create_article_an_with_program():
+    c = _parse_btn("create an shell pane")
+    assert c.kind == "create" and c.count == 1 and c.program == "" and c.unit == "pane"
+
+
+def test_parse_create_another_means_one():
+    c = _parse_btn("create another pane")
+    assert c.kind == "create" and c.count == 1 and c.unit == "pane"
+
+
+def test_parse_close_everyone_closes_others():
+    # "close everyone" aligns with the slash all-target grammar, not a pane named
+    # "everyone".
+    for word in ("others", "rest", "all", "everyone", "everybody"):
+        c = _parse_btn(f"close {word}")
+        assert c.kind == "close_others", word
+
+
 def test_parse_create_explicit_shell_program():
     c = _parse_btn("create two shell panes")
     assert c.kind == "create" and c.count == 2 and c.program == ""

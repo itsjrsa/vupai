@@ -29,6 +29,10 @@ _UNZOOM_VERBS = ("unzoom", "minimize", "restore")
 # own, so matching it here can't shadow a real utterance.
 _UNZOOM_PHRASES = (["and", "zoom"], ["un", "zoom"])
 _UNITS = {"pane": "pane", "panes": "pane", "window": "window", "windows": "window"}
+# Tokens that mean "one" before the unit ("create a pane" / "create another
+# pane" == "create one pane"). Scoped to the create parse only - never fed to the
+# global word_to_int, so these can't leak into router number-routing or dictation.
+_ONE_WORDS = ("a", "an", "another")
 # Curated ASR mishearings of the unit noun -> canonical unit. The trailing unit
 # token is the most-misheard part of "create N panes" ("paints"/"pains"). A
 # fuzzy or phonetic match cannot help here: by Levenshtein ratio the real errors
@@ -59,6 +63,11 @@ def _resolve_unit(token: str) -> str | None:
 
 # Trailing target tokens that mean "all named panes" for a slash command.
 _ALL_TARGETS = ("all", "everyone", "everybody")
+# Tokens after a close verb that mean "close every other pane" ("close the
+# rest", "close everyone"). Superset of _ALL_TARGETS so close stays consistent
+# with the slash all-target grammar; none are valid CALLSIGNS, so this can't
+# shadow a real pane name.
+_CLOSE_ALL_TARGETS = frozenset(_ALL_TARGETS) | {"others", "rest"}
 
 
 @dataclass(frozen=True)
@@ -96,7 +105,7 @@ def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
         return None
     if len(rest) < 2:
         return None
-    n = word_to_int(rest[0])
+    n = 1 if rest[0] in _ONE_WORDS else word_to_int(rest[0])
     if n is None or not (1 <= n <= 9):
         return None
     unit = _resolve_unit(rest[-1])
@@ -118,7 +127,7 @@ def _parse_close(toks: list[str]) -> Command | None:
     rest = [t for t in toks[1:] if t != "the"]
     if not rest:
         return None
-    if rest[0] in ("others", "rest", "all"):
+    if rest[0] in _CLOSE_ALL_TARGETS:
         return Command(kind="close_others")
     return Command(kind="close", name=rest[0])
 
