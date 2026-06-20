@@ -10,7 +10,8 @@ from pathlib import Path
 
 from voxpane import tmuxio
 from voxpane.asr import ParakeetTranscriber
-from voxpane.config import load_config
+from voxpane.commands import _CLOSE_VERBS, _CREATE_VERBS
+from voxpane.config import Config, load_config
 from voxpane.daemon import Daemon
 from voxpane.feedback import Feedback
 from voxpane.permissions import check_permissions, hints, missing_tools
@@ -235,6 +236,65 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def _voice_commands_text(cfg: Config) -> str:
+    """Render a quick reference of the spoken commands for the active config.
+
+    Config-driven so the control/broadcast words, hotkeys, program tokens and
+    macros shown match the user's setup; verb sets come from commands.py so they
+    never drift from the parser.
+    """
+    create_verbs = " / ".join((*_CREATE_VERBS, "spin up"))
+    close_alts = " / ".join(_CLOSE_VERBS[1:])  # row label is the first verb already
+    programs = " / ".join(sorted(cfg.programs)) or "(none)"
+    lines = ["voxpane voice commands", ""]
+
+    if cfg.addressing == "button":
+        lines += [
+            "Addressing mode: button (hold a key, then speak)",
+            f"  system key    ({cfg.command_hotkey}): a command, broadcast, or an agent by name",
+            f"  dictation key ({cfg.hotkey}): typed verbatim into the focused pane",
+            "",
+            "Commands (hold the system key, then speak):",
+        ]
+        prefix = ""
+        name_intro = "Address an agent (hold the system key):"
+    else:
+        lines += [
+            f"Addressing mode: keyword (hold {cfg.hotkey}, then speak)",
+            "",
+            f'Commands (prefix with "{cfg.control_word}"):',
+        ]
+        prefix = f"{cfg.control_word} "
+        name_intro = "Address an agent (no prefix):"
+
+    lines += [
+        f"  {prefix}create <n> panes [program]   spin up n auto-named panes, tiled",
+        f"      verbs: {create_verbs}   n: 1-9 (or one..nine)   program: {programs}",
+        f"  {prefix}focus <name>                 focus a pane (also: switch to / go to <name>)",
+        f"  {prefix}swap <name> and <name>       swap two named panes",
+        f"  {prefix}close <name>                 close a pane (also: {close_alts} <name>)",
+        "",
+        f"Broadcast: {cfg.broadcast_word} <message>   send <message> to every named agent",
+        "",
+        name_intro,
+        '  <name>, <message>              e.g. "nova, run the tests" -> the nova pane',
+        "",
+        "Macros:",
+    ]
+    if cfg.macros:
+        for phrase, actions in cfg.macros.items():
+            lines.append(f"  {prefix}{phrase}  ->  {', '.join(actions)}")
+    else:
+        lines.append("  (none configured)")
+
+    return "\n".join(lines)
+
+
+def _cmd_voice_commands(args: argparse.Namespace) -> int:
+    print(_voice_commands_text(load_config()))
+    return 0
+
+
 def _cmd_daemon(args: argparse.Namespace) -> int:
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
     PIDFILE.write_text(str(os.getpid()))
@@ -270,6 +330,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_autoname.set_defaults(func=_cmd_autoname)
 
     sub.add_parser("doctor").set_defaults(func=_cmd_doctor)
+    sub.add_parser(
+        "voice-commands", help="print the spoken-command cheat sheet"
+    ).set_defaults(func=_cmd_voice_commands)
 
     # Hidden: internal entrypoint the voice window runs; not shown in --help.
     # Registered directly in the name map rather than via add_parser so it

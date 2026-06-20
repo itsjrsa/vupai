@@ -408,11 +408,59 @@ def test_daemon_builds_and_runs(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# voice-commands subcommand
+# ---------------------------------------------------------------------------
+
+def test_voice_commands_text_lists_verbs_and_words():
+    from voxpane.commands import _CLOSE_VERBS, _CREATE_VERBS
+    from voxpane.config import Config
+    text = cli._voice_commands_text(Config())
+    # Every create/close verb the parser accepts must appear in the cheat sheet.
+    for verb in (*_CREATE_VERBS, *_CLOSE_VERBS):
+        assert verb in text
+    assert "focus" in text and "swap" in text
+    # Config-driven words.
+    assert "computer" in text and "everyone" in text
+
+
+def test_voice_commands_text_keyword_mode_prefixes_control_word():
+    from voxpane.config import Config
+    text = cli._voice_commands_text(Config(addressing="keyword"))
+    assert "keyword" in text
+    assert "computer create" in text  # commands are prefixed in keyword mode
+
+
+def test_voice_commands_text_button_mode_shows_both_keys():
+    from voxpane.config import Config
+    cfg = Config(addressing="button", hotkey="alt_r", command_hotkey="alt_l")
+    text = cli._voice_commands_text(cfg)
+    assert "button" in text
+    assert "alt_l" in text and "alt_r" in text
+    assert "computer create" not in text  # no control-word prefix in button mode
+
+
+def test_voice_commands_text_lists_configured_macros():
+    from voxpane.config import Config
+    cfg = Config(macros={"set up": ["create two panes", "tile"]})
+    text = cli._voice_commands_text(cfg)
+    assert "set up" in text
+    assert "create two panes" in text
+
+
+def test_voice_commands_prints(fake_env, monkeypatch, capsys):
+    from voxpane.config import Config
+    monkeypatch.setattr(cli, "load_config", lambda *a, **k: Config())
+    rc = cli.main(["voice-commands"])
+    assert rc == 0
+    assert "voice commands" in capsys.readouterr().out.lower()
+
+
+# ---------------------------------------------------------------------------
 # Parser coverage
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("argv", [
-    [], ["up"], ["down"], ["status"], ["doctor"],
+    [], ["up"], ["down"], ["status"], ["doctor"], ["voice-commands"],
     ["name", "x"], ["name", "x", "%3"], ["autoname"], ["autoname", "%3"],
     ["_daemon"],
 ])
