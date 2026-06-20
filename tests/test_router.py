@@ -1,7 +1,14 @@
 import pytest
 
 from voxpane.registry import Pane
-from voxpane.router import CALLSIGNS, NameMatch, name_collides, next_callsign, resolve_pane_by_name, route, word_to_int
+from voxpane.router import (
+    CALLSIGNS,
+    name_collides,
+    next_callsign,
+    resolve_pane_by_name,
+    route,
+    word_to_int,
+)
 
 
 def test_word_to_int_digits_and_words():

@@ -1,4 +1,4 @@
-from voxpane.commands import Command, parse_command
+from voxpane.commands import parse_command
 from voxpane.config import Config
 
 
