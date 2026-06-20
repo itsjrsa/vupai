@@ -148,6 +148,18 @@ def _cmd_down(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_reload(args: argparse.Namespace) -> int:
+    """Stop a running daemon, then start a fresh one so code changes take effect.
+
+    The daemon loads voxpane's modules once at spawn time, so edits to the source
+    are invisible until it is respawned. `reload` is `down` + `ensure_up` in a
+    single step for the edit-test loop while dogfooding voxpane on itself.
+    """
+    _cmd_down(args)
+    ensure_up()
+    return 0
+
+
 def _cmd_status(args: argparse.Namespace) -> int:
     registry = PaneRegistry()
     registry.refresh()
@@ -318,6 +330,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("up").set_defaults(func=_cmd_up)
     sub.add_parser("down").set_defaults(func=_cmd_down)
+    sub.add_parser(
+        "reload", help="restart the daemon so source edits take effect"
+    ).set_defaults(func=_cmd_reload)
     sub.add_parser("status").set_defaults(func=_cmd_status)
 
     p_name = sub.add_parser("name")

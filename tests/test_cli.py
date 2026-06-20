@@ -353,6 +353,26 @@ def test_down_kills_orphaned_window_without_pidfile(monkeypatch, tmp_path):
     assert ("kill_window", "voice") in ft.calls
 
 
+def test_reload_stops_then_restarts_daemon(monkeypatch, tmp_path):
+    # reload = down (SIGTERM + clear pidfile/window) then ensure_up (respawn).
+    ft = FakeTmux(server=True)
+    monkeypatch.setattr(cli, "tmuxio", ft)
+    pidfile = tmp_path / "daemon.pid"
+    pidfile.write_text("4242")
+    monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    killed: list[tuple[int, int]] = []
+    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    _stub_registry(monkeypatch, [])  # ensure_up sweeps the registry; keep it hermetic
+    spawns: list[bool] = []
+    monkeypatch.setattr(cli, "_daemon_running", lambda: False)
+    monkeypatch.setattr(cli, "_spawn_daemon", lambda: spawns.append(True))
+    rc = cli.main(["reload"])
+    assert rc == 0
+    assert killed == [(4242, cli.signal.SIGTERM)]  # old daemon terminated
+    assert spawns == [True]                         # fresh daemon spawned
+    assert ("kill_window", "voice") in ft.calls
+
+
 # ---------------------------------------------------------------------------
 # status and _daemon subcommands
 # ---------------------------------------------------------------------------
@@ -460,7 +480,7 @@ def test_voice_commands_prints(fake_env, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("argv", [
-    [], ["up"], ["down"], ["status"], ["doctor"], ["voice-commands"],
+    [], ["up"], ["down"], ["reload"], ["status"], ["doctor"], ["voice-commands"],
     ["name", "x"], ["name", "x", "%3"], ["autoname"], ["autoname", "%3"],
     ["_daemon"],
 ])
