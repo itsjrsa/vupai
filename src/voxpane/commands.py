@@ -158,6 +158,18 @@ def _exec_focus(cmd: Command, registry, config, io) -> CommandResult:
     return CommandResult(True, f"focused {m.matched_name}")
 
 
+def _exec_swap(cmd: Command, registry, config, io) -> CommandResult:
+    a = resolve_pane_by_name(cmd.name, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
+    b = resolve_pane_by_name(cmd.name_b, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
+    for m, raw in ((a, cmd.name), (b, cmd.name_b)):
+        if m.candidates:
+            return CommandResult(False, "ambiguous: " + " / ".join(m.candidates))
+        if m.pane_id is None:
+            return CommandResult(False, f"no pane named {raw}")
+    io.swap_pane(a.pane_id, b.pane_id)
+    return CommandResult(True, f"swapped {a.matched_name} <-> {b.matched_name}")
+
+
 def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
     msgs: list[str] = []
     for action in cmd.actions:
@@ -184,6 +196,8 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_macro(cmd, registry, config, io)
         if cmd.kind == "focus":
             return _exec_focus(cmd, registry, config, io)
+        if cmd.kind == "swap":
+            return _exec_swap(cmd, registry, config, io)
         return CommandResult(False, f"unknown command: {cmd.raw}")
     except TmuxError as exc:
         return CommandResult(False, f"tmux error: {exc}")

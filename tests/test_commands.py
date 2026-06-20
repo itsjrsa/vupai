@@ -21,6 +21,9 @@ class FakeTmux:
     def select_pane(self, pane_id):
         self.calls.append(("select_pane", pane_id))
 
+    def swap_pane(self, a, b):
+        self.calls.append(("swap_pane", a, b))
+
 
 class FakeRegistry:
     def __init__(self, panes, focused=None):
@@ -150,4 +153,20 @@ def test_execute_focus_selects_named_pane():
 def test_execute_focus_unknown_name():
     reg = FakeRegistry([_pane("%1", "nova", active=True)])
     res = execute_command(Command(kind="focus", name="zzzz"), reg, Config(), io=FakeTmux())
+    assert res.ok is False
+
+
+def test_execute_swap_two_named_panes():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    io = FakeTmux()
+    res = execute_command(Command(kind="swap", name="nova", name_b="atlas"),
+                          reg, Config(), io=io)
+    assert res.ok and io.calls == [("swap_pane", "%1", "%2")]
+
+
+def test_execute_swap_unknown_name():
+    panes = [_pane("%1", "nova", active=True)]
+    res = execute_command(Command(kind="swap", name="nova", name_b="zzzz"),
+                          FakeRegistry(panes, focused=panes[0]), Config(), io=FakeTmux())
     assert res.ok is False
