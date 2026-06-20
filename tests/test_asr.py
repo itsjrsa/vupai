@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from voxpane.asr import ParakeetTranscriber, Transcriber
+from voxpane.asr import ParakeetTranscriber, Transcriber, model_cached
 
 
 # ---- A fake Transcriber other layers (daemon, etc.) can depend on ----
@@ -166,6 +166,31 @@ def test_warm_no_warning_on_english_model(patched_parakeet, caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="voxpane.asr"):
         ParakeetTranscriber("mlx-community/parakeet-tdt-0.6b-v2").warm()
     assert not any("multilingual" in r.message.lower() for r in caplog.records)
+
+
+def test_model_cached_true_when_blob_present(monkeypatch) -> None:
+    import huggingface_hub
+    monkeypatch.setattr(
+        huggingface_hub, "try_to_load_from_cache",
+        lambda mid, fn: "/cache/path/model.safetensors")
+    assert model_cached("any/model") is True
+
+
+def test_model_cached_false_when_absent(monkeypatch) -> None:
+    import huggingface_hub
+    monkeypatch.setattr(
+        huggingface_hub, "try_to_load_from_cache", lambda mid, fn: None)
+    assert model_cached("any/model") is False
+
+
+def test_model_cached_false_on_lookup_error(monkeypatch) -> None:
+    import huggingface_hub
+
+    def _boom(mid, fn):
+        raise RuntimeError("cache scan failed")
+
+    monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", _boom)
+    assert model_cached("any/model") is False
 
 
 @pytest.mark.slow

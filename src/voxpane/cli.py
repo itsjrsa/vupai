@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from voxpane import tmuxio
-from voxpane.asr import ParakeetTranscriber
+from voxpane.asr import ParakeetTranscriber, model_cached
 from voxpane.commands import _CLOSE_VERBS, _CREATE_VERBS
 from voxpane.config import Config, load_config
 from voxpane.daemon import Daemon
@@ -121,6 +121,16 @@ def ensure_up() -> None:
     tmuxio.bind_rename_key(self_cmd)          # <prefix>+R renames the active pane
     _autoname_unnamed_panes()                 # name the initial pane the hooks miss
     if not _daemon_running():
+        # First run downloads the speech model (~600MB) inside the detached
+        # daemon, which blocks warm() *before* the hotkey listener starts - so
+        # the hotkey looks dead until it finishes, with output buried in the
+        # daemon log. Warn up front so a slow cold start isn't mistaken for a
+        # broken hotkey. (Run `voxpane setup` to download it visibly first.)
+        if not model_cached(load_config().model_id):
+            print("First run: the daemon is downloading the speech model "
+                  "(~600MB, one time).")
+            print("The hotkey won't respond until it finishes. Watch progress:")
+            print(f"  tail -f {DAEMON_LOG}")
         _spawn_daemon()
 
 
@@ -176,6 +186,12 @@ def _cmd_status(args: argparse.Namespace) -> int:
         print(f"  log: {DAEMON_LOG}  (tail -f to watch)")
     else:
         print("daemon: not running")
+    cfg = load_config()
+    if model_cached(cfg.model_id):
+        print(f"speech model: ready ({cfg.model_id})")
+    else:
+        print(f"speech model: NOT downloaded ({cfg.model_id}) - "
+              "first run will fetch ~600MB before the hotkey responds")
     status = check_permissions()
     print(
         f"permissions: microphone={status.microphone} "
@@ -247,9 +263,41 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         if sox_missing and line.startswith("Microphone"):
             continue
         print(line)
-    if not missing and not hint_lines:
+    # The model download is a separate first-run blocker from permissions: a
+    # cold cache makes the hotkey unresponsive for minutes even with every grant
+    # in place. Surface it so "All checks passed" can't hide it.
+    cfg = load_config()
+    model_ready = model_cached(cfg.model_id)
+    if not model_ready:
+        print(f"Speech model not downloaded ({cfg.model_id}); the first "
+              "`voxpane` launch fetches ~600MB before the hotkey responds. "
+              "Run `voxpane setup` to download it now.")
+    if not missing and not hint_lines and model_ready:
         print("All checks passed.")
     return 0
+
+
+def _ensure_model_ready(cfg: Config) -> None:
+    """Make the speech-model download a visible, foreground step of `setup`.
+
+    On first run the model is otherwise fetched silently inside the detached
+    daemon (blocking the hotkey). Doing it here - in the foreground, with the
+    HF progress bar on the user's terminal - turns the slow part into something
+    they can watch instead of guessing whether the hotkey is broken. A failure
+    is non-fatal: the daemon retries the download on first launch.
+    """
+    if model_cached(cfg.model_id):
+        print(f"Speech model: ready ({cfg.model_id})")
+        return
+    print(f"Speech model: not downloaded yet - fetching {cfg.model_id}")
+    print("  ~600MB, one time; this can take a few minutes (progress below).")
+    try:
+        ParakeetTranscriber(cfg.model_id).warm()
+    except Exception as exc:  # network/cache errors must not abort setup
+        print(f"Speech model: download did not complete ({exc}).")
+        print("  It will be retried automatically on first `voxpane` launch.")
+        return
+    print("Speech model: downloaded and ready.")
 
 
 def _cmd_setup(args: argparse.Namespace) -> int:
@@ -264,6 +312,10 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     if missing:
         print("Install the tool(s) above, then re-run `voxpane setup`.")
         return 1
+
+    # Download the speech model up front (visible) so the daemon's first run
+    # doesn't stall the hotkey on a silent multi-minute fetch.
+    _ensure_model_ready(load_config())
 
     app = terminal_app()
     label = app.name + (f" ({app.bundle_id})" if app.bundle_id else "")

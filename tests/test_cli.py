@@ -296,6 +296,7 @@ def test_setup_all_granted_reports_ready(fake_env, monkeypatch, capsys):
     status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
     monkeypatch.setattr(cli, "missing_tools", lambda: [])
     monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
+    monkeypatch.setattr(cli, "model_cached", lambda mid: True)  # no real download
     monkeypatch.setattr(cli, "terminal_app", lambda: TerminalApp("Terminal", "com.apple.Terminal"))
     opened: list[str] = []
     monkeypatch.setattr(cli, "open_settings_pane", lambda url: opened.append(url))
@@ -310,7 +311,9 @@ def test_setup_opens_panes_for_missing_permissions(fake_env, monkeypatch, capsys
     status = PermissionStatus(microphone=False, input_monitoring=True, accessibility=False)
     monkeypatch.setattr(cli, "missing_tools", lambda: [])
     monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
-    monkeypatch.setattr(cli, "terminal_app", lambda: TerminalApp("Ghostty", "com.mitchellh.ghostty"))
+    monkeypatch.setattr(cli, "model_cached", lambda mid: True)  # no real download
+    ghostty = TerminalApp("Ghostty", "com.mitchellh.ghostty")
+    monkeypatch.setattr(cli, "terminal_app", lambda: ghostty)
     opened: list[str] = []
     monkeypatch.setattr(cli, "open_settings_pane", lambda url: opened.append(url))
     rc = cli.main(["setup"])
@@ -329,6 +332,87 @@ def test_setup_aborts_when_tools_missing(fake_env, monkeypatch, capsys):
     rc = cli.main(["setup"])
     assert rc == 1
     assert "brew install sox" in capsys.readouterr().out
+
+
+def test_setup_downloads_model_when_missing(fake_env, monkeypatch, capsys):
+    from voxpane.permissions import PermissionStatus, TerminalApp
+    status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
+    monkeypatch.setattr(cli, "missing_tools", lambda: [])
+    monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
+    monkeypatch.setattr(cli, "model_cached", lambda mid: False)
+    monkeypatch.setattr(cli, "terminal_app", lambda: TerminalApp("Terminal", "com.apple.Terminal"))
+    monkeypatch.setattr(cli, "open_settings_pane", lambda url: None)
+    warmed: list[str] = []
+
+    class FakeTranscriber:
+        def __init__(self, model_id):
+            self.model_id = model_id
+
+        def warm(self):
+            warmed.append(self.model_id)
+
+    monkeypatch.setattr(cli, "ParakeetTranscriber", FakeTranscriber)
+    rc = cli.main(["setup"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "downloading" in out.lower() or "fetching" in out.lower()
+    assert warmed  # the model was pre-downloaded in the foreground
+
+
+def test_setup_skips_download_when_model_cached(fake_env, monkeypatch, capsys):
+    from voxpane.permissions import PermissionStatus, TerminalApp
+    status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
+    monkeypatch.setattr(cli, "missing_tools", lambda: [])
+    monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
+    monkeypatch.setattr(cli, "model_cached", lambda mid: True)
+    monkeypatch.setattr(cli, "terminal_app", lambda: TerminalApp("Terminal", "com.apple.Terminal"))
+    monkeypatch.setattr(cli, "open_settings_pane", lambda url: None)
+
+    def _boom(model_id):
+        raise AssertionError("must not construct/download when cached")
+
+    monkeypatch.setattr(cli, "ParakeetTranscriber", _boom)
+    rc = cli.main(["setup"])
+    assert rc == 0
+    assert "speech model: ready" in capsys.readouterr().out.lower()
+
+
+def test_doctor_warns_when_model_not_downloaded(fake_env, monkeypatch, capsys):
+    from voxpane.permissions import PermissionStatus
+    status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
+    monkeypatch.setattr(cli, "missing_tools", lambda: [])
+    monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
+    monkeypatch.setattr(cli, "model_cached", lambda mid: False)
+    rc = cli.main(["doctor"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "speech model not downloaded" in out.lower()
+    assert "All checks passed." not in out  # the model gap can't be hidden
+
+
+def test_doctor_all_passed_includes_model(fake_env, monkeypatch, capsys):
+    from voxpane.permissions import PermissionStatus
+    status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
+    monkeypatch.setattr(cli, "missing_tools", lambda: [])
+    monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
+    monkeypatch.setattr(cli, "model_cached", lambda mid: True)
+    rc = cli.main(["doctor"])
+    assert rc == 0
+    assert "All checks passed." in capsys.readouterr().out
+
+
+def test_status_reports_model_state(fake_env, monkeypatch, capsys):
+    from voxpane.permissions import PermissionStatus
+    monkeypatch.setattr(cli, "_daemon_running", lambda: False)
+    _stub_registry(monkeypatch, [])
+    monkeypatch.setattr(
+        cli, "check_permissions",
+        lambda **k: PermissionStatus(microphone=True, input_monitoring=True, accessibility=True),
+    )
+    monkeypatch.setattr(cli, "model_cached", lambda mid: False)
+    rc = cli.main(["status"])
+    assert rc == 0
+    assert "not downloaded" in capsys.readouterr().out.lower()
 
 
 def test_down_terminates_and_removes_pidfile(monkeypatch, tmp_path):

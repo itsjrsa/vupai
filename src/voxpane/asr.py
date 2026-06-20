@@ -18,6 +18,24 @@ class Transcriber(Protocol):
     def transcribe(self, wav_path: Path, hints: Sequence[str] = ()) -> str: ...
 
 
+def model_cached(model_id: str) -> bool:
+    """True if the model's weights are already in the local HF cache.
+
+    Offline-only: probes the cache for the heavy `model.safetensors` blob and
+    never hits the network. Lets the CLI tell "first run, will download ~600MB"
+    apart from "ready" so a multi-minute cold start isn't mistaken for a hang.
+    """
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except Exception:
+        return False
+    try:
+        result = try_to_load_from_cache(model_id, "model.safetensors")
+    except Exception:
+        return False
+    return isinstance(result, str)
+
+
 class ParakeetTranscriber:
     """Transcriber backed by a parakeet-mlx model, lazily loaded and cached."""
 
