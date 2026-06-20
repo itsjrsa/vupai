@@ -199,6 +199,20 @@ def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
     return CommandResult(True, "; ".join(msgs) if msgs else "macro: nothing to do")
 
 
+def _exec_broadcast(cmd: Command, registry, config, inject_fn) -> CommandResult:
+    if not cmd.text.strip():
+        return CommandResult(False, "nothing to broadcast")
+    targets = [p for p in registry.panes if p.name != p.id]
+    if not targets:
+        return CommandResult(False, "no named agents to broadcast to")
+    ok = 0
+    for p in targets:
+        if inject_fn(p.id, cmd.text, confirm_timeout=config.inject_confirm_timeout,
+                     poll_interval=config.inject_poll_interval):
+            ok += 1
+    return CommandResult(True, f"broadcast to {ok}/{len(targets)} agents")
+
+
 def execute_command(cmd: Command, registry, config, *,
                     io=tmuxio, inject_fn=inject) -> CommandResult:
     try:
@@ -212,6 +226,8 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_swap(cmd, registry, config, io)
         if cmd.kind == "close":
             return _exec_close(cmd, registry, config, io)
+        if cmd.kind == "broadcast":
+            return _exec_broadcast(cmd, registry, config, inject_fn)
         return CommandResult(False, f"unknown command: {cmd.raw}")
     except TmuxError as exc:
         return CommandResult(False, f"tmux error: {exc}")

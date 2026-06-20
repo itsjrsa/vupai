@@ -202,3 +202,33 @@ def test_execute_close_named_pane():
 def test_parse_bare_close_is_unknown():
     c = _parse("computer close")
     assert c.kind == "unknown"
+
+
+def test_execute_broadcast_injects_each_named_pane():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas"),
+             _pane("%3", "%3")]  # %3 unnamed -> skipped
+    reg = FakeRegistry(panes, focused=panes[0])
+    sent = []
+
+    def fake_inject(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05):
+        sent.append((pane_id, text))
+        return True
+
+    res = execute_command(Command(kind="broadcast", text="run the tests"),
+                          reg, Config(), io=FakeTmux(), inject_fn=fake_inject)
+    assert res.ok and "2/2" in res.message
+    assert sent == [("%1", "run the tests"), ("%2", "run the tests")]
+
+
+def test_execute_broadcast_no_named_agents():
+    reg = FakeRegistry([_pane("%1", "%1", active=True)])
+    res = execute_command(Command(kind="broadcast", text="hi"), reg, Config(),
+                          io=FakeTmux(), inject_fn=lambda *a, **k: True)
+    assert res.ok is False
+
+
+def test_execute_broadcast_empty_text():
+    reg = FakeRegistry([_pane("%1", "nova", active=True)])
+    res = execute_command(Command(kind="broadcast", text=""), reg, Config(),
+                          io=FakeTmux(), inject_fn=lambda *a, **k: True)
+    assert res.ok is False
