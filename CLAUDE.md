@@ -21,6 +21,7 @@ uv run pytest -m integration -q                      # needs a real tmux (isolat
 uv run pytest -m slow -q                             # needs the real Parakeet model + a wav fixture
 uv run ruff check .                                  # lint
 voxpane doctor                                         # check macOS permissions, print fix steps
+voxpane setup                                          # interactive: probe + deep-link each missing-permission pane
 ```
 
 `voxpane` CLI (entry point `voxpane.cli:main`):
@@ -30,6 +31,7 @@ voxpane doctor                                         # check macOS permissions
 - `voxpane name <name> [pane]` - label a pane (rejects confusable names; defaults to focused)
 - `voxpane autoname [pane]` - assign the next free callsign from the pool to a pane unless already named; driven by the tmux pane-creation hooks (also usable by hand). `<prefix>+R` renames the active pane via this path's sibling `voxpane name`
 - `voxpane status` - list panes, daemon pid + log path, permission state
+- `voxpane setup` - interactive permission bootstrap: detects the terminal app from `TERM_PROGRAM`, probes each permission (which triggers the macOS prompts), then `open`s the exact Settings deep-link pane for any that are missing and prints the `tccutil reset` recovery command. **Cannot grant on the user's behalf** - macOS TCC requires a human click; setup removes the navigation, not the consent. Deep-link/app-detect/open helpers live in `permissions.py` (`terminal_app`, `fixes`, `open_settings_pane`), injectable for tests.
 - `voxpane _daemon` - hidden; the long-running daemon process (spawned detached, logs to `~/.config/voxpane/daemon.log`)
 
 ## Architecture

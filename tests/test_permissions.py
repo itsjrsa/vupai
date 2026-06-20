@@ -3,7 +3,15 @@ from pathlib import Path
 import pytest
 
 from voxpane import permissions
-from voxpane.permissions import PermissionStatus, check_permissions, hints
+from voxpane.permissions import (
+    PermissionStatus,
+    TerminalApp,
+    check_permissions,
+    fixes,
+    hints,
+    open_settings_pane,
+    terminal_app,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -139,6 +147,67 @@ def test_hints_only_includes_failing_fields():
     assert "Microphone" not in joined
     assert "Accessibility" not in joined
     assert len(out) == 1
+
+
+def test_hints_names_app_and_includes_deep_link_when_app_given():
+    status = PermissionStatus(microphone=False, input_monitoring=True, accessibility=True)
+    out = hints(status, app=TerminalApp("Ghostty", "com.mitchellh.ghostty"))
+    assert len(out) == 1
+    assert "Ghostty" in out[0]
+    assert "x-apple.systempreferences:" in out[0]
+    assert "Privacy_Microphone" in out[0]
+
+
+# --- terminal_app -----------------------------------------------------------
+
+def test_terminal_app_known_term_program():
+    app = terminal_app({"TERM_PROGRAM": "Apple_Terminal"})
+    assert app.name == "Terminal"
+    assert app.bundle_id == "com.apple.Terminal"
+
+
+def test_terminal_app_unknown_falls_back_to_bundle_id():
+    app = terminal_app({"TERM_PROGRAM": "Weird", "__CFBundleIdentifier": "com.weird.app"})
+    assert app.name == "Weird"
+    assert app.bundle_id == "com.weird.app"
+
+
+def test_terminal_app_empty_env_is_generic_placeholder():
+    app = terminal_app({})
+    assert app.name == "your terminal app"
+    assert app.bundle_id is None
+
+
+# --- fixes ------------------------------------------------------------------
+
+def test_fixes_only_for_failing_permissions():
+    status = PermissionStatus(microphone=False, input_monitoring=True, accessibility=False)
+    fs = fixes(status)
+    assert [f.field for f in fs] == ["microphone", "accessibility"]
+    assert all(f.url.startswith("x-apple.systempreferences:") for f in fs)
+    assert fs[0].reset_service == "Microphone"
+
+
+def test_fixes_empty_when_all_granted():
+    status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
+    assert fixes(status) == []
+
+
+# --- open_settings_pane -----------------------------------------------------
+
+def test_open_settings_pane_invokes_open_with_url():
+    calls: list[list[str]] = []
+    ok = open_settings_pane("x-apple.systempreferences:foo",
+                            runner=lambda argv, **k: calls.append(argv))
+    assert ok is True
+    assert calls == [["open", "x-apple.systempreferences:foo"]]
+
+
+def test_open_settings_pane_swallows_errors():
+    def boom(*_a, **_k):
+        raise OSError("open missing")
+
+    assert open_settings_pane("x-apple.systempreferences:foo", runner=boom) is False
 
 
 def test_missing_tools_reports_absent_binaries(monkeypatch):

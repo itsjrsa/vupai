@@ -10,11 +10,13 @@ and grant manually.
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from .recorder import MIN_WAV_BYTES, Recorder
 
@@ -100,22 +102,94 @@ def check_permissions(*, recorder_factory: Callable[[], Recorder] = Recorder) ->
     )
 
 
-def hints(status: PermissionStatus) -> list[str]:
-    """Human-readable fix steps for every permission that is False."""
-    out: list[str] = []
-    if not status.microphone:
-        out.append(
-            "Microphone: grant your terminal app under "
-            "System Settings > Privacy & Security > Microphone"
-        )
-    if not status.input_monitoring:
-        out.append(
-            "Input Monitoring: grant your terminal app under "
-            "System Settings > Privacy & Security > Input Monitoring"
-        )
-    if not status.accessibility:
-        out.append(
-            "Accessibility: grant your terminal app under "
-            "System Settings > Privacy & Security > Accessibility"
-        )
-    return out
+# macOS cannot grant TCC permissions programmatically, but it *can* deep-link
+# straight to the relevant pane. Each spec maps a PermissionStatus field to its
+# human label, the System Settings anchor (used both in the x-apple URL and the
+# `tccutil reset <service>` command), where the anchor doubles as the tccutil
+# service name. Order is the order we surface fixes in.
+_URL_BASE = "x-apple.systempreferences:com.apple.preference.security?"
+_PERM_SPECS: tuple[tuple[str, str, str, str], ...] = (
+    ("microphone", "Microphone", "Privacy_Microphone", "Microphone"),
+    ("input_monitoring", "Input Monitoring", "Privacy_ListenEvent", "ListenEvent"),
+    ("accessibility", "Accessibility", "Privacy_Accessibility", "Accessibility"),
+)
+
+
+@dataclass(frozen=True)
+class PermissionFix:
+    field: str           # PermissionStatus attribute, e.g. "microphone"
+    label: str           # "Microphone"
+    url: str             # x-apple.systempreferences: deep link to the pane
+    reset_service: str   # `tccutil reset <service> <bundle>` service name
+
+
+def fixes(status: PermissionStatus) -> list[PermissionFix]:
+    """A PermissionFix for every permission that is currently False."""
+    return [
+        PermissionFix(field, label, _URL_BASE + anchor, service)
+        for field, label, anchor, service in _PERM_SPECS
+        if not getattr(status, field)
+    ]
+
+
+@dataclass(frozen=True)
+class TerminalApp:
+    name: str
+    bundle_id: str | None
+
+
+# TERM_PROGRAM value -> (display name, bundle id). macOS attaches TCC grants to
+# the *terminal app* (the daemon's "responsible process"), so naming it exactly
+# beats the generic "your terminal app" and lets us emit a precise tccutil reset.
+_TERMINAL_APPS: dict[str, tuple[str, str]] = {
+    "Apple_Terminal": ("Terminal", "com.apple.Terminal"),
+    "iTerm.app": ("iTerm", "com.googlecode.iterm2"),
+    "ghostty": ("Ghostty", "com.mitchellh.ghostty"),
+    "WezTerm": ("WezTerm", "com.github.wez.wezterm"),
+    "vscode": ("Visual Studio Code", "com.microsoft.VSCode"),
+    "Hyper": ("Hyper", "co.zeit.hyper"),
+    "kitty": ("kitty", "net.kovidgoyal.kitty"),
+    "Alacritty": ("Alacritty", "org.alacritty"),
+    "Tabby": ("Tabby", "org.tabby"),
+    "rio": ("Rio", "com.raphaelamorim.rio"),
+}
+
+
+def terminal_app(env: Mapping[str, str] | None = None) -> TerminalApp:
+    """Identify the host terminal app from the environment (best-effort).
+
+    Falls back to ``__CFBundleIdentifier`` (set by macOS LaunchServices) for an
+    unrecognized TERM_PROGRAM, and finally to a generic placeholder so callers
+    always get a usable display name.
+    """
+    env = os.environ if env is None else env
+    term = env.get("TERM_PROGRAM", "") or ""
+    if term in _TERMINAL_APPS:
+        name, bundle = _TERMINAL_APPS[term]
+        return TerminalApp(name, bundle)
+    bundle = env.get("__CFBundleIdentifier") or None
+    return TerminalApp(term or bundle or "your terminal app", bundle)
+
+
+def open_settings_pane(url: str, *, runner: Callable[..., object] = subprocess.run) -> bool:
+    """Open a System Settings deep link via `open <url>`. Best-effort."""
+    try:
+        runner(["open", url], check=False)
+        return True
+    except Exception:
+        return False
+
+
+def hints(status: PermissionStatus, *, app: TerminalApp | None = None) -> list[str]:
+    """Human-readable fix steps for every permission that is False.
+
+    One line per failing permission. When ``app`` is given, the line names the
+    actual terminal app and includes the deep-link URL to its pane.
+    """
+    who = app.name if app else "your terminal app"
+    return [
+        f"{fix.label}: grant {who} under "
+        f"System Settings > Privacy & Security > {fix.label}  "
+        f"(open: {fix.url})"
+        for fix in fixes(status)
+    ]

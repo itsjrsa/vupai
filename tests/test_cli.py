@@ -291,6 +291,46 @@ def test_doctor_reports_missing_sox_and_skips_mic_hint(fake_env, monkeypatch, ca
     assert "Microphone" not in out  # misleading mic hint suppressed when sox missing
 
 
+def test_setup_all_granted_reports_ready(fake_env, monkeypatch, capsys):
+    from voxpane.permissions import PermissionStatus, TerminalApp
+    status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
+    monkeypatch.setattr(cli, "missing_tools", lambda: [])
+    monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
+    monkeypatch.setattr(cli, "terminal_app", lambda: TerminalApp("Terminal", "com.apple.Terminal"))
+    opened: list[str] = []
+    monkeypatch.setattr(cli, "open_settings_pane", lambda url: opened.append(url))
+    rc = cli.main(["setup"])
+    assert rc == 0
+    assert opened == []  # nothing to open
+    assert "ready" in capsys.readouterr().out.lower()
+
+
+def test_setup_opens_panes_for_missing_permissions(fake_env, monkeypatch, capsys):
+    from voxpane.permissions import PermissionStatus, TerminalApp
+    status = PermissionStatus(microphone=False, input_monitoring=True, accessibility=False)
+    monkeypatch.setattr(cli, "missing_tools", lambda: [])
+    monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
+    monkeypatch.setattr(cli, "terminal_app", lambda: TerminalApp("Ghostty", "com.mitchellh.ghostty"))
+    opened: list[str] = []
+    monkeypatch.setattr(cli, "open_settings_pane", lambda url: opened.append(url))
+    rc = cli.main(["setup"])
+    assert rc == 1  # not fully granted yet
+    out = capsys.readouterr().out
+    assert "Ghostty" in out
+    assert "tccutil reset Microphone com.mitchellh.ghostty" in out
+    # one deep link opened per failing permission (mic + accessibility)
+    assert any("Privacy_Microphone" in u for u in opened)
+    assert any("Privacy_Accessibility" in u for u in opened)
+    assert len(opened) == 2
+
+
+def test_setup_aborts_when_tools_missing(fake_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "missing_tools", lambda: ["sox"])
+    rc = cli.main(["setup"])
+    assert rc == 1
+    assert "brew install sox" in capsys.readouterr().out
+
+
 def test_down_terminates_and_removes_pidfile(monkeypatch, tmp_path):
     ft = FakeTmux(server=True)
     monkeypatch.setattr(cli, "tmuxio", ft)

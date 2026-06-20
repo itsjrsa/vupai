@@ -15,7 +15,14 @@ from voxpane.commands import _CLOSE_VERBS, _CREATE_VERBS
 from voxpane.config import Config, load_config
 from voxpane.daemon import Daemon
 from voxpane.feedback import Feedback
-from voxpane.permissions import check_permissions, hints, missing_tools
+from voxpane.permissions import (
+    check_permissions,
+    fixes,
+    hints,
+    missing_tools,
+    open_settings_pane,
+    terminal_app,
+)
 from voxpane.recorder import Recorder
 from voxpane.registry import PaneRegistry
 from voxpane.router import name_collides, next_callsign
@@ -245,6 +252,41 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_setup(args: argparse.Namespace) -> int:
+    """Interactive permission bootstrap: probe, then deep-link the user to each
+    failing pane (naming the exact terminal app to enable). Cannot grant on the
+    user's behalf - macOS TCC requires a human click - but removes all the
+    navigation and ambiguity.
+    """
+    missing = missing_tools()
+    for pkg in missing:
+        print(f"{pkg}: not found on PATH - install it with `brew install {pkg}`")
+    if missing:
+        print("Install the tool(s) above, then re-run `voxpane setup`.")
+        return 1
+
+    app = terminal_app()
+    label = app.name + (f" ({app.bundle_id})" if app.bundle_id else "")
+    print(f"Terminal app: {label}")
+    print("Probing permissions (approve any macOS prompt that appears)...")
+    status = check_permissions()
+    pending = fixes(status)
+    if not pending:
+        print("All permissions granted. You're ready - run `voxpane`.")
+        return 0
+
+    print(f"\n{len(pending)} permission(s) still needed - "
+          f"enable {app.name} in each pane that opens:")
+    for fix in pending:
+        print(f"\n  {fix.label}: toggle {app.name} ON in the opened pane")
+        if app.bundle_id:
+            print(f"    if {app.name} is missing or stuck off, reset and retry:")
+            print(f"      tccutil reset {fix.reset_service} {app.bundle_id}")
+        open_settings_pane(fix.url)
+    print("\nAfter enabling them, re-run `voxpane setup` to confirm.")
+    return 1
+
+
 def _voice_commands_text(cfg: Config) -> str:
     """Render a quick reference of the spoken commands for the active config.
 
@@ -358,6 +400,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_autoname.set_defaults(func=_cmd_autoname)
 
     sub.add_parser("doctor").set_defaults(func=_cmd_doctor)
+    sub.add_parser(
+        "setup", help="grant macOS permissions interactively (opens Settings panes)"
+    ).set_defaults(func=_cmd_setup)
     sub.add_parser(
         "voice-commands", help="print the spoken-command cheat sheet"
     ).set_defaults(func=_cmd_voice_commands)
