@@ -59,13 +59,20 @@ silently fail until granted.)
 ## Usage
 
 ```bash
-uv run voxpane            # boots tmux + a "voice" daemon window, then attaches you
+uv run voxpane            # ensures tmux + the voice daemon, then attaches you
 ```
+
+`voxpane` starts the push-to-talk daemon as a **detached background process**
+(not a tmux window — it must run under your terminal app to receive global key
+events) and attaches you to the tmux session. The daemon survives detach/reattach;
+see its status with `voxpane status`.
 
 Then:
 
-1. **Name the panes** you want to address by voice: focus a pane and run
-   `voxpane name nova` (or target one explicitly: `voxpane name nova %3`).
+1. **Panes name themselves.** Every pane you create gets an auto-assigned callsign
+   (the daemon installs tmux hooks for this), so you can address it by voice right
+   away. To rename one, focus it and run `voxpane name nova` (or target it:
+   `voxpane name nova %3`), or press **`<prefix>` + R** to rename the active pane.
 2. **Hold Right-Option, speak, release.** What you said is typed into the target
    pane and submitted.
 
@@ -78,19 +85,38 @@ Examples (Right-Option held while speaking):
 If two names are too close to tell apart, voxpane won't guess — it shows the
 candidates so you can re-say.
 
+### Voice commands
+
+Beyond dictation, voxpane has a small command layer: prefix an utterance with the
+**control word** (`computer` by default) and voxpane executes it instead of typing
+it into a pane. Run `voxpane voice-commands` for a cheat sheet tailored to your
+config.
+
+- *"computer create 3 panes"* → spin up 3 auto-named panes, tiled (add a program:
+  *"…create 2 shell panes"*).
+- *"computer focus nova"* → focus the **nova** pane (also: *"switch to / go to …"*).
+- *"computer swap nova and atlas"* → swap two named panes.
+- *"computer close nova"* → close a pane.
+- *"everyone, pull main"* → broadcast the message to **every named agent**.
+- Define your own **macros** (phrase → list of actions) in the config.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `voxpane` | Ensure tmux + the voice daemon, then attach (default) |
 | `voxpane up` | Start the daemon without attaching |
-| `voxpane down` | Stop the daemon and remove its voice window |
+| `voxpane down` | Stop the daemon |
+| `voxpane reload` | Restart the daemon so source edits take effect (`down` + `up`) |
 | `voxpane name <name> [pane]` | Label a pane (defaults to focused; rejects confusable names) |
+| `voxpane autoname [pane]` | Assign the next free callsign to a pane (idempotent; used by the auto-name hooks) |
 | `voxpane status` | Show panes, daemon status, and permission state |
+| `voxpane voice-commands` | Print the spoken-command cheat sheet for your config |
 | `voxpane doctor` | Check permissions and print fix steps |
 
-The push-to-talk daemon runs inside a dedicated **`voice`** tmux window so you
-can see its status; it survives detach/reattach.
+The push-to-talk daemon runs as a **detached background process** under your
+terminal app (not inside tmux — that's required for the global hotkey to work).
+It logs to `~/.config/voxpane/daemon.log` and survives detach/reattach.
 
 ## Configuration
 
@@ -108,7 +134,17 @@ fuzzy_cutoff = 82                                 # name-match strictness (0-100
 poll_interval = 0.5                               # pane-registry refresh (s)
 inject_confirm_timeout = 2.0                      # wait for pasted text before Enter (s)
 inject_poll_interval = 0.05
-voice_window_name = "voice"
+pane_command = "claude"                           # default program for voice-created panes
+
+[programs]                                        # spoken token -> argv ("" = plain shell)
+claude = "claude"
+shell = ""
+
+[aliases]                                         # spoken alias -> pane name
+# bot = "nova"
+
+[macros]                                          # spoken phrase -> list of actions
+# "start the squad" = ["create 3 panes", "tile"]
 ```
 
 **Addressing modes.** In `keyword` mode (default) you hold one key and select a
