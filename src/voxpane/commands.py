@@ -19,6 +19,10 @@ _CREATE_VERBS = ("create", "make", "add", "open", "new")
 _CLOSE_VERBS = ("close", "kill")
 _ZOOM_VERBS = ("zoom", "maximize")
 _UNZOOM_VERBS = ("unzoom", "minimize", "restore")
+# Parakeet splits "unzoom" into two tokens ("and zoom" / "un zoom"). Curated,
+# deterministic - the leading token is implausible as a literal command on its
+# own, so matching it here can't shadow a real utterance.
+_UNZOOM_PHRASES = (["and", "zoom"], ["un", "zoom"])
 _UNITS = {"pane": "pane", "panes": "pane", "window": "window", "windows": "window"}
 # Curated ASR mishearings of the unit noun -> canonical unit. The trailing unit
 # token is the most-misheard part of "create N panes" ("paints"/"pains"). A
@@ -133,7 +137,7 @@ def _parse_swap(toks: list[str]) -> Command | None:
 def _parse_zoom(toks: list[str]) -> Command | None:
     if not toks:
         return None
-    if toks[0] in _UNZOOM_VERBS:
+    if toks[0] in _UNZOOM_VERBS or toks[:2] in _UNZOOM_PHRASES:
         return Command(kind="unzoom")
     if toks[0] in _ZOOM_VERBS:
         rest = toks[1:]

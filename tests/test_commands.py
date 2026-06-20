@@ -422,6 +422,14 @@ def test_parse_unzoom_synonyms():
     assert _parse("computer restore").kind == "unzoom"
 
 
+def test_parse_unzoom_misheard_split():
+    # Parakeet renders "unzoom" as "and zoom" / "un zoom"; a trailing name is
+    # ignored (zoom is window-level, only one pane can be zoomed).
+    assert _parse("computer and zoom").kind == "unzoom"
+    assert _parse("computer un zoom").kind == "unzoom"
+    assert _parse("computer and zoom sage").kind == "unzoom"
+
+
 def test_execute_zoom_focused_selects_then_zooms():
     focused = _pane("%1", "nova", active=True)
     reg = FakeRegistry([focused], focused=focused)
