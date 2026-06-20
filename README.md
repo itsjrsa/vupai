@@ -93,7 +93,9 @@ instead of typing it into a pane. The key is the signal, so there is no spoken
 control word. Run `voxpane voice-commands` for a cheat sheet tailored to your config.
 
 - *"create 3 panes"* → spin up 3 auto-named panes, tiled (add a program:
-  *"…create 2 shell panes"*).
+  *"…create 2 shell panes"*). The noun is **optional** — *"create two"* or
+  *"create a"* works — and *"agent(s)"* / *"split(s)"* are synonyms for *"pane(s)"*
+  if "pane" gets misheard.
 - *"focus nova"* → focus the **nova** pane (also: *"switch to / go to …"*).
 - *"swap nova and atlas"* → swap two named panes.
 - *"close nova"* → close a pane.
