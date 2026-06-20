@@ -23,6 +23,12 @@ class FakeTmux:
     def set_extended_keys_off(self) -> None:
         self.calls.append(("set_extended_keys_off",))
 
+    def install_status_indicator(self) -> None:
+        self.calls.append(("install_status_indicator",))
+
+    def restore_status_right(self) -> None:
+        self.calls.append(("restore_status_right",))
+
     def attach(self) -> None:
         self.calls.append(("attach",))
 
@@ -70,6 +76,21 @@ def test_up_spawns_daemon_when_not_running(fake_env):
     # The daemon runs as a detached background process, NOT in a tmux window.
     assert ft.daemon_spawns == [True]
     assert ("enable_pane_titles",) in ft.calls
+
+
+def test_up_installs_status_indicator_by_default(fake_env):
+    ft, _ = fake_env
+    assert cli.main(["up"]) == 0
+    assert ("install_status_indicator",) in ft.calls
+
+
+def test_up_skips_status_indicator_when_disabled(fake_env, monkeypatch):
+    from voxpane.config import Config
+    ft, _ = fake_env
+    monkeypatch.setattr(cli, "load_config", lambda: Config(status_indicator=False))
+    assert cli.main(["up"]) == 0
+    assert ("install_status_indicator",) not in ft.calls
+    assert ("restore_status_right",) in ft.calls  # opted out: status-right handed back
 
 
 def test_up_installs_naming_hooks_and_binding(fake_env):

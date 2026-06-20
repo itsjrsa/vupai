@@ -132,6 +132,88 @@ def display_message(pane_id: str, message: str) -> None:
     run(["display-message", "-t", pane_id, message])
 
 
+def set_status(text: str) -> None:
+    """Publish daemon state into the @voxpane_status server option, then nudge a
+    redraw so the status line updates immediately rather than at status-interval.
+
+    Mirrors the @voxpane_name idiom: the value lives in a cheap-to-rewrite user
+    option, while `install_status_indicator` wires the format once. The redraw is
+    best-effort - a detached server has no client (`refresh-client` then fails),
+    but the option still updates for whenever a client attaches."""
+    run(["set", "-g", "@voxpane_status", text])
+    try:
+        run(["refresh-client", "-S"])
+    except TmuxError:
+        pass  # no client attached; the option value is still set
+
+
+# Marker proving the voxpane segment is already in status-right. Lets a re-install
+# detect its own output so it prepends idempotently instead of capturing the
+# voxpane segment as if it were the user's original status-right.
+_STATUS_SEGMENT = "#{@voxpane_status}"
+
+
+def show_global(option: str) -> str | None:
+    """Return a global option's value, or None when it is unset.
+
+    Uses `show -gv` WITHOUT `-q`: an unset *user* option exits nonzero (tmux:
+    "invalid option"), which is how we distinguish 'never saved' from 'saved as
+    an empty string' - `-gqv` reports both as empty and would conflate them."""
+    try:
+        return run(["show", "-gv", option]).rstrip("\n")
+    except TmuxError:
+        return None
+
+
+def install_status_indicator() -> None:
+    """Render the voxpane state segment in status-right, PREPENDING it to whatever
+    was already there rather than replacing it.
+
+    The user's original status-right is captured exactly once into
+    @voxpane_status_orig (the first install, when our segment isn't already
+    present), then the line is always rebuilt as `<voxpane segment>  <original>`.
+    Rebuilding from the saved copy - never the already-modified live value -
+    makes re-install idempotent (the segment never stacks) and reversible (see
+    restore_status_right). When no original exists (fresh server, or recovery
+    after a pre-preserve install overwrote it), a bare clock stands in."""
+    run(["set", "-g", "@voxpane_status", "#[fg=green]● voxpane#[default]"])
+
+    saved = show_global("@voxpane_status_orig")
+    if saved is None:
+        current = show_global("status-right") or ""
+        # Don't capture our own segment as the "original" (legacy install / the
+        # clobber this very change fixes) - treat that as no original.
+        original = "" if _STATUS_SEGMENT in current else current
+        run(["set", "-g", "@voxpane_status_orig", original])
+        saved = original
+
+    tail = saved if saved.strip() else "%H:%M "
+    run(["set", "-g", "status-right", f"{_STATUS_SEGMENT}  {tail}"])
+
+    # Grow (never shrink) the length budget so the prepended segment + original
+    # don't truncate; a larger user value is left untouched.
+    try:
+        current_len = int(show_global("status-right-length") or "0")
+    except ValueError:
+        current_len = 0
+    if current_len < 120:
+        run(["set", "-g", "status-right-length", "120"])
+
+
+def restore_status_right() -> None:
+    """Reverse install_status_indicator: put the captured original back and drop
+    voxpane's options. Used when status_indicator is disabled or on teardown.
+    A no-op-ish safe path when nothing was ever installed."""
+    saved = show_global("@voxpane_status_orig")
+    if saved is not None:
+        if saved:
+            run(["set", "-g", "status-right", saved])
+        else:
+            run(["set", "-gu", "status-right"])  # revert to tmux's default
+        run(["set", "-gu", "@voxpane_status_orig"])
+    run(["set", "-gu", "@voxpane_status"])
+
+
 def server_running() -> bool:
     try:
         run(["has-session"])

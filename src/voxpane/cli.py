@@ -144,6 +144,10 @@ def ensure_up() -> None:
         tmuxio.run(argv)
     tmuxio.enable_pane_titles()
     tmuxio.set_extended_keys_off()
+    if cfg.status_indicator:
+        tmuxio.install_status_indicator()  # ambient daemon-state in status-right
+    else:
+        tmuxio.restore_status_right()      # opted out: hand status-right back
     self_cmd = _self_cmd()
     tmuxio.set_pane_autoname_hooks(self_cmd)  # new panes auto-get a callsign
     tmuxio.bind_rename_key(self_cmd)          # <prefix>+R renames the active pane
@@ -486,7 +490,7 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     recorder = Recorder(sample_rate=cfg.sample_rate)
     transcriber = ParakeetTranscriber(cfg.model_id)
     registry = PaneRegistry()
-    feedback = Feedback()
+    feedback = Feedback(indicator_enabled=cfg.status_indicator)
     Daemon(cfg, recorder, transcriber, registry, feedback).run()
     return 0
 
