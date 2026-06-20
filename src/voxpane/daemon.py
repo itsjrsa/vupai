@@ -28,13 +28,18 @@ logger = logging.getLogger(__name__)
 _SHUTDOWN = object()
 
 
+def _spawn_thread(fn, *args) -> None:
+    """Default off-thread dispatcher for listener-thread feedback (see _async)."""
+    threading.Thread(target=fn, args=args, daemon=True).start()
+
+
 class Daemon:
     """Wires hotkey -> record -> transcribe -> route -> inject -> feedback."""
 
     def __init__(self, config: Config, recorder: Recorder, transcriber: Transcriber,
                  registry: PaneRegistry, feedback: Feedback,
                  *, route_fn=route, inject_fn=inject, command_fn=handle_command,
-                 journal: Journal | None = None) -> None:
+                 journal: Journal | None = None, async_fn=None) -> None:
         self._config = config
         self._recorder = recorder
         self._transcriber = transcriber
@@ -43,6 +48,9 @@ class Daemon:
         self._route_fn = route_fn
         self._inject_fn = inject_fn
         self._command_fn = command_fn
+        # How off-listener-thread feedback is dispatched; tests inject a
+        # synchronous runner so listener-thread indicator calls are deterministic.
+        self._async_fn = async_fn if async_fn is not None else _spawn_thread
         self._journal = journal if journal is not None else Journal.from_config(config)
         self._hotkey: Hotkey | MultiHotkey | None = None
         self._stop_event = threading.Event()
@@ -60,8 +68,11 @@ class Daemon:
             return  # another key already holds the mic; ignore
         self._active_mode = mode
         self._recorder.start()
-        self._feedback.status(
-            "listening (system)..." if mode == "system" else "listening...")
+        # Listener-thread hot path: the status-line indicator touches tmux, which
+        # must not run on the pynput callback (invariant), so offload it. Reserve
+        # the ordering seq NOW (press time) so a slow write can't clobber a newer
+        # working/result state painted while it was still in flight.
+        self._async(self._feedback.listening, mode, self._feedback.reserve())
 
     def _on_release(self, mode: str) -> None:
         # Only the key that started the capture stops it.
@@ -76,7 +87,16 @@ class Daemon:
         try:
             self._jobs.put_nowait((wav, mode))
         except queue.Full:
-            self._feedback.error("busy - dropped (still processing previous)")
+            self._async(self._feedback.error,
+                        "busy - dropped (still processing previous)",
+                        self._feedback.reserve())
+
+    def _async(self, fn, *args) -> None:
+        """Run a best-effort feedback call off the listener thread. The status-
+        line write spawns a tmux subprocess; keeping it off the pynput callback
+        avoids a slow tap (which macOS disables) and honours the no-tmux-on-the-
+        listener-thread invariant."""
+        self._async_fn(fn, *args)
 
     def on_press(self) -> None:
         self._on_press("keyword")
@@ -119,6 +139,7 @@ class Daemon:
                 return
 
             keep_wav = True  # a real capture: worth retaining if audio is on
+            self._feedback.working()  # transcribe+route can take a couple seconds
             self._registry.refresh()
             hints = [p.name for p in self._registry.panes if p.name != p.id]
             text = self._transcriber.transcribe(wav, hints=hints)
@@ -253,7 +274,7 @@ class Daemon:
         self._transcriber.warm()
         self._hotkey = self._make_hotkey()
         self._hotkey.start()
-        self._feedback.status("ready")
+        self._feedback.ready()
         try:
             while not self._stop_event.is_set():
                 job = self._jobs.get()  # blocks until an utterance or the sentinel

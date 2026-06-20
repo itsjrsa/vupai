@@ -37,6 +37,9 @@ class Config:
     journal_enabled: bool = True
     journal_keep_audio: bool = False
     journal_audio_retention: int = 500
+    # Render an ambient daemon-state segment in tmux's status-right (listening /
+    # working / last result / errors). Set false to leave status-right untouched.
+    status_indicator: bool = True
 
 
 CONFIG_PATH = Path.home() / ".config" / "voxpane" / "config.toml"

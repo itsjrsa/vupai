@@ -160,6 +160,27 @@ def test_parse_close_everyone_closes_others():
         assert c.kind == "close_others", word
 
 
+def test_parse_create_new_filler_is_ignored():
+    # "create a new pane" == "create a pane" - "new" is descriptive filler.
+    c = _parse_btn("create a new pane")
+    assert c.kind == "create" and c.count == 1 and c.program is None and c.unit == "pane"
+
+
+def test_parse_create_new_filler_with_count():
+    c = _parse_btn("create two new panes")
+    assert c.kind == "create" and c.count == 2 and c.program is None
+
+
+def test_parse_create_new_filler_with_program():
+    c = _parse_btn("create two new shell panes")
+    assert c.kind == "create" and c.count == 2 and c.program == ""
+
+
+def test_parse_create_quick_filler_is_ignored():
+    c = _parse_btn("create a quick pane")
+    assert c.kind == "create" and c.count == 1 and c.unit == "pane"
+
+
 def test_parse_create_explicit_shell_program():
     c = _parse_btn("create two shell panes")
     assert c.kind == "create" and c.count == 2 and c.program == ""
@@ -181,6 +202,50 @@ def test_parse_create_unknown_program_falls_through():
     assert _parse_btn("create two banana panes") is None
 
 
+# --- optional unit noun + homophone-free synonyms ----------------------------
+# "pane" mishears as "pain"/"panel"; users can drop the noun entirely or say a
+# clean synonym ("agent"/"split") instead.
+
+def test_parse_create_noun_optional_plural():
+    c = _parse_btn("create two")
+    assert c.kind == "create" and c.count == 2 and c.program is None and c.unit == "pane"
+
+
+def test_parse_create_noun_optional_singular():
+    c = _parse_btn("create a")
+    assert c.kind == "create" and c.count == 1 and c.unit == "pane"
+
+
+def test_parse_create_noun_optional_spin_up():
+    c = _parse_btn("spin up three")
+    assert c.kind == "create" and c.count == 3 and c.unit == "pane"
+
+
+def test_parse_create_noun_optional_with_program():
+    c = _parse_btn("create two shell")
+    assert c.kind == "create" and c.count == 2 and c.program == "" and c.unit == "pane"
+
+
+def test_parse_create_agent_synonym_is_pane():
+    c = _parse_btn("create two agents")
+    assert c.kind == "create" and c.count == 2 and c.unit == "pane"
+
+
+def test_parse_create_split_synonym_is_pane():
+    c = _parse_btn("create three splits")
+    assert c.kind == "create" and c.count == 3 and c.unit == "pane"
+
+
+def test_parse_create_agent_singular_with_program():
+    c = _parse_btn("create a codex agent")
+    assert c.kind == "create" and c.count == 1 and c.program == "codex" and c.unit == "pane"
+
+
+def test_parse_create_bare_verb_not_a_command():
+    # "create" alone has no count -> falls through (router/inject), not a create.
+    assert _parse_btn("create") is None
+
+
 # --- ASR homophone tolerance for the unit noun (paints/pains -> pane) ---------
 # The trailing unit token is the most-misheard part of "create N panes". A
 # curated alias table maps known mis-transcriptions to the canonical unit; a
@@ -200,6 +265,43 @@ def test_parse_create_misheard_pains_is_pane():
 
 def test_parse_create_misheard_paint_singular():
     c = _parse_btn("make one paint")
+    assert c.kind == "create" and c.count == 1 and c.unit == "pane"
+
+
+# --- ASR homophone tolerance for the lead verb (ate/hate/eight/crate) --------
+
+def test_parse_create_misheard_verb_crate():
+    c = _parse_btn("crate two panes")
+    assert c.kind == "create" and c.count == 2 and c.unit == "pane"
+
+
+def test_parse_create_misheard_verb_ate():
+    c = _parse_btn("ate three panes")
+    assert c.kind == "create" and c.count == 3 and c.unit == "pane"
+
+
+def test_parse_create_misheard_verb_eight():
+    # "create two" -> "eight two"; the verb alias is consumed, count follows.
+    c = _parse_btn("eight two")
+    assert c.kind == "create" and c.count == 2 and c.unit == "pane"
+
+
+def test_parse_create_misheard_verb_hate_with_program():
+    c = _parse_btn("hate two shell panes")
+    assert c.kind == "create" and c.count == 2 and c.program == "" and c.unit == "pane"
+
+
+def test_misheard_verb_without_count_falls_through():
+    # A real-word homophone that isn't a create: no count -> not a command.
+    assert _parse_btn("hate this code") is None
+    assert _parse_btn("ate lunch") is None
+
+
+def test_parse_create_misheard_pens_is_pane():
+    # "create four panes" -> "create four pens".
+    c = _parse_btn("create four pens")
+    assert c.kind == "create" and c.count == 4 and c.unit == "pane"
+    c = _parse_btn("create a pen")
     assert c.kind == "create" and c.count == 1 and c.unit == "pane"
 
 
@@ -261,6 +363,18 @@ def test_execute_focus_unknown_name():
     assert res.ok is False
 
 
+def test_parse_swap_misheard_verb():
+    # "swap nova atlas" -> "swab/swamp nova atlas"; verb alias resolves to swap.
+    assert _parse_btn("swab nova atlas") == Command(kind="swap", name="nova", name_b="atlas")
+    assert _parse_btn("swamp nova atlas").kind == "swap"
+
+
+def test_parse_swap_misheard_verb_needs_two_names():
+    # A bare homophone (or one with a single token) is not a swap -> falls through.
+    assert _parse_btn("swamp") is None
+    assert _parse_btn("swab nova") is None
+
+
 def test_execute_swap_two_named_panes():
     panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
     reg = FakeRegistry(panes, focused=panes[0])
@@ -304,6 +418,22 @@ def test_execute_close_named_pane():
 def test_parse_bare_close_falls_through():
     # "close" with no target is not a command -> None (not swallowed).
     assert _parse_btn("close") is None
+
+
+def test_parse_close_misheard_verb_clothes():
+    # "close nova" -> "clothes nova"; the verb alias resolves to a close.
+    c = _parse_btn("clothes nova")
+    assert c.kind == "close" and c.name == "nova"
+    assert _parse_btn("cloze nova").kind == "close"
+
+
+def test_parse_close_misheard_verb_all_target():
+    assert _parse_btn("clothes all").kind == "close_others"
+
+
+def test_parse_bare_misheard_close_falls_through():
+    # A homophone with no target is not destructive -> falls through to inject.
+    assert _parse_btn("clothes") is None
 
 
 def test_parse_close_the_others():
@@ -451,6 +581,11 @@ def test_parse_zoom_synonyms():
     assert _parse_btn("maximize").kind == "zoom"
     assert _parse_btn("full screen").kind == "zoom"
     assert _parse_btn("full screen nova") == Command(kind="zoom", name="nova")
+
+
+def test_parse_zoom_misheard_verb_zoo():
+    assert _parse_btn("zoo").kind == "zoom"
+    assert _parse_btn("zoo nova") == Command(kind="zoom", name="nova")
 
 
 def test_parse_unzoom_synonyms():

@@ -76,14 +76,26 @@ class FakeFeedback:
         self.errors: list[str] = []
         self.announced: list[Route] = []
 
+    def reserve(self) -> int:
+        return 0
+
     def status(self, text: str) -> None:
         self.statuses.append(text)
 
     def announce(self, route: Route) -> None:
         self.announced.append(route)
 
-    def error(self, text: str) -> None:
+    def error(self, text: str, seq: int | None = None) -> None:
         self.errors.append(text)
+
+    def ready(self) -> None:
+        self.statuses.append("ready")
+
+    def listening(self, mode: str = "keyword", seq: int | None = None) -> None:
+        self.statuses.append(f"listening:{mode}")
+
+    def working(self) -> None:
+        self.statuses.append("working")
 
 
 PANE_LINE = "\t".join(["%1", "@1", "main", "0", "alpha", "node", "1"])
@@ -123,7 +135,8 @@ def make_daemon(tmp_path, *, transcript: str, lines: list[str], focused: str | N
     # These helper-based tests drive the single-key (keyword) path directly via
     # on_press/on_release and the keyword Hotkey; button mode has its own tests.
     daemon = Daemon(Config(addressing="keyword"), recorder, transcriber, registry,
-                    feedback, route_fn=route_fn, inject_fn=inject_fn)
+                    feedback, route_fn=route_fn, inject_fn=inject_fn,
+                    async_fn=lambda fn, *a: fn(*a))  # run feedback inline for determinism
     return daemon, recorder, transcriber, feedback, route_calls, inject_calls
 
 
@@ -357,9 +370,13 @@ class _Reg:
 
 class _Fb:
     def __init__(self): self.msgs = []
+    def reserve(self): return 0
     def status(self, t): self.msgs.append(("status", t))
-    def error(self, t): self.msgs.append(("error", t))
+    def error(self, t, seq=None): self.msgs.append(("error", t))
     def announce(self, r): self.msgs.append(("announce",))
+    def ready(self): self.msgs.append(("ready",))
+    def listening(self, mode="keyword", seq=None): self.msgs.append(("listening", mode))
+    def working(self): self.msgs.append(("working",))
 
 
 def _wav(tmp_path):
@@ -392,6 +409,16 @@ def test_command_path_skips_route_and_inject(tmp_path):
                _Fb(), route_fn=route_fn, inject_fn=inject_fn, command_fn=command_fn)
     d._process(_wav(tmp_path))
     assert calls == {"route": 0, "inject": 0}
+
+
+def test_process_signals_working_for_real_capture(tmp_path):
+    fb = _Fb()
+    d = Daemon(Config(), _Rec(), _Tx("alpha hi"), _Reg(_panes()), fb,
+               route_fn=lambda *a, **k: Route(pane_id="%1", text="hi",
+                   matched_name="alpha", confidence=100.0, fallback=False),
+               inject_fn=lambda *a, **k: True)
+    d._process(_wav(tmp_path))
+    assert ("working",) in fb.msgs
 
 
 def test_normal_text_still_routes(tmp_path):

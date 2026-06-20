@@ -138,6 +138,160 @@ def test_enable_pane_titles_runs_both_set_commands(monkeypatch):
     ]
 
 
+def test_set_status_sets_option_then_refreshes(monkeypatch):
+    fake = FakeRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.set_status("🎙 listening")
+    assert fake.calls[0]["args"] == ["tmux", "set", "-g", "@voxpane_status", "🎙 listening"]
+    assert fake.calls[1]["args"] == ["tmux", "refresh-client", "-S"]
+
+
+def test_set_status_swallows_refresh_failure_without_client(monkeypatch):
+    # `refresh-client` fails when no client is attached; the option still sets.
+    class RefreshFails:
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, args, **kwargs):
+            self.calls.append({"args": args, "kwargs": kwargs})
+            failed = args[1] == "refresh-client"
+            return subprocess.CompletedProcess(
+                args=args, returncode=1 if failed else 0,
+                stdout="", stderr="no current client" if failed else "")
+
+    fake = RefreshFails()
+    patch_run(monkeypatch, fake)
+    tmuxio.set_status("x")  # must not raise
+    assert fake.calls[0]["args"][1] == "set"
+    assert fake.calls[1]["args"][1] == "refresh-client"
+
+
+_UNSET = object()
+
+
+class ScriptedRun:
+    """subprocess.run stand-in that answers `show -gv <opt>` from a dict (missing
+    key => unset => exit 1, like tmux) and records every call. `set` calls are
+    recorded and return success; for read-after-write tests, set mutates the dict."""
+
+    def __init__(self, options=None):
+        self.options = dict(options or {})
+        self.calls = []
+
+    def __call__(self, args, **kwargs):
+        self.calls.append({"args": args, "kwargs": kwargs})
+        if "show" in args and "-gv" in args:
+            opt = args[-1]
+            val = self.options.get(opt, _UNSET)
+            if val is _UNSET:
+                return subprocess.CompletedProcess(
+                    args, 1, "", f"invalid option: {opt}")
+            return subprocess.CompletedProcess(args, 0, val + "\n", "")
+        if args[1] == "set" and args[2] == "-g":  # plain set (not -gu unset)
+            self.options[args[-2]] = args[-1]
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    def set_values(self):
+        """Return the plain `-g` set calls as (option, value) pairs (no unsets)."""
+        out = []
+        for c in self.calls:
+            a = c["args"]
+            if a[1] == "set" and a[2] == "-g":
+                out.append((a[-2], a[-1]))
+        return out
+
+
+def test_install_status_indicator_fresh_prepends_to_existing(monkeypatch):
+    # First install on a server with a user's custom status-right.
+    fake = ScriptedRun({"status-right": "MYRIGHT %H:%M", "status-right-length": "40"})
+    patch_run(monkeypatch, fake)
+    tmuxio.install_status_indicator()
+    sets = dict(fake.set_values())
+    assert sets["@voxpane_status"] == "#[fg=green]● voxpane#[default]"
+    assert sets["@voxpane_status_orig"] == "MYRIGHT %H:%M"   # captured original
+    assert sets["status-right"] == "#{@voxpane_status}  MYRIGHT %H:%M"  # prepended
+    assert sets["status-right-length"] == "120"               # grown from 40
+
+
+def test_install_is_idempotent_uses_saved_original(monkeypatch):
+    # Re-install: saved original exists, live status-right already has the segment.
+    fake = ScriptedRun({
+        "@voxpane_status_orig": "MYRIGHT %H:%M",
+        "status-right": "#{@voxpane_status}  MYRIGHT %H:%M",
+        "status-right-length": "120",
+    })
+    patch_run(monkeypatch, fake)
+    tmuxio.install_status_indicator()
+    sets = dict(fake.set_values())
+    # Rebuilt from the SAVED original, not the live (already-prepended) value.
+    assert sets["status-right"] == "#{@voxpane_status}  MYRIGHT %H:%M"
+    # Original not re-captured (no stacking).
+    assert "@voxpane_status_orig" not in sets
+    # Length already >= 120: left untouched.
+    assert "status-right-length" not in sets
+
+
+def test_install_recovery_when_segment_present_without_saved_original(monkeypatch):
+    # The clobber case this change fixes: status-right already has our segment but
+    # nothing was saved. Must NOT capture our own segment as the original.
+    fake = ScriptedRun({"status-right": "#{@voxpane_status}  %H:%M ",
+                        "status-right-length": "120"})
+    patch_run(monkeypatch, fake)
+    tmuxio.install_status_indicator()
+    sets = dict(fake.set_values())
+    assert sets["@voxpane_status_orig"] == ""            # captured as empty
+    assert sets["status-right"] == "#{@voxpane_status}  %H:%M "  # clock fallback
+
+
+def test_install_does_not_shrink_existing_length(monkeypatch):
+    fake = ScriptedRun({"status-right": "x", "status-right-length": "200"})
+    patch_run(monkeypatch, fake)
+    tmuxio.install_status_indicator()
+    assert "status-right-length" not in dict(fake.set_values())
+
+
+def test_restore_status_right_puts_back_saved_original(monkeypatch):
+    fake = ScriptedRun({"@voxpane_status_orig": "MYRIGHT %H:%M"})
+    patch_run(monkeypatch, fake)
+    tmuxio.restore_status_right()
+    set_calls = [c["args"] for c in fake.calls if c["args"][1] == "set"]
+    assert ["tmux", "set", "-g", "status-right", "MYRIGHT %H:%M"] in set_calls
+    assert ["tmux", "set", "-gu", "@voxpane_status_orig"] in set_calls
+    assert ["tmux", "set", "-gu", "@voxpane_status"] in set_calls
+
+
+def test_restore_status_right_unsets_when_original_was_empty(monkeypatch):
+    fake = ScriptedRun({"@voxpane_status_orig": ""})
+    patch_run(monkeypatch, fake)
+    tmuxio.restore_status_right()
+    set_calls = [c["args"] for c in fake.calls if c["args"][1] == "set"]
+    assert ["tmux", "set", "-gu", "status-right"] in set_calls  # back to default
+    assert ["tmux", "set", "-gu", "@voxpane_status_orig"] in set_calls
+
+
+def test_restore_status_right_safe_when_nothing_installed(monkeypatch):
+    fake = ScriptedRun({})  # nothing saved
+    patch_run(monkeypatch, fake)
+    tmuxio.restore_status_right()
+    set_calls = [c["args"] for c in fake.calls if c["args"][1] == "set"]
+    # Only the @voxpane_status unset; status-right is left alone.
+    assert ["tmux", "set", "-gu", "@voxpane_status"] in set_calls
+    assert all("status-right" not in a for a in set_calls)
+
+
+def test_show_global_returns_none_when_unset(monkeypatch):
+    fake = ScriptedRun({})
+    patch_run(monkeypatch, fake)
+    assert tmuxio.show_global("@nope") is None
+
+
+def test_show_global_returns_value_including_empty(monkeypatch):
+    fake = ScriptedRun({"@e": "", "@v": "hi"})
+    patch_run(monkeypatch, fake)
+    assert tmuxio.show_global("@e") == ""    # set-empty is distinct from unset
+    assert tmuxio.show_global("@v") == "hi"
+
+
 def test_set_pane_autoname_hooks_argv(monkeypatch):
     fake = FakeRun()
     patch_run(monkeypatch, fake)

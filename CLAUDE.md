@@ -25,9 +25,9 @@ voxpane setup                                          # interactive: probe + de
 ```
 
 `voxpane` CLI (entry point `voxpane.cli:main`):
-- `voxpane` - ensure tmux + spawn the voice daemon (detached), then attach (default, no subcommand)
+- `voxpane [--reload]` - ensure tmux + spawn the voice daemon (detached), then attach (default, no subcommand). `--reload` respawns the daemon first (= `voxpane reload && voxpane` in one invocation) so source edits load before attaching - the dogfooding loop
 - `voxpane up` / `voxpane down` - start / stop the daemon (`down` SIGTERMs the recorded pid; the daemon is a detached process, not a tmux window)
-- `voxpane reload` - `down` + `ensure_up` in one step; respawns the daemon so source edits take effect (the daemon loads modules once at spawn, so a live one runs stale code). For dogfooding voxpane on itself
+- `voxpane reload` - `down` + `ensure_up` in one step; respawns the daemon so source edits take effect (the daemon loads modules once at spawn, so a live one runs stale code). For dogfooding voxpane on itself (or `voxpane --reload` to also re-attach)
 - `voxpane name <name> [pane]` - label a pane (rejects confusable names; defaults to focused)
 - `voxpane autoname [pane]` - assign the next free callsign from the pool to a pane unless already named; driven by the tmux pane-creation hooks (also usable by hand). `<prefix>+R` renames the active pane via this path's sibling `voxpane name`
 - `voxpane status` - list panes, daemon pid + log path, permission state
@@ -155,6 +155,21 @@ Invariants) and talks to tmux purely via the CLI.
   not shadow reserved verbs (create/close/focus/swap/zoom). **Unvalidated on a live
   daemon:** Claude's `/` autocomplete overlay may make the injector's `capture-pane`
   confirm-poll behave differently or have Enter pick a menu item; verify before trust.
+- **ASR mishearing aliases (curated, per-token).** "pane" and the command verbs
+  mishear as near-homophones; each is recovered by an explicit alias set in
+  `commands.py`, same one-line-edit-plus-a-test pattern as `_FILLERS`. Scoring is
+  deliberately avoided (it over-matches real words like "plans"/"lanes"), so the
+  sets list only known mis-transcriptions and OMIT real-word lookalikes. Current
+  sets: `_UNIT_ALIASES` (pain/pen/paint -> pane; windo* -> window), `_CREATE_VERB_ALIASES`
+  (ate/hate/eight/crate), `_CLOSE_VERB_ALIASES` (clothes/cloze),
+  `_SWAP_VERB_ALIASES` (swab/swamp), `_ZOOM_VERB_ALIASES` (zoo). **Precision over
+  recall, scaled to blast radius:** destructive verbs keep tighter sets, and every
+  alias is safe by construction because the parse still requires its operands (create
+  needs a 1-9 count; close needs a target; swap needs two names) - a misfire with no
+  valid operand returns None and **falls through to verbatim inject**, never an action.
+  `focus`/`kill`/`unzoom` are intentionally un-aliased (no clean real-word homophone).
+  The `create` unit noun is also **optional** ("create two" == "create two panes",
+  default pane) with homophone-free synonyms `agent(s)`/`split(s)` -> pane.
 
 ## Design decisions (settled rationale)
 

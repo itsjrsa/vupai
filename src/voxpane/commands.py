@@ -23,18 +23,53 @@ from voxpane.tmuxio import TmuxError
 
 _STRIP = ".,!?;:'\"()[]{}"
 _CREATE_VERBS = ("create", "make", "add", "open", "new")
+# Curated ASR mishearings of the lead verb "create" (ate/hate/eight/crate). Same
+# rationale as _UNIT_ALIASES: scoring would over-match, so the set is explicit.
+# These ARE real words, but only matter on the button command key (plain dictation
+# goes verbatim via the other key) AND the parse still requires a valid 1-9 count
+# right after, so a non-create utterance ("hate this code") finds no count and
+# falls through to inject - non-destructive. Extend with a one-liner + a test.
+_CREATE_VERB_ALIASES = frozenset({"ate", "hate", "eight", "crate"})
 _CLOSE_VERBS = ("close", "kill")
+# Curated ASR mishearings of "close" (clothes/cloze). Same pattern as
+# _CREATE_VERB_ALIASES, but close is DESTRUCTIVE so the set is kept tighter: only
+# high-confidence homophones, and the parse still requires a target token after
+# the verb (a bare verb is None, an unknown name -> "no pane named ..."), so a
+# misfire can't silently kill a pane. "kill" has no clean homophone -> omitted.
+_CLOSE_VERB_ALIASES = frozenset({"clothes", "cloze"})
 _ZOOM_VERBS = ("zoom", "maximize")
+# Curated ASR mishearing of "zoom" (zoo). View-only action, so low risk; same
+# explicit-set pattern as the other verb aliases.
+_ZOOM_VERB_ALIASES = frozenset({"zoo"})
 _UNZOOM_VERBS = ("unzoom", "minimize", "restore")
 # Parakeet splits "unzoom" into two tokens ("and zoom" / "un zoom"). Curated,
 # deterministic - the leading token is implausible as a literal command on its
 # own, so matching it here can't shadow a real utterance.
 _UNZOOM_PHRASES = (["and", "zoom"], ["un", "zoom"])
-_UNITS = {"pane": "pane", "panes": "pane", "window": "window", "windows": "window"}
+# Curated ASR mishearings of "swap" (swab/swamp - b/p, m/p confusion). swap
+# rearranges panes, so the explicit set stays tight; the parse also requires two
+# name tokens after the verb, so a bare misfire resolves to nothing.
+_SWAP_VERBS = ("swap",)
+_SWAP_VERB_ALIASES = frozenset({"swab", "swamp"})
+# Unit nouns for `create`. "pane" is canonical; "agent"/"split" are homophone-free
+# synonyms ("pane" mishears as "pain"/"panel") that map to the same thing - say
+# whichever is natural. "window" stays distinct (real tmux concept, reserved for
+# future window creation; _exec_create rejects it for now).
+_UNITS = {
+    "pane": "pane", "panes": "pane",
+    "agent": "pane", "agents": "pane",
+    "split": "pane", "splits": "pane",
+    "window": "window", "windows": "window",
+}
 # Tokens that mean "one" before the unit ("create a pane" / "create another
 # pane" == "create one pane"). Scoped to the create parse only - never fed to the
 # global word_to_int, so these can't leak into router number-routing or dictation.
 _ONE_WORDS = ("a", "an", "another")
+# Descriptive filler that may sit between the count and the unit/program in a
+# create utterance ("create a new pane", "create two new shell panes"). "new" is
+# already a create verb, so as a mid-token it carries no extra meaning - drop it
+# rather than failing the parse to `unknown`. Scoped to the create body only.
+_CREATE_FILLERS = ("new", "fresh", "quick")
 # Curated ASR mishearings of the unit noun -> canonical unit. The trailing unit
 # token is the most-misheard part of "create N panes" ("paints"/"pains"). A
 # fuzzy or phonetic match cannot help here: by Levenshtein ratio the real errors
@@ -47,7 +82,7 @@ _ONE_WORDS = ("a", "an", "another")
 # plus a test when a new mishearing shows up in the wild.
 _UNIT_ALIASES = {
     "pain": "pane", "pains": "pane", "paine": "pane", "payne": "pane",
-    "paint": "pane", "paints": "pane",
+    "paint": "pane", "paints": "pane", "pen": "pane", "pens": "pane",
     "windo": "window", "windos": "window", "windoes": "window",
 }
 
@@ -101,19 +136,26 @@ def _lead(text: str) -> tuple[str, str]:
 def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
     if toks[:2] == ["spin", "up"]:
         rest = toks[2:]
-    elif toks and toks[0] in _CREATE_VERBS:
+    elif toks and (toks[0] in _CREATE_VERBS or toks[0] in _CREATE_VERB_ALIASES):
         rest = toks[1:]
     else:
         return None
-    if len(rest) < 2:
+    if not rest:
         return None
     n = 1 if rest[0] in _ONE_WORDS else word_to_int(rest[0])
     if n is None or not (1 <= n <= 9):
         return None
-    unit = _resolve_unit(rest[-1])
-    if unit is None:
-        return None
-    mid = rest[1:-1]
+    # The trailing unit noun is optional ("create two" == "create two panes").
+    # When the last token names a unit, consume it; otherwise default to a pane
+    # and treat the remaining tokens as a possible program.
+    tail = rest[1:]
+    unit = "pane"
+    if tail:
+        resolved = _resolve_unit(tail[-1])
+        if resolved is not None:
+            unit = resolved
+            tail = tail[:-1]
+    mid = [t for t in tail if t not in _CREATE_FILLERS]
     if not mid:
         program: str | None = None
     elif len(mid) == 1 and mid[0] in programs:
@@ -124,7 +166,7 @@ def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
 
 
 def _parse_close(toks: list[str]) -> Command | None:
-    if not toks or toks[0] not in _CLOSE_VERBS:
+    if not toks or (toks[0] not in _CLOSE_VERBS and toks[0] not in _CLOSE_VERB_ALIASES):
         return None
     rest = [t for t in toks[1:] if t != "the"]
     if not rest:
@@ -143,7 +185,7 @@ def _parse_focus(toks: list[str]) -> Command | None:
 
 
 def _parse_swap(toks: list[str]) -> Command | None:
-    if toks and toks[0] == "swap":
+    if toks and (toks[0] in _SWAP_VERBS or toks[0] in _SWAP_VERB_ALIASES):
         names = [t for t in toks[1:] if t != "and"]
         if len(names) >= 2:
             return Command(kind="swap", name=names[0], name_b=names[1])
@@ -155,7 +197,7 @@ def _parse_zoom(toks: list[str]) -> Command | None:
         return None
     if toks[0] in _UNZOOM_VERBS or toks[:2] in _UNZOOM_PHRASES:
         return Command(kind="unzoom")
-    if toks[0] in _ZOOM_VERBS:
+    if toks[0] in _ZOOM_VERBS or toks[0] in _ZOOM_VERB_ALIASES:
         rest = toks[1:]
     elif toks[:2] == ["full", "screen"]:
         rest = toks[2:]
