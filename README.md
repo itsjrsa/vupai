@@ -97,15 +97,27 @@ can see its status; it survives detach/reattach.
 Optional TOML at `~/.config/voxpane/config.toml` (every field has a default):
 
 ```toml
-hotkey = "alt_r"                                  # pynput key name; alt_r = Right-Option
+hotkey = "alt_r"                                  # pynput key name; alt_r = Right-Option (dictation key in button mode)
+addressing = "keyword"                            # "keyword" (one key + control word) | "button" (two keys)
+command_hotkey = "ctrl_l"                         # button mode: the "system" key (Left-Control)
+control_word = "computer"                         # keyword mode: leading word that addresses voxpane
+broadcast_word = "everyone"                       # leading word that injects to all named agents
 model_id = "mlx-community/parakeet-tdt-0.6b-v3"
 sample_rate = 16000
-fuzzy_cutoff = 82                                 # name-match strictness (0–100)
+fuzzy_cutoff = 82                                 # name-match strictness (0-100)
 poll_interval = 0.5                               # pane-registry refresh (s)
 inject_confirm_timeout = 2.0                      # wait for pasted text before Enter (s)
 inject_poll_interval = 0.05
 voice_window_name = "voice"
 ```
+
+**Addressing modes.** In `keyword` mode (default) you hold one key and select a
+voxpane command by speaking the `control_word` ("computer ...") or broadcast with
+the `broadcast_word` ("everyone ..."). In `button` mode you hold one of two keys:
+the dictation key (`hotkey`) types your words verbatim into the focused pane,
+while the system key (`command_hotkey`) interprets them as a command, a broadcast,
+or a name-addressed message ("nova, are you there?"). The button is the control
+signal, so no control word is needed.
 
 ## Scope & limitations
 

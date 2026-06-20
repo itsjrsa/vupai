@@ -44,6 +44,7 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 | `src/voxpane/cli.py`, `__main__.py` | `voxpane` subcommands; `ensure_up`; spawns the daemon **detached** (`_spawn_daemon`, `start_new_session=True`) |
 | `src/voxpane/daemon.py` | orchestrates press→record→transcribe→route→inject→feedback; listener callbacks enqueue, main-thread consumer processes |
 | `src/voxpane/hotkey.py` | global push-to-talk via `pynput`, debounced (Right-Option) |
+| `src/voxpane/hotkey.py` (`MultiHotkey`) | button mode: one pynput listener over two PTT keys, each independently debounced |
 | `src/voxpane/recorder.py` | `sox rec` → wav, SIGINT to stop; exports `MIN_WAV_BYTES` |
 | `src/voxpane/asr.py` | `parakeet-mlx` `Transcriber` Protocol, lazy `warm()` + cache |
 | `src/voxpane/router.py` | name cascade exact→rapidfuzz→metaphone, number-in-window, focus fallback, near-tie ambiguity; `CALLSIGNS` pool + `next_callsign` (auto-name picker) |
@@ -111,6 +112,15 @@ Invariants) and talks to tmux purely via the CLI.
   to the *terminal app*, not the script - they silent-fail otherwise. Use `voxpane doctor`.
 - Tests inject collaborators (`io=`, `lister=`, `route_fn=`, `recorder_factory=`…)
   so units run with fakes - no real tmux/mic/model in the unit suite.
+- **Addressing mode (`addressing` config):** `keyword` (default) keeps the single
+  PTT key and the spoken `control_word`/`broadcast_word`. `button` uses two keys:
+  the `hotkey` (dictation) injects verbatim into the focused pane (no parse, no
+  name routing), and the `command_hotkey` (system, default Left-Control) runs the
+  command layer with `addressing="button"` (no control word needed; a non-command
+  falls through to route+inject and is never swallowed as `unknown`). The daemon
+  threads a per-utterance `mode` through its jobs queue as `(wav, mode)`. Bad
+  button config (duplicate or unknown key names) falls back to a single keyword
+  `Hotkey` with a feedback error.
 - **Command layer runs before the router.** `daemon._process` calls `handle_command`
   after transcribe; utterances led by `control_word` (default "computer") or
   `broadcast_word` (default "everyone") are executed by voxpane, never injected.
@@ -127,7 +137,9 @@ Swift/native, not a browser app) · Parakeet via `parakeet-mlx` · **v1 drives C
 Code panes only** (Codex/OpenCode have known send-keys submit bugs) · control word +
 broadcast word are configurable (`control_word`, `broadcast_word` in config) · created
 panes default to `pane_command` ("claude"), overridable by voice via the `programs`
-map · multi-pane create tiles the window.
+map · multi-pane create tiles the window · addressing mode is configurable (`keyword`
+default vs two-key `button`); the dictation key keeps `alt_r` (muscle memory) and the
+system key defaults to `ctrl_l`.
 
 ## Conventions
 
