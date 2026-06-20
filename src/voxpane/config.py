@@ -12,7 +12,7 @@ class Config:
     hotkey: str = "alt_r"                 # pynput Key name; alt_r = Right-Option
     addressing: str = "keyword"           # "keyword" | "button" (two-key mode)
     command_hotkey: str = "ctrl_l"        # button mode: the system key (Left-Control)
-    model_id: str = "mlx-community/parakeet-tdt-0.6b-v3"
+    model_id: str = "mlx-community/parakeet-tdt-0.6b-v2"  # English-only; v3 multilingual drifts to Russian on short audio
     sample_rate: int = 16000
     fuzzy_cutoff: int = 82                 # rapidfuzz score 0..100
     poll_interval: float = 0.5             # registry refresh cadence (s)

@@ -7,7 +7,7 @@ def test_defaults_when_no_file(tmp_path: Path) -> None:
     cfg = load_config(tmp_path / "does_not_exist.toml")
     assert isinstance(cfg, Config)
     assert cfg.hotkey == "alt_r"
-    assert cfg.model_id == "mlx-community/parakeet-tdt-0.6b-v3"
+    assert cfg.model_id == "mlx-community/parakeet-tdt-0.6b-v2"
     assert cfg.sample_rate == 16000
     assert cfg.fuzzy_cutoff == 82
     assert cfg.poll_interval == 0.5
@@ -43,7 +43,7 @@ def test_overrides_selected_fields(tmp_path: Path) -> None:
     assert cfg.poll_interval == 1.5
     assert cfg.aliases == {"claude": "main", "cc": "main"}
     # untouched fields keep defaults
-    assert cfg.model_id == "mlx-community/parakeet-tdt-0.6b-v3"
+    assert cfg.model_id == "mlx-community/parakeet-tdt-0.6b-v2"
     assert cfg.sample_rate == 16000
 
 
