@@ -10,6 +10,8 @@ from pathlib import Path
 @dataclass(frozen=True)
 class Config:
     hotkey: str = "alt_r"                 # pynput Key name; alt_r = Right-Option
+    addressing: str = "keyword"           # "keyword" | "button" (two-key mode)
+    command_hotkey: str = "ctrl_l"        # button mode: the system key (Left-Control)
     model_id: str = "mlx-community/parakeet-tdt-0.6b-v3"
     sample_rate: int = 16000
     fuzzy_cutoff: int = 82                 # rapidfuzz score 0..100

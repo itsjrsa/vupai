@@ -96,3 +96,17 @@ def test_loads_command_config(tmp_path: Path) -> None:
     assert c.broadcast_word == "team"
     assert c.macros["dev layout"] == ["create 3 claude panes", "tile"]
     assert c.programs["shell"] == ""
+
+
+def test_addressing_defaults() -> None:
+    c = Config()
+    assert c.addressing == "keyword"
+    assert c.command_hotkey == "ctrl_l"
+
+
+def test_loads_addressing_config(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('addressing = "button"\ncommand_hotkey = "ctrl_r"\n')
+    c = load_config(p)
+    assert c.addressing == "button"
+    assert c.command_hotkey == "ctrl_r"
