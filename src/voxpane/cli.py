@@ -170,6 +170,10 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 def _cmd_name(args: argparse.Namespace) -> int:
     cfg = load_config()
+    reserved = {cfg.control_word.strip().lower(), cfg.broadcast_word.strip().lower()}
+    if args.name.strip().lower() in reserved:
+        print(f"name '{args.name}' is reserved (control/broadcast word)")
+        return 1
     registry = PaneRegistry()
     registry.refresh()
     existing = [p.name for p in registry.panes if p.name]

@@ -232,3 +232,18 @@ def test_execute_broadcast_empty_text():
     res = execute_command(Command(kind="broadcast", text=""), reg, Config(),
                           io=FakeTmux(), inject_fn=lambda *a, **k: True)
     assert res.ok is False
+
+
+def test_execute_broadcast_partial_success():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    sent = []
+
+    def fake_inject(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05):
+        sent.append(pane_id)
+        return pane_id == "%1"  # first confirms, second fails
+
+    res = execute_command(Command(kind="broadcast", text="go"), reg, Config(),
+                          io=FakeTmux(), inject_fn=fake_inject)
+    assert res.ok and "1/2" in res.message
+    assert sent == ["%1", "%2"]

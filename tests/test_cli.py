@@ -218,6 +218,15 @@ def test_name_explicit_pane_arg(fake_env, monkeypatch):
     assert ("set_pane_name", "%7", "beta") in ft.calls
 
 
+def test_name_rejects_control_word(fake_env, monkeypatch, capsys):
+    ft, pidfile = fake_env
+    _stub_registry(monkeypatch, [])
+    rc = cli.main(["name", "computer"])
+    assert rc == 1
+    assert not any(c[0] == "set_pane_name" for c in ft.calls)
+    assert "reserved" in capsys.readouterr().out
+
+
 def test_name_rejects_colliding_name(fake_env, monkeypatch, capsys):
     ft, pidfile = fake_env
     _stub_registry(monkeypatch, [_pane("alpha")])

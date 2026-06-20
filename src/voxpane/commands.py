@@ -184,19 +184,26 @@ def _exec_close(cmd: Command, registry, config, io) -> CommandResult:
 
 def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
     msgs: list[str] = []
+    ok = True
     for action in cmd.actions:
         toks = _tokens(action)
         sub = _parse_create(toks, config.programs)
         if sub is not None:
-            msgs.append(_exec_create(sub, registry, config, io).message)
+            res = _exec_create(sub, registry, config, io)
+            ok = ok and res.ok
+            msgs.append(res.message)
         elif toks == ["tile"]:
             focused = registry.focused()
             if focused is not None:
                 io.select_layout(focused.window_id, "tiled")
                 msgs.append("tiled")
+            else:
+                ok = False
+                msgs.append("tile: no focused pane")
         else:
+            ok = False
             msgs.append(f"skipped: {action}")
-    return CommandResult(True, "; ".join(msgs) if msgs else "macro: nothing to do")
+    return CommandResult(ok, "; ".join(msgs) if msgs else "macro: nothing to do")
 
 
 def _exec_broadcast(cmd: Command, registry, config, inject_fn) -> CommandResult:
