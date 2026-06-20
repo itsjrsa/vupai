@@ -23,6 +23,13 @@ from voxpane.tmuxio import TmuxError
 
 _STRIP = ".,!?;:'\"()[]{}"
 _CREATE_VERBS = ("create", "make", "add", "open", "new")
+# Curated ASR mishearings of the lead verb "create" (ate/hate/eight/crate). Same
+# rationale as _UNIT_ALIASES: scoring would over-match, so the set is explicit.
+# These ARE real words, but only matter on the button command key (plain dictation
+# goes verbatim via the other key) AND the parse still requires a valid 1-9 count
+# right after, so a non-create utterance ("hate this code") finds no count and
+# falls through to inject - non-destructive. Extend with a one-liner + a test.
+_CREATE_VERB_ALIASES = frozenset({"ate", "hate", "eight", "crate"})
 _CLOSE_VERBS = ("close", "kill")
 _ZOOM_VERBS = ("zoom", "maximize")
 _UNZOOM_VERBS = ("unzoom", "minimize", "restore")
@@ -115,7 +122,7 @@ def _lead(text: str) -> tuple[str, str]:
 def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
     if toks[:2] == ["spin", "up"]:
         rest = toks[2:]
-    elif toks and toks[0] in _CREATE_VERBS:
+    elif toks and (toks[0] in _CREATE_VERBS or toks[0] in _CREATE_VERB_ALIASES):
         rest = toks[1:]
     else:
         return None

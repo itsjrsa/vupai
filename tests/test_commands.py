@@ -268,6 +268,35 @@ def test_parse_create_misheard_paint_singular():
     assert c.kind == "create" and c.count == 1 and c.unit == "pane"
 
 
+# --- ASR homophone tolerance for the lead verb (ate/hate/eight/crate) --------
+
+def test_parse_create_misheard_verb_crate():
+    c = _parse_btn("crate two panes")
+    assert c.kind == "create" and c.count == 2 and c.unit == "pane"
+
+
+def test_parse_create_misheard_verb_ate():
+    c = _parse_btn("ate three panes")
+    assert c.kind == "create" and c.count == 3 and c.unit == "pane"
+
+
+def test_parse_create_misheard_verb_eight():
+    # "create two" -> "eight two"; the verb alias is consumed, count follows.
+    c = _parse_btn("eight two")
+    assert c.kind == "create" and c.count == 2 and c.unit == "pane"
+
+
+def test_parse_create_misheard_verb_hate_with_program():
+    c = _parse_btn("hate two shell panes")
+    assert c.kind == "create" and c.count == 2 and c.program == "" and c.unit == "pane"
+
+
+def test_misheard_verb_without_count_falls_through():
+    # A real-word homophone that isn't a create: no count -> not a command.
+    assert _parse_btn("hate this code") is None
+    assert _parse_btn("ate lunch") is None
+
+
 def test_parse_create_misheard_pens_is_pane():
     # "create four panes" -> "create four pens".
     c = _parse_btn("create four pens")
