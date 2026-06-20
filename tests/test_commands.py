@@ -18,6 +18,9 @@ class FakeTmux:
     def set_pane_name(self, pane_id, name):
         self.calls.append(("set_pane_name", pane_id, name))
 
+    def select_pane(self, pane_id):
+        self.calls.append(("select_pane", pane_id))
+
 
 class FakeRegistry:
     def __init__(self, panes, focused=None):
@@ -134,3 +137,17 @@ def test_execute_macro_runs_create_then_tile():
     splits = [c for c in io.calls if c[0] == "split_window"]
     assert len(splits) == 3
     assert io.calls[-1] == ("select_layout", "@1", "tiled")
+
+
+def test_execute_focus_selects_named_pane():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    io = FakeTmux()
+    res = execute_command(Command(kind="focus", name="atlas"), reg, Config(), io=io)
+    assert res.ok and io.calls == [("select_pane", "%2")]
+
+
+def test_execute_focus_unknown_name():
+    reg = FakeRegistry([_pane("%1", "nova", active=True)])
+    res = execute_command(Command(kind="focus", name="zzzz"), reg, Config(), io=FakeTmux())
+    assert res.ok is False

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from voxpane import tmuxio
 from voxpane.injector import inject
-from voxpane.router import next_callsign, word_to_int
+from voxpane.router import next_callsign, resolve_pane_by_name, word_to_int
 from voxpane.tmuxio import TmuxError
 
 _STRIP = ".,!?;:'\"()[]{}"
@@ -147,6 +147,17 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
     return CommandResult(True, f"created {cmd.count} panes: {' '.join(assigned)}")
 
 
+def _exec_focus(cmd: Command, registry, config, io) -> CommandResult:
+    m = resolve_pane_by_name(cmd.name, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
+    if m.candidates:
+        msg = "ambiguous: " + " / ".join(m.candidates) + " - say the name again"
+        return CommandResult(False, msg)
+    if m.pane_id is None:
+        return CommandResult(False, f"no pane named {cmd.name}")
+    io.select_pane(m.pane_id)
+    return CommandResult(True, f"focused {m.matched_name}")
+
+
 def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
     msgs: list[str] = []
     for action in cmd.actions:
@@ -171,6 +182,8 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_create(cmd, registry, config, io)
         if cmd.kind == "macro":
             return _exec_macro(cmd, registry, config, io)
+        if cmd.kind == "focus":
+            return _exec_focus(cmd, registry, config, io)
         return CommandResult(False, f"unknown command: {cmd.raw}")
     except TmuxError as exc:
         return CommandResult(False, f"tmux error: {exc}")
