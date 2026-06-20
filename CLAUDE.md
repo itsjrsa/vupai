@@ -118,7 +118,7 @@ Invariants) and talks to tmux purely via the CLI.
   so units run with fakes - no real tmux/mic/model in the unit suite.
 - **Addressing mode (`addressing` config):** `button` (default) uses two keys:
   the `hotkey` (dictation) injects verbatim into the focused pane (no parse, no
-  name routing), and the `command_hotkey` (system, default Left-Control) runs the
+  name routing), and the `command_hotkey` (system, default Left-Option) runs the
   command layer with `addressing="button"` (no control word; a non-command falls
   through to route+inject and is never swallowed as `unknown`). `keyword` is the
   legacy single-PTT-key mode and **has no command layer** - only the spoken
@@ -166,7 +166,7 @@ word (the system key signals a command); `broadcast_word` is configurable · cre
 panes default to `pane_command` ("claude"), overridable by voice via the `programs`
 map · multi-pane create tiles the window · addressing mode is configurable (two-key
 `button` default vs legacy single-key `keyword`, which has no command layer); the
-dictation key keeps `alt_r` (muscle memory) and the system key defaults to `ctrl_l`.
+dictation key keeps `alt_r` (muscle memory) and the system key defaults to `alt_l`.
 
 ## Conventions
 
