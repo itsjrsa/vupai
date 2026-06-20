@@ -68,3 +68,31 @@ def test_config_is_frozen() -> None:
         assert "FrozenInstanceError" in type(exc).__name__
     else:
         raise AssertionError("Config should be frozen")
+
+
+def test_command_defaults() -> None:
+    c = Config()
+    assert c.control_word == "computer"
+    assert c.broadcast_word == "everyone"
+    assert c.pane_command == "claude"
+    assert c.programs == {"claude": "claude", "shell": ""}
+    assert c.macros == {}
+
+
+def test_loads_command_config(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        'control_word = "jarvis"\n'
+        'broadcast_word = "team"\n'
+        'pane_command = "claude"\n\n'
+        "[programs]\n"
+        'claude = "claude"\n'
+        'shell = ""\n\n'
+        "[macros]\n"
+        '"dev layout" = ["create 3 claude panes", "tile"]\n'
+    )
+    c = load_config(p)
+    assert c.control_word == "jarvis"
+    assert c.broadcast_word == "team"
+    assert c.macros["dev layout"] == ["create 3 claude panes", "tile"]
+    assert c.programs["shell"] == ""

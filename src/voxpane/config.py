@@ -18,6 +18,12 @@ class Config:
     inject_poll_interval: float = 0.05
     voice_window_name: str = "voice"
     aliases: dict[str, str] = field(default_factory=dict)  # spoken alias -> pane name
+    control_word: str = "computer"        # leading word = a voxpane command
+    broadcast_word: str = "everyone"      # leading word = inject to all agents
+    pane_command: str = "claude"          # default program for created panes
+    programs: dict[str, str] = field(     # spoken token -> argv ("" = default shell)
+        default_factory=lambda: {"claude": "claude", "shell": ""})
+    macros: dict[str, list[str]] = field(default_factory=dict)  # phrase -> actions
 
 
 CONFIG_PATH = Path.home() / ".config" / "voxpane" / "config.toml"
