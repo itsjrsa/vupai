@@ -408,6 +408,22 @@ def test_parse_bare_close_falls_through():
     assert _parse_btn("close") is None
 
 
+def test_parse_close_misheard_verb_clothes():
+    # "close nova" -> "clothes nova"; the verb alias resolves to a close.
+    c = _parse_btn("clothes nova")
+    assert c.kind == "close" and c.name == "nova"
+    assert _parse_btn("cloze nova").kind == "close"
+
+
+def test_parse_close_misheard_verb_all_target():
+    assert _parse_btn("clothes all").kind == "close_others"
+
+
+def test_parse_bare_misheard_close_falls_through():
+    # A homophone with no target is not destructive -> falls through to inject.
+    assert _parse_btn("clothes") is None
+
+
 def test_parse_close_the_others():
     assert _parse_btn("close the others").kind == "close_others"
     assert _parse_btn("close others").kind == "close_others"

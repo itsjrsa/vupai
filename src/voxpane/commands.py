@@ -31,6 +31,12 @@ _CREATE_VERBS = ("create", "make", "add", "open", "new")
 # falls through to inject - non-destructive. Extend with a one-liner + a test.
 _CREATE_VERB_ALIASES = frozenset({"ate", "hate", "eight", "crate"})
 _CLOSE_VERBS = ("close", "kill")
+# Curated ASR mishearings of "close" (clothes/cloze). Same pattern as
+# _CREATE_VERB_ALIASES, but close is DESTRUCTIVE so the set is kept tighter: only
+# high-confidence homophones, and the parse still requires a target token after
+# the verb (a bare verb is None, an unknown name -> "no pane named ..."), so a
+# misfire can't silently kill a pane. "kill" has no clean homophone -> omitted.
+_CLOSE_VERB_ALIASES = frozenset({"clothes", "cloze"})
 _ZOOM_VERBS = ("zoom", "maximize")
 _UNZOOM_VERBS = ("unzoom", "minimize", "restore")
 # Parakeet splits "unzoom" into two tokens ("and zoom" / "un zoom"). Curated,
@@ -152,7 +158,7 @@ def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
 
 
 def _parse_close(toks: list[str]) -> Command | None:
-    if not toks or toks[0] not in _CLOSE_VERBS:
+    if not toks or (toks[0] not in _CLOSE_VERBS and toks[0] not in _CLOSE_VERB_ALIASES):
         return None
     rest = [t for t in toks[1:] if t != "the"]
     if not rest:
