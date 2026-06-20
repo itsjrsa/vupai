@@ -97,6 +97,23 @@ def test_loads_command_config(tmp_path: Path) -> None:
     assert c.programs["shell"] == ""
 
 
+def test_slash_commands_default() -> None:
+    c = Config()
+    assert c.slash_commands == {"clear": "/clear", "compact": "/compact"}
+
+
+def test_loads_slash_commands(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[slash_commands]\n"
+        'clear = "/clear"\n'
+        'wipe = "/clear"\n'
+    )
+    c = load_config(p)
+    assert c.slash_commands["wipe"] == "/clear"
+    assert c.slash_commands["clear"] == "/clear"
+
+
 def test_addressing_defaults() -> None:
     c = Config()
     assert c.addressing == "keyword"

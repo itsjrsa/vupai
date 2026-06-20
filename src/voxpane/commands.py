@@ -48,18 +48,23 @@ def _resolve_unit(token: str) -> str | None:
     return _UNIT_ALIASES.get(token)
 
 
+# Trailing target tokens that mean "all named panes" for a slash command.
+_ALL_TARGETS = ("all", "everyone", "everybody")
+
+
 @dataclass(frozen=True)
 class Command:
-    # create|macro|close|close_others|focus|swap|zoom|unzoom|broadcast|unknown
+    # create|macro|close|close_others|focus|swap|zoom|unzoom|slash|broadcast|unknown
     kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
     name: str = ""
     name_b: str = ""
-    text: str = ""                         # broadcast remainder (original casing)
+    text: str = ""                         # broadcast remainder / slash literal
     actions: tuple[str, ...] = ()          # macro expansion
     raw: str = ""                          # unknown body (for feedback)
     unit: str = "pane"                     # pane|window
+    to_all: bool = False                   # slash: target all named panes
 
 
 def _tokens(s: str) -> list[str]:
@@ -139,8 +144,26 @@ def _parse_zoom(toks: list[str]) -> Command | None:
     return Command(kind="zoom", name=rest[0] if rest else "")
 
 
+def _parse_slash(toks: list[str], slash_commands: dict[str, str]) -> Command | None:
+    """`<verb> [target]` where verb is a configured slash command.
+
+    No target -> focused pane; "all"/"everyone"/"everybody" -> all named panes;
+    any other token -> that pane name. Returns None when the leading token is not
+    a configured slash verb (the caller decides unknown vs fall-through)."""
+    if not toks or toks[0] not in slash_commands:
+        return None
+    literal = slash_commands[toks[0]]
+    rest = [t for t in toks[1:] if t != "the"]
+    if not rest:
+        return Command(kind="slash", text=literal)
+    if rest[0] in _ALL_TARGETS:
+        return Command(kind="slash", text=literal, to_all=True)
+    return Command(kind="slash", text=literal, name=rest[0])
+
+
 def _parse_body(body: str, macros: dict[str, list[str]],
-                programs: dict[str, str]) -> Command | None:
+                programs: dict[str, str],
+                slash_commands: dict[str, str]) -> Command | None:
     """Macro match, then the verb chain. Returns None when nothing matches
     (the caller decides whether that is `unknown` or a fall-through)."""
     norm = " ".join(_tokens(body))
@@ -149,14 +172,17 @@ def _parse_body(body: str, macros: dict[str, list[str]],
             return Command(kind="macro", actions=tuple(actions))
     toks = _tokens(body)
     return (_parse_create(toks, programs) or _parse_close(toks)
-            or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks))
+            or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks)
+            or _parse_slash(toks, slash_commands))
 
 
 def parse_command(
     text: str, *, control_word: str, broadcast_word: str,
     macros: dict[str, list[str]], programs: dict[str, str],
+    slash_commands: dict[str, str] | None = None,
     addressing: str = "keyword",
 ) -> Command | None:
+    slash_commands = slash_commands or {}
     lead, remainder = _lead(text)
     if addressing == "button":
         # The system key is the control signal; no control word is required.
@@ -168,14 +194,14 @@ def parse_command(
         if lead == broadcast_word:
             return Command(kind="broadcast", text=remainder.strip())
         # None here means "not a command" -> the daemon routes + injects it.
-        return _parse_body(body_source, macros, programs)
+        return _parse_body(body_source, macros, programs, slash_commands)
     # keyword mode (unchanged)
     if lead == broadcast_word:
         return Command(kind="broadcast", text=remainder.strip())
     if lead != control_word:
         return None
     body = remainder.strip()
-    cmd = _parse_body(body, macros, programs)
+    cmd = _parse_body(body, macros, programs, slash_commands)
     return cmd if cmd is not None else Command(kind="unknown", raw=body)
 
 
@@ -329,6 +355,38 @@ def _exec_broadcast(cmd: Command, registry, config, inject_fn) -> CommandResult:
     return CommandResult(True, f"broadcast to {ok}/{len(targets)} agents")
 
 
+def _inject(inject_fn, pane_id, text, config) -> bool:
+    return inject_fn(pane_id, text, confirm_timeout=config.inject_confirm_timeout,
+                     poll_interval=config.inject_poll_interval)
+
+
+def _exec_slash(cmd: Command, registry, config, inject_fn) -> CommandResult:
+    literal = cmd.text
+    if cmd.to_all:
+        targets = [p for p in registry.panes if p.name != p.id]
+        if not targets:
+            return CommandResult(False, "no named agents")
+        ok = sum(1 for p in targets if _inject(inject_fn, p.id, literal, config))
+        return CommandResult(True, f"sent {literal} to {ok}/{len(targets)} agents")
+    if cmd.name:
+        m = resolve_pane_by_name(cmd.name, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
+        if m.candidates:
+            msg = "ambiguous: " + " / ".join(m.candidates) + " - say the name again"
+            return CommandResult(False, msg)
+        if m.pane_id is None:
+            return CommandResult(False, f"no pane named {cmd.name}")
+        pane_id, label = m.pane_id, m.matched_name
+    else:
+        focused = registry.focused()
+        if focused is None:
+            return CommandResult(False, "no focused pane")
+        pane_id = focused.id
+        label = focused.name if focused.name != focused.id else "the focused pane"
+    if _inject(inject_fn, pane_id, literal, config):
+        return CommandResult(True, f"sent {literal} to {label}")
+    return CommandResult(False, f"failed to send {literal} to {label}")
+
+
 def execute_command(cmd: Command, registry, config, *,
                     io=tmuxio, inject_fn=inject) -> CommandResult:
     try:
@@ -348,6 +406,8 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_zoom(cmd, registry, config, io)
         if cmd.kind == "unzoom":
             return _exec_unzoom(cmd, registry, config, io)
+        if cmd.kind == "slash":
+            return _exec_slash(cmd, registry, config, inject_fn)
         if cmd.kind == "broadcast":
             return _exec_broadcast(cmd, registry, config, inject_fn)
         return CommandResult(False, f"unknown command: {cmd.raw}")
@@ -360,7 +420,8 @@ def handle_command(text: str, registry, config, *,
                    addressing: str = "keyword") -> CommandResult | None:
     cmd = parse_command(
         text, control_word=config.control_word, broadcast_word=config.broadcast_word,
-        macros=config.macros, programs=config.programs, addressing=addressing)
+        macros=config.macros, programs=config.programs,
+        slash_commands=config.slash_commands, addressing=addressing)
     if cmd is None:
         return None
     return execute_command(cmd, registry, config, io=io, inject_fn=inject_fn)

@@ -253,6 +253,7 @@ def _voice_commands_text(cfg: Config) -> str:
     create_verbs = " / ".join((*_CREATE_VERBS, "spin up"))
     close_alts = " / ".join(_CLOSE_VERBS[1:])  # row label is the first verb already
     programs = " / ".join(sorted(cfg.programs)) or "(none)"
+    slash_verbs = " / ".join(sorted(cfg.slash_commands)) or "(none)"
     lines = ["voxpane voice commands", ""]
 
     if cfg.addressing == "button":
@@ -283,6 +284,8 @@ def _voice_commands_text(cfg: Config) -> str:
         f"  {prefix}close the others             close every pane but the focused one",
         f"  {prefix}zoom [name]                  zoom a pane (also: maximize / full screen)",
         f"  {prefix}unzoom                       restore layout (also: minimize / restore)",
+        f"  {prefix}<slash> [name|all]           send a slash command (focused / named / all)",
+        f"      slash: {slash_verbs}   e.g. \"{prefix}clear all\" -> /clear to every agent",
         "",
         f"Broadcast: {cfg.broadcast_word} <message>   send <message> to every named agent",
         "",

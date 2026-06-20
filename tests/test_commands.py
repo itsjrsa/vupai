@@ -90,14 +90,15 @@ def _parse(text, cfg=None):
     cfg = cfg or Config()
     return parse_command(
         text, control_word=cfg.control_word, broadcast_word=cfg.broadcast_word,
-        macros=cfg.macros, programs=cfg.programs)
+        macros=cfg.macros, programs=cfg.programs, slash_commands=cfg.slash_commands)
 
 
 def _parse_btn(text, cfg=None):
     cfg = cfg or Config()
     return parse_command(
         text, control_word=cfg.control_word, broadcast_word=cfg.broadcast_word,
-        macros=cfg.macros, programs=cfg.programs, addressing="button")
+        macros=cfg.macros, programs=cfg.programs, slash_commands=cfg.slash_commands,
+        addressing="button")
 
 
 def test_parse_not_addressed_returns_none():
@@ -484,3 +485,127 @@ def test_execute_unzoom_no_focused():
     io = FakeTmux()
     res = execute_command(Command(kind="unzoom"), reg, Config(), io=io)
     assert res.ok is False and io.calls == []
+
+
+# --- slash commands ----------------------------------------------------------
+# A spoken verb (config slash_commands map) injects a literal Claude Code slash
+# command into one pane (focused or named) or all named panes ("... all").
+
+def test_parse_slash_bare_targets_focused():
+    c = _parse("computer clear")
+    assert c == Command(kind="slash", text="/clear", name="", to_all=False)
+
+
+def test_parse_slash_by_name():
+    c = _parse("computer clear nova")
+    assert c == Command(kind="slash", text="/clear", name="nova")
+
+
+def test_parse_slash_all():
+    assert _parse("computer clear all") == Command(kind="slash", text="/clear", to_all=True)
+    assert _parse("computer clear everyone") == Command(kind="slash", text="/clear", to_all=True)
+
+
+def test_parse_slash_compact_default():
+    c = _parse("computer compact")
+    assert c.kind == "slash" and c.text == "/compact"
+
+
+def test_parse_slash_verb_not_in_map_is_unknown():
+    # "model" is not a default slash command -> stays unknown, never injected.
+    assert _parse("computer model").kind == "unknown"
+
+
+def test_button_slash_by_name():
+    c = _parse_btn("clear nova")
+    assert c == Command(kind="slash", text="/clear", name="nova")
+
+
+def test_button_slash_all():
+    assert _parse_btn("clear all") == Command(kind="slash", text="/clear", to_all=True)
+
+
+def test_button_slash_bare_targets_focused():
+    c = _parse_btn("clear")
+    assert c == Command(kind="slash", text="/clear", name="", to_all=False)
+
+
+def test_button_slash_verb_not_in_map_falls_through():
+    # An unmapped verb in button mode routes+injects, not unknown.
+    assert _parse_btn("model") is None
+
+
+def test_execute_slash_to_all_named_panes():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas"),
+             _pane("%3", "%3")]  # %3 unnamed -> skipped
+    reg = FakeRegistry(panes, focused=panes[0])
+    sent = []
+
+    def fake_inject(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05):
+        sent.append((pane_id, text))
+        return True
+
+    res = execute_command(Command(kind="slash", text="/clear", to_all=True),
+                          reg, Config(), io=FakeTmux(), inject_fn=fake_inject)
+    assert res.ok and "2/2" in res.message
+    assert sent == [("%1", "/clear"), ("%2", "/clear")]
+
+
+def test_execute_slash_to_all_no_named_agents():
+    reg = FakeRegistry([_pane("%1", "%1", active=True)])
+    res = execute_command(Command(kind="slash", text="/clear", to_all=True), reg,
+                          Config(), io=FakeTmux(), inject_fn=lambda *a, **k: True)
+    assert res.ok is False
+
+
+def test_execute_slash_by_name_injects_literal():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    sent = []
+    res = execute_command(
+        Command(kind="slash", text="/clear", name="atlas"), reg, Config(),
+        io=FakeTmux(),
+        inject_fn=lambda pid, txt, **k: sent.append((pid, txt)) or True)
+    assert res.ok and sent == [("%2", "/clear")]
+
+
+def test_execute_slash_by_name_unknown():
+    reg = FakeRegistry([_pane("%1", "nova", active=True)])
+    res = execute_command(Command(kind="slash", text="/clear", name="zzzz"), reg,
+                          Config(), io=FakeTmux(), inject_fn=lambda *a, **k: True)
+    assert res.ok is False
+
+
+def test_execute_slash_by_name_ambiguous_does_not_inject():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "novo")]
+    sent = []
+    res = execute_command(
+        Command(kind="slash", text="/clear", name="nov"),
+        FakeRegistry(panes, focused=panes[0]), Config(), io=FakeTmux(),
+        inject_fn=lambda pid, txt, **k: sent.append(pid) or True)
+    assert res.ok is False and sent == []
+
+
+def test_execute_slash_focused_injects_literal():
+    focused = _pane("%1", "nova", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    sent = []
+    res = execute_command(
+        Command(kind="slash", text="/clear"), reg, Config(), io=FakeTmux(),
+        inject_fn=lambda pid, txt, **k: sent.append((pid, txt)) or True)
+    assert res.ok and sent == [("%1", "/clear")]
+
+
+def test_execute_slash_focused_no_focus():
+    reg = FakeRegistry([_pane("%1", "nova")], focused=None)
+    res = execute_command(Command(kind="slash", text="/clear"), reg, Config(),
+                          io=FakeTmux(), inject_fn=lambda *a, **k: True)
+    assert res.ok is False
+
+
+def test_execute_slash_injection_failure_reports_not_ok():
+    focused = _pane("%1", "nova", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    res = execute_command(Command(kind="slash", text="/clear"), reg, Config(),
+                          io=FakeTmux(), inject_fn=lambda *a, **k: False)
+    assert res.ok is False

@@ -97,6 +97,9 @@ config.
 - *"computer focus nova"* → focus the **nova** pane (also: *"switch to / go to …"*).
 - *"computer swap nova and atlas"* → swap two named panes.
 - *"computer close nova"* → close a pane.
+- *"computer clear"* / *"computer clear nova"* / *"computer clear all"* → send a
+  **slash command** (`/clear`) to the focused pane, a named pane, or every named
+  agent. Extend the spoken verbs via `slash_commands` in the config.
 - *"everyone, pull main"* → broadcast the message to **every named agent**.
 - Define your own **macros** (phrase → list of actions) in the config.
 
@@ -145,6 +148,10 @@ shell = ""
 
 [macros]                                          # spoken phrase -> list of actions
 # "start the squad" = ["create 3 panes", "tile"]
+
+[slash_commands]                                  # spoken verb -> literal injected into the pane(s)
+clear = "/clear"                                  # "computer clear [name|all]"
+compact = "/compact"
 ```
 
 **Addressing modes.** In `keyword` mode (default) you hold one key and select a

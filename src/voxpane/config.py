@@ -26,6 +26,11 @@ class Config:
     programs: dict[str, str] = field(     # spoken token -> argv ("" = default shell)
         default_factory=lambda: {"claude": "claude", "shell": ""})
     macros: dict[str, list[str]] = field(default_factory=dict)  # phrase -> actions
+    # Spoken verb -> literal string injected into the target pane(s). Defaults are
+    # fire-and-forget Claude Code slash commands; menu-opening ones (/model,
+    # /agents) are deliberately omitted (they need follow-up keystrokes).
+    slash_commands: dict[str, str] = field(
+        default_factory=lambda: {"clear": "/clear", "compact": "/compact"})
 
 
 CONFIG_PATH = Path.home() / ".config" / "voxpane" / "config.toml"

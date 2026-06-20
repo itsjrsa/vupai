@@ -55,7 +55,7 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 | `src/voxpane/feedback.py` | status to stdout / `display-message` on the target pane |
 | `src/voxpane/permissions.py` | best-effort macOS permission probes + `hints` |
 | `src/voxpane/config.py` | TOML config at `~/.config/voxpane/config.toml` + defaults |
-| `src/voxpane/commands.py` | parse control-word utterances into `Command`s and execute them (create/macro/focus/swap/close/broadcast); interpretation split from execution |
+| `src/voxpane/commands.py` | parse control-word utterances into `Command`s and execute them (create/macro/focus/swap/close/zoom/slash/broadcast); interpretation split from execution |
 
 The daemon reaches tmux only through `tmuxio` (the `tmux` CLI); the hotkey is
 global, so the daemon never owns the terminal. It runs as a **detached
@@ -129,6 +129,15 @@ Invariants) and talks to tmux purely via the CLI.
   (no garbage typed into an agent). Interpretation (`parse_command`) is separate from
   execution (`execute_command`); the `Command` dataclass is the seam for a future
   local-LLM interpreter (rules-first, escalate only on `unknown` - deferred, not built).
+- **Slash commands** (`slash_commands` config map, default `clear`->`/clear`,
+  `compact`->`/compact`): grammar is `<verb> [name|all]` (verb leads, matching
+  focus/close/swap). Bare verb -> focused pane, a name -> that pane, "all"/"everyone"
+  -> every named pane. Unlike broadcast, the literal slash string is injected (not the
+  spoken word). The slash-all path is "clear **all**"; the `broadcast_word`-leads path
+  ("everyone clear") stays verbatim dictation, so they don't collide. Slash verbs must
+  not shadow reserved verbs (create/close/focus/swap/zoom). **Unvalidated on a live
+  daemon:** Claude's `/` autocomplete overlay may make the injector's `capture-pane`
+  confirm-poll behave differently or have Enter pick a menu item; verify before trust.
 
 ## Design decisions (settled rationale)
 
