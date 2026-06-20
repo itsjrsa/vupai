@@ -30,7 +30,16 @@ _UNZOOM_VERBS = ("unzoom", "minimize", "restore")
 # deterministic - the leading token is implausible as a literal command on its
 # own, so matching it here can't shadow a real utterance.
 _UNZOOM_PHRASES = (["and", "zoom"], ["un", "zoom"])
-_UNITS = {"pane": "pane", "panes": "pane", "window": "window", "windows": "window"}
+# Unit nouns for `create`. "pane" is canonical; "agent"/"split" are homophone-free
+# synonyms ("pane" mishears as "pain"/"panel") that map to the same thing - say
+# whichever is natural. "window" stays distinct (real tmux concept, reserved for
+# future window creation; _exec_create rejects it for now).
+_UNITS = {
+    "pane": "pane", "panes": "pane",
+    "agent": "pane", "agents": "pane",
+    "split": "pane", "splits": "pane",
+    "window": "window", "windows": "window",
+}
 # Tokens that mean "one" before the unit ("create a pane" / "create another
 # pane" == "create one pane"). Scoped to the create parse only - never fed to the
 # global word_to_int, so these can't leak into router number-routing or dictation.
@@ -52,7 +61,7 @@ _CREATE_FILLERS = ("new", "fresh", "quick")
 # plus a test when a new mishearing shows up in the wild.
 _UNIT_ALIASES = {
     "pain": "pane", "pains": "pane", "paine": "pane", "payne": "pane",
-    "paint": "pane", "paints": "pane",
+    "paint": "pane", "paints": "pane", "pen": "pane", "pens": "pane",
     "windo": "window", "windos": "window", "windoes": "window",
 }
 
@@ -110,15 +119,22 @@ def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
         rest = toks[1:]
     else:
         return None
-    if len(rest) < 2:
+    if not rest:
         return None
     n = 1 if rest[0] in _ONE_WORDS else word_to_int(rest[0])
     if n is None or not (1 <= n <= 9):
         return None
-    unit = _resolve_unit(rest[-1])
-    if unit is None:
-        return None
-    mid = [t for t in rest[1:-1] if t not in _CREATE_FILLERS]
+    # The trailing unit noun is optional ("create two" == "create two panes").
+    # When the last token names a unit, consume it; otherwise default to a pane
+    # and treat the remaining tokens as a possible program.
+    tail = rest[1:]
+    unit = "pane"
+    if tail:
+        resolved = _resolve_unit(tail[-1])
+        if resolved is not None:
+            unit = resolved
+            tail = tail[:-1]
+    mid = [t for t in tail if t not in _CREATE_FILLERS]
     if not mid:
         program: str | None = None
     elif len(mid) == 1 and mid[0] in programs:

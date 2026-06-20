@@ -202,6 +202,50 @@ def test_parse_create_unknown_program_falls_through():
     assert _parse_btn("create two banana panes") is None
 
 
+# --- optional unit noun + homophone-free synonyms ----------------------------
+# "pane" mishears as "pain"/"panel"; users can drop the noun entirely or say a
+# clean synonym ("agent"/"split") instead.
+
+def test_parse_create_noun_optional_plural():
+    c = _parse_btn("create two")
+    assert c.kind == "create" and c.count == 2 and c.program is None and c.unit == "pane"
+
+
+def test_parse_create_noun_optional_singular():
+    c = _parse_btn("create a")
+    assert c.kind == "create" and c.count == 1 and c.unit == "pane"
+
+
+def test_parse_create_noun_optional_spin_up():
+    c = _parse_btn("spin up three")
+    assert c.kind == "create" and c.count == 3 and c.unit == "pane"
+
+
+def test_parse_create_noun_optional_with_program():
+    c = _parse_btn("create two shell")
+    assert c.kind == "create" and c.count == 2 and c.program == "" and c.unit == "pane"
+
+
+def test_parse_create_agent_synonym_is_pane():
+    c = _parse_btn("create two agents")
+    assert c.kind == "create" and c.count == 2 and c.unit == "pane"
+
+
+def test_parse_create_split_synonym_is_pane():
+    c = _parse_btn("create three splits")
+    assert c.kind == "create" and c.count == 3 and c.unit == "pane"
+
+
+def test_parse_create_agent_singular_with_program():
+    c = _parse_btn("create a codex agent")
+    assert c.kind == "create" and c.count == 1 and c.program == "codex" and c.unit == "pane"
+
+
+def test_parse_create_bare_verb_not_a_command():
+    # "create" alone has no count -> falls through (router/inject), not a create.
+    assert _parse_btn("create") is None
+
+
 # --- ASR homophone tolerance for the unit noun (paints/pains -> pane) ---------
 # The trailing unit token is the most-misheard part of "create N panes". A
 # curated alias table maps known mis-transcriptions to the canonical unit; a
@@ -221,6 +265,14 @@ def test_parse_create_misheard_pains_is_pane():
 
 def test_parse_create_misheard_paint_singular():
     c = _parse_btn("make one paint")
+    assert c.kind == "create" and c.count == 1 and c.unit == "pane"
+
+
+def test_parse_create_misheard_pens_is_pane():
+    # "create four panes" -> "create four pens".
+    c = _parse_btn("create four pens")
+    assert c.kind == "create" and c.count == 4 and c.unit == "pane"
+    c = _parse_btn("create a pen")
     assert c.kind == "create" and c.count == 1 and c.unit == "pane"
 
 
