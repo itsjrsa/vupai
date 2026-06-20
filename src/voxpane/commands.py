@@ -91,30 +91,44 @@ def _parse_swap(toks: list[str]) -> Command | None:
     return None
 
 
-def parse_command(
-    text: str, *, control_word: str, broadcast_word: str,
-    macros: dict[str, list[str]], programs: dict[str, str],
-) -> Command | None:
-    lead, remainder = _lead(text)
-    if lead == broadcast_word:
-        return Command(kind="broadcast", text=remainder.strip())
-    if lead != control_word:
-        return None
-    body = remainder.strip()
+def _parse_body(body: str, macros: dict[str, list[str]],
+                programs: dict[str, str]) -> Command | None:
+    """Macro match, then the verb chain. Returns None when nothing matches
+    (the caller decides whether that is `unknown` or a fall-through)."""
     norm = " ".join(_tokens(body))
     for key, actions in macros.items():
         if " ".join(_tokens(key)) == norm and norm:
             return Command(kind="macro", actions=tuple(actions))
     toks = _tokens(body)
-    # Explicit chain (not a loop over the parsers): _parse_create takes an extra
-    # `programs` arg, so a single loop variable would have mismatched signatures
-    # and trip the type checker. `or` short-circuits on the first Command (always
-    # truthy); None falls through.
-    cmd = (_parse_create(toks, programs) or _parse_close(toks)
-           or _parse_focus(toks) or _parse_swap(toks))
-    if cmd is not None:
-        return cmd
-    return Command(kind="unknown", raw=body)
+    return (_parse_create(toks, programs) or _parse_close(toks)
+            or _parse_focus(toks) or _parse_swap(toks))
+
+
+def parse_command(
+    text: str, *, control_word: str, broadcast_word: str,
+    macros: dict[str, list[str]], programs: dict[str, str],
+    addressing: str = "keyword",
+) -> Command | None:
+    lead, remainder = _lead(text)
+    if addressing == "button":
+        # The system key is the control signal; no control word is required.
+        # A redundant leading control word is consumed and ignored.
+        body_source = text
+        if lead == control_word:
+            body_source = remainder
+            lead, remainder = _lead(remainder)
+        if lead == broadcast_word:
+            return Command(kind="broadcast", text=remainder.strip())
+        # None here means "not a command" -> the daemon routes + injects it.
+        return _parse_body(body_source, macros, programs)
+    # keyword mode (unchanged)
+    if lead == broadcast_word:
+        return Command(kind="broadcast", text=remainder.strip())
+    if lead != control_word:
+        return None
+    body = remainder.strip()
+    cmd = _parse_body(body, macros, programs)
+    return cmd if cmd is not None else Command(kind="unknown", raw=body)
 
 
 @dataclass(frozen=True)
@@ -241,10 +255,11 @@ def execute_command(cmd: Command, registry, config, *,
 
 
 def handle_command(text: str, registry, config, *,
-                   io=tmuxio, inject_fn=inject) -> CommandResult | None:
+                   io=tmuxio, inject_fn=inject,
+                   addressing: str = "keyword") -> CommandResult | None:
     cmd = parse_command(
         text, control_word=config.control_word, broadcast_word=config.broadcast_word,
-        macros=config.macros, programs=config.programs)
+        macros=config.macros, programs=config.programs, addressing=addressing)
     if cmd is None:
         return None
     return execute_command(cmd, registry, config, io=io, inject_fn=inject_fn)

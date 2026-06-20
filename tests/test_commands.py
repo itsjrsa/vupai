@@ -84,6 +84,13 @@ def _parse(text, cfg=None):
         macros=cfg.macros, programs=cfg.programs)
 
 
+def _parse_btn(text, cfg=None):
+    cfg = cfg or Config()
+    return parse_command(
+        text, control_word=cfg.control_word, broadcast_word=cfg.broadcast_word,
+        macros=cfg.macros, programs=cfg.programs, addressing="button")
+
+
 def test_parse_not_addressed_returns_none():
     assert _parse("frontend run the tests") is None
 
@@ -247,3 +254,53 @@ def test_execute_broadcast_partial_success():
                           io=FakeTmux(), inject_fn=fake_inject)
     assert res.ok and "1/2" in res.message
     assert sent == ["%1", "%2"]
+
+
+def test_button_create_without_control_word():
+    c = _parse_btn("create two panes")
+    assert c is not None and c.kind == "create" and c.count == 2
+
+
+def test_button_optional_leading_control_word():
+    c = _parse_btn("computer create two panes")
+    assert c is not None and c.kind == "create" and c.count == 2
+
+
+def test_button_broadcast_word_still_works():
+    c = _parse_btn("everyone run the tests")
+    assert c is not None and c.kind == "broadcast" and c.text == "run the tests"
+
+
+def test_button_macro_without_control_word():
+    cfg = Config()
+    object.__setattr__(cfg, "macros", {"dev layout": ["create 3 claude panes", "tile"]})
+    c = _parse_btn("Dev Layout", cfg)
+    assert c is not None and c.kind == "macro"
+
+
+def test_button_name_address_falls_through_to_none():
+    # "nova, are you there?" is not a command -> route+inject, NOT unknown.
+    assert _parse_btn("nova are you there") is None
+
+
+def test_button_gibberish_falls_through_to_none():
+    assert _parse_btn("flibbertigibbet") is None
+
+
+def test_keyword_mode_still_swallows_unknown():
+    c = _parse("computer flibbertigibbet")
+    assert c.kind == "unknown"
+
+
+def test_handle_command_button_returns_none_for_non_command():
+    res = handle_command("nova hi there", FakeRegistry([]), Config(), addressing="button")
+    assert res is None
+
+
+def test_handle_command_button_executes_create():
+    focused = _pane("%0", "%0", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux(new_ids=["%1", "%2"])
+    res = handle_command("create two panes", reg, Config(),
+                         io=io, inject_fn=lambda *a, **k: True, addressing="button")
+    assert res is not None and res.ok
