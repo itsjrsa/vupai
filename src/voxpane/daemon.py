@@ -14,7 +14,7 @@ from .asr import Transcriber
 from .commands import handle_command
 from .config import Config
 from .feedback import Feedback
-from .hotkey import Hotkey
+from .hotkey import Hotkey, MultiHotkey
 from .injector import inject
 from .recorder import MIN_WAV_BYTES, Recorder
 from .registry import PaneRegistry
@@ -40,9 +40,10 @@ class Daemon:
         self._route_fn = route_fn
         self._inject_fn = inject_fn
         self._command_fn = command_fn
-        self._hotkey: Hotkey | None = None
+        self._hotkey: Hotkey | MultiHotkey | None = None
         self._stop_event = threading.Event()
         self._mic_hint_shown = False
+        self._active_mode = "keyword"   # mode the in-flight recording was started under
         # Push-to-talk is serial, but the listener thread must never block on the
         # heavy pipeline (a slow pynput tap callback gets disabled by macOS), so
         # on_release hands the wav to this queue and the main-thread consumer in
@@ -50,25 +51,36 @@ class Daemon:
         # grow memory without bound; a full queue drops the utterance with a warn.
         self._jobs: queue.Queue = queue.Queue(maxsize=8)
 
-    def on_press(self) -> None:
+    def _on_press(self, mode: str) -> None:
+        if self._recorder.is_recording:
+            return  # another key already holds the mic; ignore
+        self._active_mode = mode
         self._recorder.start()
-        self._feedback.status("listening...")
+        self._feedback.status(
+            "listening (system)..." if mode == "system" else "listening...")
 
-    def on_release(self) -> None:
-        # Listener-thread hot path: stop sox and hand the wav to the main-thread
-        # consumer. MUST stay cheap - no MLX, no tmux, no inject here - so the
-        # pynput event tap is never blocked and overlapping presses can't starve
-        # the listener.
+    def _on_release(self, mode: str) -> None:
+        # Only the key that started the capture stops it.
+        if not self._recorder.is_recording or self._active_mode != mode:
+            return
+        # Listener-thread hot path: stop sox and hand (wav, mode) to the main-
+        # thread consumer. MUST stay cheap - no MLX, no tmux, no inject here.
         try:
             wav: Path = self._recorder.stop()
         except RuntimeError:
             return  # release without a matching start (debounce edge); ignore
         try:
-            self._jobs.put_nowait(wav)
+            self._jobs.put_nowait((wav, mode))
         except queue.Full:
             self._feedback.error("busy - dropped (still processing previous)")
 
-    def _process(self, wav: Path) -> None:
+    def on_press(self) -> None:
+        self._on_press("keyword")
+
+    def on_release(self) -> None:
+        self._on_release("keyword")
+
+    def _process(self, wav: Path, mode: str = "keyword") -> None:
         """Full pipeline for one utterance. Runs on the same OS thread as warm()
         (the main thread) so MLX's thread-local GPU stream matches. Synchronous
         and side-effect-only, so unit tests can drive it directly."""
@@ -94,10 +106,15 @@ class Daemon:
             self._feedback.status("didn't catch that")
             return
 
+        if mode == "dictation":
+            self._inject_dictation(text)
+            return
+
         # Command layer: utterances addressed to the control/broadcast word are
         # interpreted by voxpane itself, not injected into a pane.
         result = self._command_fn(
-            text, self._registry, self._config, inject_fn=self._inject_fn)
+            text, self._registry, self._config, inject_fn=self._inject_fn,
+            addressing="button" if mode == "system" else "keyword")
         if result is not None:
             (self._feedback.status if result.ok else self._feedback.error)(result.message)
             return
@@ -142,13 +159,56 @@ class Daemon:
                 return
         self._feedback.error("injection failed - text not confirmed in pane")
 
+    def _inject_dictation(self, text: str) -> None:
+        """Verbatim injection into the focused pane: no command parse, no name
+        routing. The literal-text guarantee of the dictation key."""
+        focused = self._registry.focused()
+        if focused is None:
+            self._feedback.error("no focused pane")
+            return
+        ok = self._inject_fn(
+            focused.id, text,
+            confirm_timeout=self._config.inject_confirm_timeout,
+            poll_interval=self._config.inject_poll_interval)
+        if ok:
+            self._feedback.announce(Route(
+                pane_id=focused.id, text=text, matched_name=None,
+                confidence=0.0, fallback=True))
+        else:
+            self._feedback.error("injection failed - text not confirmed in pane")
+
+    def _make_hotkey(self):
+        """Pick the listener for the configured addressing mode. Button mode
+        needs two distinct, valid keys; on any misconfiguration fall back to a
+        single keyword Hotkey so the daemon still works as push-to-talk."""
+        if self._config.addressing == "button":
+            dict_key = self._config.hotkey
+            sys_key = self._config.command_hotkey
+            if dict_key == sys_key:
+                self._feedback.error(
+                    "addressing=button needs distinct hotkey/command_hotkey - "
+                    "falling back to keyword mode")
+            else:
+                try:
+                    return MultiHotkey([
+                        (dict_key, lambda: self._on_press("dictation"),
+                         lambda: self._on_release("dictation")),
+                        (sys_key, lambda: self._on_press("system"),
+                         lambda: self._on_release("system")),
+                    ])
+                except AttributeError:
+                    self._feedback.error(
+                        f"unknown key name in config (hotkey={dict_key!r}, "
+                        f"command_hotkey={sys_key!r}) - falling back to keyword mode")
+        return Hotkey(self._config.hotkey, self.on_press, self.on_release)
+
     def run(self) -> None:
         # warm() establishes MLX's thread-local GPU stream on THIS (main) thread;
         # every _process -> transcribe below runs on the same thread, so the
         # stream always matches. Heavy work is kept off the listener thread (see
         # on_release), so the consumer loop lives here on the warm thread.
         self._transcriber.warm()
-        self._hotkey = Hotkey(self._config.hotkey, self.on_press, self.on_release)
+        self._hotkey = self._make_hotkey()
         self._hotkey.start()
         self._feedback.status("ready")
         try:
@@ -157,7 +217,7 @@ class Daemon:
                 if job is _SHUTDOWN:
                     break
                 try:
-                    self._process(job)
+                    self._process(*job)
                 except Exception:
                     # One bad utterance must never kill the daemon loop.
                     logger.exception("utterance processing failed")

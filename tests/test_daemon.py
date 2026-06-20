@@ -20,7 +20,7 @@ def _release_and_process(daemon) -> None:
         job = daemon._jobs.get_nowait()
     except queue.Empty:
         return  # release without a matching start enqueues nothing
-    daemon._process(job)
+    daemon._process(*job)
 
 
 class FakeRecorder:
@@ -371,7 +371,7 @@ def test_command_path_skips_route_and_inject(tmp_path):
         calls["inject"] += 1
         return True
 
-    def command_fn(text, registry, config, *, inject_fn):
+    def command_fn(text, registry, config, *, inject_fn, addressing="keyword"):
         return CommandResult(True, "created") if text.startswith("computer") else None
 
     d = Daemon(Config(), _Rec(), _Tx("computer create two panes"), _Reg(_panes()),
@@ -392,10 +392,130 @@ def test_normal_text_still_routes(tmp_path):
         calls["inject"] += 1
         return True
 
-    def command_fn(text, registry, config, *, inject_fn):
+    def command_fn(text, registry, config, *, inject_fn, addressing="keyword"):
         return None
 
     d = Daemon(Config(), _Rec(), _Tx("nova run the tests"), _Reg(_panes()),
                _Fb(), route_fn=route_fn, inject_fn=inject_fn, command_fn=command_fn)
     d._process(_wav(tmp_path))
     assert calls == {"route": 1, "inject": 1}
+
+
+# ---------------------------------------------------------------------------
+# Task 4: button addressing mode
+# ---------------------------------------------------------------------------
+
+
+def test_button_system_command_executes(tmp_path):
+    calls = {"route": 0, "inject": 0}
+    seen = {}
+
+    def route_fn(text, panes, focused_id, *, fuzzy_cutoff=82):
+        calls["route"] += 1
+        return Route(pane_id="%1", text=text, matched_name=None,
+                     confidence=0.0, fallback=True)
+
+    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05):
+        calls["inject"] += 1
+        return True
+
+    def command_fn(text, registry, config, *, inject_fn, addressing="keyword"):
+        seen["addressing"] = addressing
+        return CommandResult(True, "created 2 panes")
+
+    d = Daemon(Config(), _Rec(), _Tx("create two panes"), _Reg(_panes()),
+               _Fb(), route_fn=route_fn, inject_fn=inject_fn, command_fn=command_fn)
+    d._process(_wav(tmp_path), "system")
+    assert seen["addressing"] == "button"          # system -> button addressing
+    assert calls == {"route": 0, "inject": 0}      # command executed; no routing
+
+
+def test_button_system_non_command_routes(tmp_path):
+    daemon, _, _, feedback, route_calls, inject_calls = make_daemon(
+        tmp_path, transcript="alpha hi there", lines=[PANE_LINE], focused="%1")
+    w = tmp_path / "s.wav"
+    w.write_bytes(b"\x00" * 5000)
+    daemon._process(w, "system")
+    assert route_calls and route_calls[0][0] == "alpha hi there"
+    assert inject_calls == [("%1", "hi there", 2.0, 0.05)]   # name stripped by route
+
+
+def test_button_dictation_injects_verbatim_to_focused(tmp_path):
+    daemon, _, _, feedback, route_calls, inject_calls = make_daemon(
+        tmp_path, transcript="nova computer create two panes",
+        lines=[PANE_LINE], focused="%1")
+    w = tmp_path / "d.wav"
+    w.write_bytes(b"\x00" * 5000)
+    daemon._process(w, "dictation")
+    assert route_calls == []                                  # no routing
+    assert inject_calls == [("%1", "nova computer create two panes", 2.0, 0.05)]
+    assert feedback.announced and feedback.announced[0].pane_id == "%1"
+
+
+def test_button_dictation_no_focused_errors(tmp_path):
+    daemon, _, _, feedback, route_calls, inject_calls = make_daemon(
+        tmp_path, transcript="hello", lines=[PANE_LINE], focused=None)
+    w = tmp_path / "d.wav"
+    w.write_bytes(b"\x00" * 5000)
+    daemon._process(w, "dictation")
+    assert inject_calls == []
+    assert feedback.errors and "focus" in feedback.errors[0].lower()
+
+
+def test_run_button_builds_multihotkey(tmp_path, monkeypatch):
+    cfg = Config()
+    object.__setattr__(cfg, "addressing", "button")
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber("hi"),
+               make_registry([PANE_LINE], "%1"), FakeFeedback())
+
+    built = {}
+
+    class FakeMulti:
+        def __init__(self, bindings):
+            built["bindings"] = bindings
+
+        def start(self):
+            built["started"] = True
+
+        def stop(self):
+            built["stopped"] = True
+
+    import voxpane.daemon as dmod
+    monkeypatch.setattr(dmod, "MultiHotkey", FakeMulti)
+    d.stop()
+    d.run()
+    assert "bindings" in built and len(built["bindings"]) == 2
+    keys = [b[0] for b in built["bindings"]]
+    assert "alt_r" in keys and "ctrl_l" in keys
+
+
+def test_run_button_duplicate_keys_falls_back(tmp_path, monkeypatch):
+    cfg = Config()
+    object.__setattr__(cfg, "addressing", "button")
+    object.__setattr__(cfg, "command_hotkey", "alt_r")   # same as the dictation key
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    feedback = FakeFeedback()
+    d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber("hi"),
+               make_registry([PANE_LINE], "%1"), feedback)
+
+    used = []
+
+    class FakeHotkey:
+        def __init__(self, key, on_press, on_release):
+            used.append(key)
+
+        def start(self):
+            ...
+
+        def stop(self):
+            ...
+
+    import voxpane.daemon as dmod
+    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    d.stop()
+    d.run()
+    assert used == ["alt_r"]                    # fell back to a single keyword Hotkey
+    assert feedback.errors                       # told the user why
