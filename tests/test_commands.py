@@ -275,6 +275,9 @@ def test_parse_close_the_others():
     assert _parse("computer close others").kind == "close_others"
     assert _parse("computer kill the others").kind == "close_others"
     assert _parse("computer close the rest").kind == "close_others"
+    assert _parse("computer close all").kind == "close_others"
+    assert _parse("computer close all panes").kind == "close_others"
+    assert not _parse("computer close the others").name
 
 
 def test_execute_close_others_kills_all_but_focused():

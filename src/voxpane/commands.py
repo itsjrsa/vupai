@@ -113,7 +113,7 @@ def _parse_close(toks: list[str]) -> Command | None:
     rest = [t for t in toks[1:] if t != "the"]
     if not rest:
         return None
-    if rest[0] in ("others", "rest"):
+    if rest[0] in ("others", "rest", "all"):
         return Command(kind="close_others")
     return Command(kind="close", name=rest[0])
 
