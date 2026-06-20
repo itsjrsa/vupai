@@ -145,6 +145,33 @@ def new_window(name: str, command: str) -> None:
     run(["new-window", "-n", name, command])
 
 
+def split_window(target: str, program: str) -> str:
+    """Split `target` (window or pane id); return the new pane id.
+
+    Empty `program` omits the command so tmux launches the default shell.
+    """
+    args = ["split-window", "-P", "-F", "#{pane_id}", "-t", target]
+    if program:
+        args.append(program)
+    return run(args).strip()
+
+
+def select_layout(target: str, layout: str) -> None:
+    run(["select-layout", "-t", target, layout])
+
+
+def kill_pane(pane_id: str) -> None:
+    run(["kill-pane", "-t", pane_id])
+
+
+def select_pane(pane_id: str) -> None:
+    run(["select-pane", "-t", pane_id])
+
+
+def swap_pane(src: str, dst: str) -> None:
+    run(["swap-pane", "-s", src, "-t", dst])
+
+
 def kill_window(name: str) -> None:
     run(["kill-window", "-t", name])
 

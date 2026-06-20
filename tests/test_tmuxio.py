@@ -206,6 +206,53 @@ def test_kill_window_argv(monkeypatch):
     assert fake.calls[0]["args"] == ["tmux", "kill-window", "-t", "voice"]
 
 
+def test_split_window_argv_returns_pane_id(monkeypatch):
+    fake = FakeRun(stdout="%9\n")
+    patch_run(monkeypatch, fake)
+    new_id = tmuxio.split_window("@1", "claude")
+    assert new_id == "%9"
+    assert fake.calls[0]["args"] == [
+        "tmux", "split-window", "-P", "-F", "#{pane_id}", "-t", "@1", "claude",
+    ]
+
+
+def test_split_window_empty_program_omits_arg(monkeypatch):
+    fake = FakeRun(stdout="%9\n")
+    patch_run(monkeypatch, fake)
+    tmuxio.split_window("@1", "")
+    assert fake.calls[0]["args"] == [
+        "tmux", "split-window", "-P", "-F", "#{pane_id}", "-t", "@1",
+    ]
+
+
+def test_select_layout_argv(monkeypatch):
+    fake = FakeRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.select_layout("@1", "tiled")
+    assert fake.calls[0]["args"] == ["tmux", "select-layout", "-t", "@1", "tiled"]
+
+
+def test_kill_pane_argv(monkeypatch):
+    fake = FakeRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.kill_pane("%3")
+    assert fake.calls[0]["args"] == ["tmux", "kill-pane", "-t", "%3"]
+
+
+def test_select_pane_argv(monkeypatch):
+    fake = FakeRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.select_pane("%3")
+    assert fake.calls[0]["args"] == ["tmux", "select-pane", "-t", "%3"]
+
+
+def test_swap_pane_argv(monkeypatch):
+    fake = FakeRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.swap_pane("%1", "%2")
+    assert fake.calls[0]["args"] == ["tmux", "swap-pane", "-s", "%1", "-t", "%2"]
+
+
 def test_attach_execs_tmux_attach(monkeypatch):
     captured = {}
 
