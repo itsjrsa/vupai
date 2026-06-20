@@ -38,11 +38,19 @@ _CLOSE_VERBS = ("close", "kill")
 # misfire can't silently kill a pane. "kill" has no clean homophone -> omitted.
 _CLOSE_VERB_ALIASES = frozenset({"clothes", "cloze"})
 _ZOOM_VERBS = ("zoom", "maximize")
+# Curated ASR mishearing of "zoom" (zoo). View-only action, so low risk; same
+# explicit-set pattern as the other verb aliases.
+_ZOOM_VERB_ALIASES = frozenset({"zoo"})
 _UNZOOM_VERBS = ("unzoom", "minimize", "restore")
 # Parakeet splits "unzoom" into two tokens ("and zoom" / "un zoom"). Curated,
 # deterministic - the leading token is implausible as a literal command on its
 # own, so matching it here can't shadow a real utterance.
 _UNZOOM_PHRASES = (["and", "zoom"], ["un", "zoom"])
+# Curated ASR mishearings of "swap" (swab/swamp - b/p, m/p confusion). swap
+# rearranges panes, so the explicit set stays tight; the parse also requires two
+# name tokens after the verb, so a bare misfire resolves to nothing.
+_SWAP_VERBS = ("swap",)
+_SWAP_VERB_ALIASES = frozenset({"swab", "swamp"})
 # Unit nouns for `create`. "pane" is canonical; "agent"/"split" are homophone-free
 # synonyms ("pane" mishears as "pain"/"panel") that map to the same thing - say
 # whichever is natural. "window" stays distinct (real tmux concept, reserved for
@@ -177,7 +185,7 @@ def _parse_focus(toks: list[str]) -> Command | None:
 
 
 def _parse_swap(toks: list[str]) -> Command | None:
-    if toks and toks[0] == "swap":
+    if toks and (toks[0] in _SWAP_VERBS or toks[0] in _SWAP_VERB_ALIASES):
         names = [t for t in toks[1:] if t != "and"]
         if len(names) >= 2:
             return Command(kind="swap", name=names[0], name_b=names[1])
@@ -189,7 +197,7 @@ def _parse_zoom(toks: list[str]) -> Command | None:
         return None
     if toks[0] in _UNZOOM_VERBS or toks[:2] in _UNZOOM_PHRASES:
         return Command(kind="unzoom")
-    if toks[0] in _ZOOM_VERBS:
+    if toks[0] in _ZOOM_VERBS or toks[0] in _ZOOM_VERB_ALIASES:
         rest = toks[1:]
     elif toks[:2] == ["full", "screen"]:
         rest = toks[2:]

@@ -363,6 +363,18 @@ def test_execute_focus_unknown_name():
     assert res.ok is False
 
 
+def test_parse_swap_misheard_verb():
+    # "swap nova atlas" -> "swab/swamp nova atlas"; verb alias resolves to swap.
+    assert _parse_btn("swab nova atlas") == Command(kind="swap", name="nova", name_b="atlas")
+    assert _parse_btn("swamp nova atlas").kind == "swap"
+
+
+def test_parse_swap_misheard_verb_needs_two_names():
+    # A bare homophone (or one with a single token) is not a swap -> falls through.
+    assert _parse_btn("swamp") is None
+    assert _parse_btn("swab nova") is None
+
+
 def test_execute_swap_two_named_panes():
     panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
     reg = FakeRegistry(panes, focused=panes[0])
@@ -569,6 +581,11 @@ def test_parse_zoom_synonyms():
     assert _parse_btn("maximize").kind == "zoom"
     assert _parse_btn("full screen").kind == "zoom"
     assert _parse_btn("full screen nova") == Command(kind="zoom", name="nova")
+
+
+def test_parse_zoom_misheard_verb_zoo():
+    assert _parse_btn("zoo").kind == "zoom"
+    assert _parse_btn("zoo nova") == Command(kind="zoom", name="nova")
 
 
 def test_parse_unzoom_synonyms():
