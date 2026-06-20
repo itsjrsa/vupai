@@ -69,15 +69,40 @@ def _probe_microphone(recorder_factory: Callable[[], Recorder]) -> bool:
         return False
 
 
-def _probe_listener() -> bool:
-    """Construct and start a pynput keyboard Listener, then stop it.
+def _accessibility_trusted() -> bool | None:
+    """The macOS Accessibility trust state of THIS process, or None if the API
+    is unavailable (non-macOS / missing pyobjc).
 
-    On macOS, capturing global key events requires BOTH Input Monitoring and
-    Accessibility for the host terminal app. pynput surfaces a missing grant by
-    raising on construction/start (or failing to run). We treat one successful
-    start as evidence that the global-capture gate is open. This is monkeypatched
-    in unit tests so we never touch the real OS there.
+    This is the exact gate pynput's keyboard listener checks before it will
+    receive global key events, so it reflects whether the hotkey will actually
+    fire - unlike merely starting a Listener, which never raises on a missing
+    grant (it just logs "not trusted" and silently delivers nothing). The
+    no-argument form does NOT show a prompt, so it is safe to call from doctor.
     """
+    try:
+        from ApplicationServices import AXIsProcessTrusted
+    except Exception:
+        return None
+    try:
+        return bool(AXIsProcessTrusted())
+    except Exception:
+        return None
+
+
+def _probe_listener() -> bool:
+    """Whether the global key-capture gate is actually open for this process.
+
+    On macOS, capturing global key events requires the host terminal app to be
+    trusted (Accessibility / Input Monitoring). pynput does NOT raise when the
+    grant is missing - starting a Listener "succeeds" and then silently receives
+    no events - so a start/stop is not evidence of anything. We therefore ask the
+    OS trust API directly (`AXIsProcessTrusted`), which is the same gate pynput
+    checks. Only when that API is unavailable do we fall back to the (weaker)
+    start/stop heuristic. Monkeypatched in unit tests so we never touch the OS.
+    """
+    trusted = _accessibility_trusted()
+    if trusted is not None:
+        return trusted
     try:
         from pynput import keyboard
 
