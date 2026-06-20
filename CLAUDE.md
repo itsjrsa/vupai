@@ -6,7 +6,7 @@ the focused one by default, or an agent addressed by name ("Nova, run the tests"
 
 ## Status
 
-v1 implemented and on `master` (148 unit tests pass, `ruff` clean). Validated by
+v1 implemented and on `master` (188 unit tests pass, `ruff` clean). Validated by
 **unit tests only** — the `@integration` (real tmux) and `@slow` (real Parakeet
 model + mic) suites and the live daemon must run on a macOS Apple-Silicon machine.
 The design spec + implementation plan live under `docs/superpowers/`
@@ -53,6 +53,7 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 | `src/voxpane/feedback.py` | status to stdout / `display-message` on the target pane |
 | `src/voxpane/permissions.py` | best-effort macOS permission probes + `hints` |
 | `src/voxpane/config.py` | TOML config at `~/.config/voxpane/config.toml` + defaults |
+| `src/voxpane/commands.py` | parse control-word utterances into `Command`s and execute them (create/macro/focus/swap/close/broadcast); interpretation split from execution |
 
 The daemon reaches tmux only through `tmuxio` (the `tmux` CLI); the hotkey is
 global, so the daemon never owns the terminal. It runs as a **detached
@@ -110,13 +111,23 @@ Invariants) and talks to tmux purely via the CLI.
   to the *terminal app*, not the script — they silent-fail otherwise. Use `voxpane doctor`.
 - Tests inject collaborators (`io=`, `lister=`, `route_fn=`, `recorder_factory=`…)
   so units run with fakes — no real tmux/mic/model in the unit suite.
+- **Command layer runs before the router.** `daemon._process` calls `handle_command`
+  after transcribe; utterances led by `control_word` (default "computer") or
+  `broadcast_word` (default "everyone") are executed by voxpane, never injected.
+  An addressed-but-unrecognized utterance returns `unknown` and is **never injected**
+  (no garbage typed into an agent). Interpretation (`parse_command`) is separate from
+  execution (`execute_command`); the `Command` dataclass is the seam for a future
+  local-LLM interpreter (rules-first, escalate only on `unknown` - deferred, not built).
 
 ## Design decisions (settled rationale)
 
 Hybrid routing (focus default + leading-name override) · push-to-talk, hold
 Right-Option, no wake word · voice input only (TTS deferred) · Python daemon (not
 Swift/native, not a browser app) · Parakeet via `parakeet-mlx` · **v1 drives Claude
-Code panes only** (Codex/OpenCode have known send-keys submit bugs).
+Code panes only** (Codex/OpenCode have known send-keys submit bugs) · control word +
+broadcast word are configurable (`control_word`, `broadcast_word` in config) · created
+panes default to `pane_command` ("claude"), overridable by voice via the `programs`
+map · multi-pane create tiles the window.
 
 ## Conventions
 
@@ -135,3 +146,8 @@ Code panes only** (Codex/OpenCode have known send-keys submit bugs).
   with `initial_prompt` (the Protocol keeps this contained).
 - `router.route`'s `ambiguity_margin` is hardcoded (5); not exposed in `Config`.
 - `tests/fixtures/tiny.wav` is absent → the `@slow` smoke test self-skips.
+- Creating windows by voice is not yet supported (panes only).
+- A macro reliably supports a single `create` plus `tile` (multiple creates in one
+  macro share one registry snapshot, so only the first create can be named correctly).
+- Local-LLM interpreter for `unknown` commands is deferred; the `Command` dataclass
+  is the stable seam for that future escalation path.
