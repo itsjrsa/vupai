@@ -1,6 +1,6 @@
 from pynput import keyboard
 
-from voxpane.hotkey import Hotkey
+from voxpane.hotkey import Hotkey, MultiHotkey
 
 
 def _counter():
@@ -109,3 +109,59 @@ def test_release_exception_does_not_propagate():
     hk._release(keyboard.Key.alt_r)
     # _held reset before callback, so it's False even after the exception.
     assert hk._held is False
+
+
+def test_multi_two_keys_fire_independently():
+    a, ainc = _counter()
+    b, binc = _counter()
+    ra, rainc = _counter()
+    rb, rbinc = _counter()
+    hk = MultiHotkey([("alt_r", ainc, rainc), ("ctrl_l", binc, rbinc)])
+
+    hk._press(keyboard.Key.alt_r)
+    hk._press(keyboard.Key.ctrl_l)
+    assert a["n"] == 1 and b["n"] == 1
+
+    hk._release(keyboard.Key.alt_r)
+    assert ra["n"] == 1 and rb["n"] == 0
+
+
+def test_multi_autorepeat_debounced_per_key():
+    a, ainc = _counter()
+    hk = MultiHotkey([("alt_r", ainc, lambda: None),
+                      ("ctrl_l", lambda: None, lambda: None)])
+    hk._press(keyboard.Key.alt_r)
+    hk._press(keyboard.Key.alt_r)
+    assert a["n"] == 1
+    # the other key's state is independent
+    hk._press(keyboard.Key.ctrl_l)
+    hk._release(keyboard.Key.ctrl_l)
+    hk._release(keyboard.Key.alt_r)
+    assert a["n"] == 1
+
+
+def test_multi_unbound_key_ignored():
+    a, ainc = _counter()
+    hk = MultiHotkey([("alt_r", ainc, lambda: None)])
+    hk._press(keyboard.Key.space)
+    hk._release(keyboard.Key.space)
+    assert a["n"] == 0
+
+
+def test_multi_release_without_press_no_fire():
+    r, rinc = _counter()
+    hk = MultiHotkey([("alt_r", lambda: None, rinc)])
+    hk._release(keyboard.Key.alt_r)
+    assert r["n"] == 0
+
+
+def test_multi_callback_exception_isolated():
+    def boom():
+        raise RuntimeError("x")
+
+    r, rinc = _counter()
+    hk = MultiHotkey([("alt_r", boom, rinc)])
+    hk._press(keyboard.Key.alt_r)                      # must not raise
+    assert hk._held[keyboard.Key.alt_r] is True
+    hk._release(keyboard.Key.alt_r)
+    assert r["n"] == 1
