@@ -35,6 +35,11 @@ _UNITS = {"pane": "pane", "panes": "pane", "window": "window", "windows": "windo
 # pane" == "create one pane"). Scoped to the create parse only - never fed to the
 # global word_to_int, so these can't leak into router number-routing or dictation.
 _ONE_WORDS = ("a", "an", "another")
+# Descriptive filler that may sit between the count and the unit/program in a
+# create utterance ("create a new pane", "create two new shell panes"). "new" is
+# already a create verb, so as a mid-token it carries no extra meaning - drop it
+# rather than failing the parse to `unknown`. Scoped to the create body only.
+_CREATE_FILLERS = ("new", "fresh", "quick")
 # Curated ASR mishearings of the unit noun -> canonical unit. The trailing unit
 # token is the most-misheard part of "create N panes" ("paints"/"pains"). A
 # fuzzy or phonetic match cannot help here: by Levenshtein ratio the real errors
@@ -113,7 +118,7 @@ def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
     unit = _resolve_unit(rest[-1])
     if unit is None:
         return None
-    mid = rest[1:-1]
+    mid = [t for t in rest[1:-1] if t not in _CREATE_FILLERS]
     if not mid:
         program: str | None = None
     elif len(mid) == 1 and mid[0] in programs:

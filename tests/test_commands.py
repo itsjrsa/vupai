@@ -160,6 +160,27 @@ def test_parse_close_everyone_closes_others():
         assert c.kind == "close_others", word
 
 
+def test_parse_create_new_filler_is_ignored():
+    # "create a new pane" == "create a pane" - "new" is descriptive filler.
+    c = _parse_btn("create a new pane")
+    assert c.kind == "create" and c.count == 1 and c.program is None and c.unit == "pane"
+
+
+def test_parse_create_new_filler_with_count():
+    c = _parse_btn("create two new panes")
+    assert c.kind == "create" and c.count == 2 and c.program is None
+
+
+def test_parse_create_new_filler_with_program():
+    c = _parse_btn("create two new shell panes")
+    assert c.kind == "create" and c.count == 2 and c.program == ""
+
+
+def test_parse_create_quick_filler_is_ignored():
+    c = _parse_btn("create a quick pane")
+    assert c.kind == "create" and c.count == 1 and c.unit == "pane"
+
+
 def test_parse_create_explicit_shell_program():
     c = _parse_btn("create two shell panes")
     assert c.kind == "create" and c.count == 2 and c.program == ""
