@@ -88,7 +88,10 @@ def _parse_swap(toks: list[str]) -> Command | None:
     return None
 
 
-def parse_command(text, *, control_word, broadcast_word, macros, programs) -> Command | None:
+def parse_command(
+    text: str, *, control_word: str, broadcast_word: str,
+    macros: dict[str, list[str]], programs: dict[str, str],
+) -> Command | None:
     lead, remainder = _lead(text)
     if lead == broadcast_word:
         return Command(kind="broadcast", text=remainder.strip())
@@ -100,11 +103,12 @@ def parse_command(text, *, control_word, broadcast_word, macros, programs) -> Co
         if " ".join(_tokens(key)) == norm and norm:
             return Command(kind="macro", actions=tuple(actions))
     toks = _tokens(body)
-    for parser in (_parse_create, _parse_close, _parse_focus, _parse_swap):
-        if parser is _parse_create:
-            cmd = parser(toks, programs)
-        else:
-            cmd = parser(toks)
-        if cmd is not None:
-            return cmd
+    # Explicit chain (not a loop over the parsers): _parse_create takes an extra
+    # `programs` arg, so a single loop variable would have mismatched signatures
+    # and trip the type checker. `or` short-circuits on the first Command (always
+    # truthy); None falls through.
+    cmd = (_parse_create(toks, programs) or _parse_close(toks)
+           or _parse_focus(toks) or _parse_swap(toks))
+    if cmd is not None:
+        return cmd
     return Command(kind="unknown", raw=body)
