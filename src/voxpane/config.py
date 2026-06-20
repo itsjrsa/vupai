@@ -31,6 +31,13 @@ class Config:
     # /agents) are deliberately omitted (they need follow-up keystrokes).
     slash_commands: dict[str, str] = field(
         default_factory=lambda: {"clear": "/clear", "compact": "/compact"})
+    # Utterance journal: a JSONL trail of transcript + decision + outcome per
+    # utterance, for reviewing/diagnosing misfires. On by default (transcripts
+    # only). Set journal_enabled=false to record nothing. Audio is opt-in
+    # (journal_keep_audio=true) and ring-bounded to journal_audio_retention wavs.
+    journal_enabled: bool = True
+    journal_keep_audio: bool = False
+    journal_audio_retention: int = 500
 
 
 CONFIG_PATH = Path.home() / ".config" / "voxpane" / "config.toml"

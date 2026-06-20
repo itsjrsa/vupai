@@ -3,12 +3,24 @@ from __future__ import annotations
 import queue
 from pathlib import Path
 
+import pytest
+
 from voxpane.commands import CommandResult
 from voxpane.config import Config
 from voxpane.daemon import Daemon
+from voxpane.journal import Journal
 from voxpane.recorder import MIN_WAV_BYTES
 from voxpane.registry import Pane, PaneRegistry
 from voxpane.router import Route
+
+
+@pytest.fixture(autouse=True)
+def _disable_journal(monkeypatch):
+    """Daemon defaults to a real Journal under ~/.config; keep these tests from
+    writing the user's live journal. Per-module so test_journal is unaffected."""
+    monkeypatch.setattr(
+        Journal, "from_config",
+        classmethod(lambda cls, config, path=None: cls(enabled=False)))
 
 
 def _release_and_process(daemon) -> None:
@@ -519,3 +531,49 @@ def test_run_button_duplicate_keys_falls_back(tmp_path, monkeypatch):
     d.run()
     assert used == ["alt_r"]                    # fell back to a single keyword Hotkey
     assert feedback.errors                       # told the user why
+
+
+class _RecordingJournal:
+    def __init__(self):
+        self.entries = []
+
+    def record(self, entry, wav=None):
+        self.entries.append((entry, wav))
+
+
+def test_journals_routed_utterance(tmp_path):
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    journal = _RecordingJournal()
+    d = Daemon(Config(), FakeRecorder(wav), FakeTranscriber("alpha run tests"),
+               make_registry([PANE_LINE], "%1"), FakeFeedback(),
+               route_fn=lambda text, panes, focused, **kw: Route(
+                   pane_id="%1", text="run tests", matched_name="alpha",
+                   confidence=100.0, fallback=False),
+               inject_fn=lambda *a, **k: True,
+               journal=journal)
+
+    d._process(wav, "keyword")
+
+    assert len(journal.entries) == 1
+    entry, kept_wav = journal.entries[0]
+    assert entry["transcript"] == "alpha run tests"
+    assert entry["decision"] == "route"
+    assert entry["outcome"] == "injected"
+    assert entry["target_name"] == "alpha"
+    assert kept_wav == wav        # real capture is offered to the journal
+
+
+def test_journals_no_audio_without_wav(tmp_path):
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 4)   # below MIN_WAV_BYTES
+    journal = _RecordingJournal()
+    d = Daemon(Config(), FakeRecorder(wav), FakeTranscriber("ignored"),
+               make_registry([PANE_LINE], "%1"), FakeFeedback(),
+               journal=journal)
+
+    d._process(wav, "keyword")
+
+    entry, kept_wav = journal.entries[0]
+    assert entry["outcome"] == "no_audio"
+    assert kept_wav is None        # empty capture is never retained

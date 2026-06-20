@@ -56,6 +56,7 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 | `src/voxpane/permissions.py` | best-effort macOS permission probes + `hints` |
 | `src/voxpane/config.py` | TOML config at `~/.config/voxpane/config.toml` + defaults |
 | `src/voxpane/commands.py` | parse control-word utterances into `Command`s and execute them (create/macro/focus/swap/close/zoom/slash/broadcast); interpretation split from execution |
+| `src/voxpane/journal.py` | append-only JSONL utterance trail (transcript + decision + outcome) at `~/.config/voxpane/journal.jsonl`; opt-in ring-bounded audio retention for offline misfire replay |
 
 The daemon reaches tmux only through `tmuxio` (the `tmux` CLI); the hotkey is
 global, so the daemon never owns the terminal. It runs as a **detached

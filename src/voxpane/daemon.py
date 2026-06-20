@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+from datetime import datetime
 from pathlib import Path
 
 from .asr import Transcriber
@@ -16,6 +17,7 @@ from .config import Config
 from .feedback import Feedback
 from .hotkey import Hotkey, MultiHotkey
 from .injector import inject
+from .journal import Journal
 from .recorder import MIN_WAV_BYTES, Recorder
 from .registry import PaneRegistry
 from .router import Route, route
@@ -31,7 +33,8 @@ class Daemon:
 
     def __init__(self, config: Config, recorder: Recorder, transcriber: Transcriber,
                  registry: PaneRegistry, feedback: Feedback,
-                 *, route_fn=route, inject_fn=inject, command_fn=handle_command) -> None:
+                 *, route_fn=route, inject_fn=inject, command_fn=handle_command,
+                 journal: Journal | None = None) -> None:
         self._config = config
         self._recorder = recorder
         self._transcriber = transcriber
@@ -40,6 +43,7 @@ class Daemon:
         self._route_fn = route_fn
         self._inject_fn = inject_fn
         self._command_fn = command_fn
+        self._journal = journal if journal is not None else Journal.from_config(config)
         self._hotkey: Hotkey | MultiHotkey | None = None
         self._stop_event = threading.Event()
         self._mic_hint_shown = False
@@ -83,89 +87,127 @@ class Daemon:
     def _process(self, wav: Path, mode: str = "keyword") -> None:
         """Full pipeline for one utterance. Runs on the same OS thread as warm()
         (the main thread) so MLX's thread-local GPU stream matches. Synchronous
-        and side-effect-only, so unit tests can drive it directly."""
-        # Guard against an empty capture (mic permission / device issue).
+        and side-effect-only, so unit tests can drive it directly.
+
+        Every exit path is journaled once (transcript + decision + outcome) via
+        the `entry`/`finally` below, so misfires can be reviewed after the fact.
+        """
+        entry: dict = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "mode": mode,
+            "transcript": "",
+            "decision": None,
+            "outcome": None,
+        }
+        keep_wav = False
         try:
-            size = wav.stat().st_size
-        except OSError:
-            size = 0
-        if size < MIN_WAV_BYTES:
-            if not self._mic_hint_shown:
-                self._feedback.error(
-                    "no audio captured - grant Microphone access in "
-                    "System Settings > Privacy & Security > Microphone")
-                self._mic_hint_shown = True
-            else:
-                self._feedback.error("no audio captured")
-            return
-
-        self._registry.refresh()
-        hints = [p.name for p in self._registry.panes if p.name != p.id]
-        text = self._transcriber.transcribe(wav, hints=hints)
-        if not text or not text.strip():
-            self._feedback.status("didn't catch that")
-            return
-
-        if mode == "dictation":
-            self._inject_dictation(text)
-            return
-
-        # Command layer: utterances addressed to the control/broadcast word are
-        # interpreted by voxpane itself, not injected into a pane.
-        result = self._command_fn(
-            text, self._registry, self._config, inject_fn=self._inject_fn,
-            addressing="button" if mode == "system" else "keyword")
-        if result is not None:
-            (self._feedback.status if result.ok else self._feedback.error)(result.message)
-            return
-
-        focused = self._registry.focused()
-        focused_id = focused.id if focused is not None else None
-        route_obj = self._route_fn(
-            text, self._registry.panes, focused_id,
-            fuzzy_cutoff=self._config.fuzzy_cutoff)
-
-        if route_obj.candidates:
-            # Ambiguous near-tie: don't guess. Surface the candidates and bail.
-            self._feedback.error(
-                "ambiguous: " + " / ".join(route_obj.candidates)
-                + " - say the name again")
-            return
-
-        if route_obj.pane_id is None:
-            self._feedback.error("no target")
-            return
-
-        ok = self._inject_fn(
-            route_obj.pane_id, route_obj.text,
-            confirm_timeout=self._config.inject_confirm_timeout,
-            poll_interval=self._config.inject_poll_interval)
-        if ok:
-            self._feedback.announce(route_obj)
-            return
-
-        # Injection failed: the routed pane may have gone away. Re-resolve the
-        # registry and fall back to the focused pane once before giving up.
-        self._registry.refresh()
-        focused = self._registry.focused()
-        if focused is not None and focused.id != route_obj.pane_id:
-            retry = Route(pane_id=focused.id, text=route_obj.text,
-                          matched_name=None, confidence=0.0, fallback=True)
-            if self._inject_fn(
-                    retry.pane_id, retry.text,
-                    confirm_timeout=self._config.inject_confirm_timeout,
-                    poll_interval=self._config.inject_poll_interval):
-                self._feedback.announce(retry)
+            # Guard against an empty capture (mic permission / device issue).
+            try:
+                size = wav.stat().st_size
+            except OSError:
+                size = 0
+            if size < MIN_WAV_BYTES:
+                entry["decision"] = "no_audio"
+                entry["outcome"] = "no_audio"
+                if not self._mic_hint_shown:
+                    self._feedback.error(
+                        "no audio captured - grant Microphone access in "
+                        "System Settings > Privacy & Security > Microphone")
+                    self._mic_hint_shown = True
+                else:
+                    self._feedback.error("no audio captured")
                 return
-        self._feedback.error("injection failed - text not confirmed in pane")
 
-    def _inject_dictation(self, text: str) -> None:
+            keep_wav = True  # a real capture: worth retaining if audio is on
+            self._registry.refresh()
+            hints = [p.name for p in self._registry.panes if p.name != p.id]
+            text = self._transcriber.transcribe(wav, hints=hints)
+            entry["transcript"] = text
+            if not text or not text.strip():
+                entry["decision"] = "empty"
+                entry["outcome"] = "no_transcript"
+                self._feedback.status("didn't catch that")
+                return
+
+            if mode == "dictation":
+                entry["decision"] = "dictation"
+                ok = self._inject_dictation(text)
+                entry["outcome"] = "injected" if ok else "inject_failed"
+                return
+
+            # Command layer: utterances addressed to the control/broadcast word
+            # are interpreted by voxpane itself, not injected into a pane.
+            result = self._command_fn(
+                text, self._registry, self._config, inject_fn=self._inject_fn,
+                addressing="button" if mode == "system" else "keyword")
+            if result is not None:
+                entry["decision"] = "command"
+                entry["command"] = result.message
+                entry["outcome"] = "ok" if result.ok else "unknown"
+                (self._feedback.status if result.ok else self._feedback.error)(result.message)
+                return
+
+            entry["decision"] = "route"
+            focused = self._registry.focused()
+            focused_id = focused.id if focused is not None else None
+            route_obj = self._route_fn(
+                text, self._registry.panes, focused_id,
+                fuzzy_cutoff=self._config.fuzzy_cutoff)
+
+            if route_obj.candidates:
+                # Ambiguous near-tie: don't guess. Surface candidates and bail.
+                entry["outcome"] = "ambiguous"
+                entry["candidates"] = list(route_obj.candidates)
+                self._feedback.error(
+                    "ambiguous: " + " / ".join(route_obj.candidates)
+                    + " - say the name again")
+                return
+
+            if route_obj.pane_id is None:
+                entry["outcome"] = "no_target"
+                self._feedback.error("no target")
+                return
+
+            entry["target_pane"] = route_obj.pane_id
+            entry["target_name"] = route_obj.matched_name
+            entry["fallback"] = route_obj.fallback
+            ok = self._inject_fn(
+                route_obj.pane_id, route_obj.text,
+                confirm_timeout=self._config.inject_confirm_timeout,
+                poll_interval=self._config.inject_poll_interval)
+            if ok:
+                entry["outcome"] = "injected"
+                self._feedback.announce(route_obj)
+                return
+
+            # Injection failed: the routed pane may have gone away. Re-resolve
+            # the registry and fall back to the focused pane once before giving up.
+            self._registry.refresh()
+            focused = self._registry.focused()
+            if focused is not None and focused.id != route_obj.pane_id:
+                retry = Route(pane_id=focused.id, text=route_obj.text,
+                              matched_name=None, confidence=0.0, fallback=True)
+                if self._inject_fn(
+                        retry.pane_id, retry.text,
+                        confirm_timeout=self._config.inject_confirm_timeout,
+                        poll_interval=self._config.inject_poll_interval):
+                    entry["outcome"] = "injected_fallback"
+                    entry["target_pane"] = retry.pane_id
+                    self._feedback.announce(retry)
+                    return
+            entry["outcome"] = "inject_failed"
+            self._feedback.error("injection failed - text not confirmed in pane")
+        finally:
+            self._journal.record(entry, wav if keep_wav else None)
+
+    def _inject_dictation(self, text: str) -> bool:
         """Verbatim injection into the focused pane: no command parse, no name
-        routing. The literal-text guarantee of the dictation key."""
+        routing. The literal-text guarantee of the dictation key. Returns True
+        when the paste was confirmed."""
         focused = self._registry.focused()
         if focused is None:
             self._feedback.error("no focused pane")
-            return
+            return False
         ok = self._inject_fn(
             focused.id, text,
             confirm_timeout=self._config.inject_confirm_timeout,
@@ -176,6 +218,7 @@ class Daemon:
                 confidence=0.0, fallback=True))
         else:
             self._feedback.error("injection failed - text not confirmed in pane")
+        return ok
 
     def _make_hotkey(self):
         """Pick the listener for the configured addressing mode. Button mode
