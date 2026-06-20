@@ -280,6 +280,11 @@ def test_parse_create_misheard_verb_ate():
     assert c.kind == "create" and c.count == 3 and c.unit == "pane"
 
 
+def test_parse_create_misheard_verb_creator():
+    c = _parse_btn("creator two panes")
+    assert c.kind == "create" and c.count == 2 and c.unit == "pane"
+
+
 def test_parse_create_misheard_verb_eight():
     # "create two" -> "eight two"; the verb alias is consumed, count follows.
     c = _parse_btn("eight two")

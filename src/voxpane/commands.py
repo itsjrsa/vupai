@@ -29,7 +29,7 @@ _CREATE_VERBS = ("create", "make", "add", "open", "new")
 # goes verbatim via the other key) AND the parse still requires a valid 1-9 count
 # right after, so a non-create utterance ("hate this code") finds no count and
 # falls through to inject - non-destructive. Extend with a one-liner + a test.
-_CREATE_VERB_ALIASES = frozenset({"ate", "hate", "eight", "crate"})
+_CREATE_VERB_ALIASES = frozenset({"ate", "hate", "eight", "crate", "creator"})
 _CLOSE_VERBS = ("close", "kill")
 # Curated ASR mishearings of "close" (clothes/cloze). Same pattern as
 # _CREATE_VERB_ALIASES, but close is DESTRUCTIVE so the set is kept tighter: only
