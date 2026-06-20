@@ -89,9 +89,13 @@ def set_pane_name(pane_id: str, name: str) -> None:
 
 def enable_pane_titles() -> None:
     run(["set", "-g", "pane-border-status", "top"])
-    # Show the voice name when one is set, else fall back to the app's own title.
+    # Primary = voice name (bold), secondary = the app's own title (e.g.
+    # "✳ Claude Code"), so the border reads "sage · ✳ Claude Code". When no
+    # voice name is set, show the app title alone.
     run(["set", "-g", "pane-border-format",
-         "#{?@voxpane_name,#{@voxpane_name},#{pane_title}}"])
+         "#{?@voxpane_name,"
+         "#[bold]#{@voxpane_name}#[nobold] · #{pane_title},"
+         "#{pane_title}}"])
 
 
 def set_pane_autoname_hooks(self_cmd: str) -> None:

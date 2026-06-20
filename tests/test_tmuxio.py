@@ -132,7 +132,9 @@ def test_enable_pane_titles_runs_both_set_commands(monkeypatch):
     assert fake.calls[0]["args"] == ["tmux", "set", "-g", "pane-border-status", "top"]
     assert fake.calls[1]["args"] == [
         "tmux", "set", "-g", "pane-border-format",
-        "#{?@voxpane_name,#{@voxpane_name},#{pane_title}}",
+        "#{?@voxpane_name,"
+        "#[bold]#{@voxpane_name}#[nobold] · #{pane_title},"
+        "#{pane_title}}",
     ]
 
 

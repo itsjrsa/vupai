@@ -116,6 +116,12 @@ def test_parse_create_explicit_shell_program():
     assert c.kind == "create" and c.count == 2 and c.program == ""
 
 
+def test_parse_create_explicit_codex_program():
+    # A non-default agent is selectable by a single program token from `programs`.
+    c = _parse_btn("create two codex panes")
+    assert c.kind == "create" and c.count == 2 and c.program == "codex"
+
+
 def test_parse_create_windows_unit():
     c = _parse_btn("make two windows")
     assert c.kind == "create" and c.count == 2 and c.unit == "window"
