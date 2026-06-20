@@ -11,7 +11,7 @@ from pathlib import Path
 class Config:
     hotkey: str = "alt_r"                 # pynput Key name; alt_r = Right-Option
     addressing: str = "button"            # "button" (two-key, default) | "keyword"
-    command_hotkey: str = "ctrl_l"        # button mode: the system key (Left-Control)
+    command_hotkey: str = "alt_l"         # button mode: the system key (Left-Option)
     # English-only; v3 multilingual drifts to Russian on short audio.
     model_id: str = "mlx-community/parakeet-tdt-0.6b-v2"
     sample_rate: int = 16000

@@ -114,7 +114,7 @@ def test_loads_slash_commands(tmp_path: Path) -> None:
 def test_addressing_defaults() -> None:
     c = Config()
     assert c.addressing == "button"
-    assert c.command_hotkey == "ctrl_l"
+    assert c.command_hotkey == "alt_l"
 
 
 def test_loads_addressing_config(tmp_path: Path) -> None:

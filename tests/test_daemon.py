@@ -502,7 +502,7 @@ def test_run_button_builds_multihotkey(tmp_path, monkeypatch):
     d.run()
     assert "bindings" in built and len(built["bindings"]) == 2
     keys = [b[0] for b in built["bindings"]]
-    assert "alt_r" in keys and "ctrl_l" in keys
+    assert "alt_r" in keys and "alt_l" in keys
 
 
 def test_run_button_duplicate_keys_falls_back(tmp_path, monkeypatch):
