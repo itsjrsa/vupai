@@ -147,11 +147,30 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
     return CommandResult(True, f"created {cmd.count} panes: {' '.join(assigned)}")
 
 
+def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
+    msgs: list[str] = []
+    for action in cmd.actions:
+        toks = _tokens(action)
+        sub = _parse_create(toks, config.programs)
+        if sub is not None:
+            msgs.append(_exec_create(sub, registry, config, io).message)
+        elif toks == ["tile"]:
+            focused = registry.focused()
+            if focused is not None:
+                io.select_layout(focused.window_id, "tiled")
+                msgs.append("tiled")
+        else:
+            msgs.append(f"skipped: {action}")
+    return CommandResult(True, "; ".join(msgs) if msgs else "macro: nothing to do")
+
+
 def execute_command(cmd: Command, registry, config, *,
                     io=tmuxio, inject_fn=inject) -> CommandResult:
     try:
         if cmd.kind == "create":
             return _exec_create(cmd, registry, config, io)
+        if cmd.kind == "macro":
+            return _exec_macro(cmd, registry, config, io)
         return CommandResult(False, f"unknown command: {cmd.raw}")
     except TmuxError as exc:
         return CommandResult(False, f"tmux error: {exc}")

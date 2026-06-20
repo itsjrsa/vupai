@@ -122,3 +122,15 @@ def test_parse_macro_matches_normalized_phrase():
     object.__setattr__(cfg, "macros", {"dev layout": ["create 3 claude panes", "tile"]})
     c = _parse("computer, Dev Layout", cfg)
     assert c.kind == "macro" and c.actions == ("create 3 claude panes", "tile")
+
+
+def test_execute_macro_runs_create_then_tile():
+    focused = _pane("%0", "%0", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux(new_ids=["%1", "%2", "%3"])
+    cmd = Command(kind="macro", actions=("create 3 claude panes", "tile"))
+    res = execute_command(cmd, reg, Config(), io=io)
+    assert res.ok
+    splits = [c for c in io.calls if c[0] == "split_window"]
+    assert len(splits) == 3
+    assert io.calls[-1] == ("select_layout", "@1", "tiled")
