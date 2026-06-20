@@ -1,16 +1,16 @@
-# voxpane — voice control for tmux agent panes
+# voxpane - voice control for tmux agent panes
 
 Push-to-talk voice control over a tmux-based multi-agent workflow on macOS.
-Hold a hotkey, speak, and the transcript is injected into the right tmux pane —
+Hold a hotkey, speak, and the transcript is injected into the right tmux pane:
 the focused one by default, or an agent addressed by name ("Nova, run the tests").
 
 ## Status
 
 v1 implemented and on `master` (188 unit tests pass, `ruff` clean). Validated by
-**unit tests only** — the `@integration` (real tmux) and `@slow` (real Parakeet
+**unit tests only** - the `@integration` (real tmux) and `@slow` (real Parakeet
 model + mic) suites and the live daemon must run on a macOS Apple-Silicon machine.
 The design spec + implementation plan live under `docs/superpowers/`
-(**local-only, gitignored** — see Conventions).
+(**local-only, gitignored** - see Conventions).
 
 ## Commands
 
@@ -24,12 +24,12 @@ voxpane doctor                                         # check macOS permissions
 ```
 
 `voxpane` CLI (entry point `voxpane.cli:main`):
-- `voxpane` — ensure tmux + spawn the voice daemon (detached), then attach (default, no subcommand)
-- `voxpane up` / `voxpane down` — start / stop the daemon (`down` SIGTERMs the pid; also clears a legacy voice window)
-- `voxpane name <name> [pane]` — label a pane (rejects confusable names; defaults to focused)
-- `voxpane autoname [pane]` — assign the next free callsign from the pool to a pane unless already named; driven by the tmux pane-creation hooks (also usable by hand). `<prefix>+R` renames the active pane via this path's sibling `voxpane name`
-- `voxpane status` — list panes, daemon pid + log path, permission state
-- `voxpane _daemon` — hidden; the long-running daemon process (spawned detached, logs to `~/.config/voxpane/daemon.log`)
+- `voxpane` - ensure tmux + spawn the voice daemon (detached), then attach (default, no subcommand)
+- `voxpane up` / `voxpane down` - start / stop the daemon (`down` SIGTERMs the pid; also clears a legacy voice window)
+- `voxpane name <name> [pane]` - label a pane (rejects confusable names; defaults to focused)
+- `voxpane autoname [pane]` - assign the next free callsign from the pool to a pane unless already named; driven by the tmux pane-creation hooks (also usable by hand). `<prefix>+R` renames the active pane via this path's sibling `voxpane name`
+- `voxpane status` - list panes, daemon pid + log path, permission state
+- `voxpane _daemon` - hidden; the long-running daemon process (spawned detached, logs to `~/.config/voxpane/daemon.log`)
 
 ## Architecture
 
@@ -63,10 +63,10 @@ Invariants) and talks to tmux purely via the CLI.
 ## Invariants & gotchas (don't break these)
 
 - **Injection safety:** `injector.inject` pastes, then **polls `capture-pane`
-  until the pasted text appears before sending Enter** — never a fixed sleep,
+  until the pasted text appears before sending Enter** - never a fixed sleep,
   retries once, and **never sends Enter on an unconfirmed paste**. This is the
   single most important property; it has dedicated tests.
-- **`tmuxio.run(args)` prepends `tmux`** — callers pass argv WITHOUT a leading `"tmux"`.
+- **`tmuxio.run(args)` prepends `tmux`** - callers pass argv WITHOUT a leading `"tmux"`.
 - **Target the immutable `pane_id` (`%N`)**, never a positional index.
 - **Keep tmux `extended-keys` off** (set in `ensure_up`) so Enter submits in Claude Code.
 - **Voice names live in the `@voxpane_name` per-pane user option, NOT `pane_title`.**
@@ -86,7 +86,7 @@ Invariants) and talks to tmux purely via the CLI.
   default for an interactive split); a detached `split-window -d` would name the
   wrong pane. `autoname` is **idempotent** (skips a pane whose `name != id`).
   The hooks fire only for panes created *after* they're installed, so `new-session`'s
-  **initial pane fires no hook** — `ensure_up` therefore also runs
+  **initial pane fires no hook** - `ensure_up` therefore also runs
   `_autoname_unnamed_panes()`, a one-time idempotent sweep that names the initial
   pane (and any pre-existing unnamed panes when attaching to a running server).
   Hook/binding callbacks run via tmux `run-shell` (`/bin/sh`, no venv on PATH), so
@@ -94,23 +94,23 @@ Invariants) and talks to tmux purely via the CLI.
 - **ASR is kept warm** (model loaded once via `warm()`); the first call is otherwise multi-second.
 - **Daemon must run OUTSIDE tmux** (`_spawn_daemon` detaches it under the terminal
   app). A process *inside* a tmux window has the long-lived tmux server as its
-  macOS "responsible process", which lacks Input Monitoring — so the global
+  macOS "responsible process", which lacks Input Monitoring - so the global
   `pynput` listener is silently never fed key events (the hotkey looks dead).
   Running detached under the terminal app inherits the grants the user already
   gave it. **Never move the daemon back into a tmux window.**
 - **MLX is thread-local:** `parakeet-mlx`/MLX bind the GPU stream to the thread
   that first uses it, so **`warm()` and every `transcribe()` MUST run on the same
   OS thread** or you get `RuntimeError: no Stream(gpu, 0) in current thread`.
-  Therefore the `pynput` listener callbacks (`on_press`/`on_release`) stay thin —
-  they only start/stop the recorder and **enqueue the wav** — and `daemon.run()`
+  Therefore the `pynput` listener callbacks (`on_press`/`on_release`) stay thin -
+  they only start/stop the recorder and **enqueue the wav** - and `daemon.run()`
   consumes that queue on the **main thread**, where it also called `warm()`,
   doing transcribe→route→inject there. Keeping heavy work off the listener thread
   also prevents macOS from disabling the (slow) event tap. Don't call MLX, tmux,
   or `inject` from the listener thread.
 - **macOS permissions** (Accessibility + Input-Monitoring + Microphone) are granted
-  to the *terminal app*, not the script — they silent-fail otherwise. Use `voxpane doctor`.
+  to the *terminal app*, not the script - they silent-fail otherwise. Use `voxpane doctor`.
 - Tests inject collaborators (`io=`, `lister=`, `route_fn=`, `recorder_factory=`…)
-  so units run with fakes — no real tmux/mic/model in the unit suite.
+  so units run with fakes - no real tmux/mic/model in the unit suite.
 - **Command layer runs before the router.** `daemon._process` calls `handle_command`
   after transcribe; utterances led by `control_word` (default "computer") or
   `broadcast_word` (default "everyone") are executed by voxpane, never injected.
@@ -132,7 +132,7 @@ map · multi-pane create tiles the window.
 ## Conventions
 
 - Spec/plan docs under `docs/superpowers/` (and `.superpowers/` SDD scratch) are
-  **local-only — never commit them** (gitignored). When a skill says "commit the
+  **local-only - never commit them** (gitignored). When a skill says "commit the
   design/plan doc," skip that step in this repo.
 - Code comments in English. TDD with pytest; frequent small commits.
 - Conventional commit messages, **no Claude attribution / co-authored-by lines**.
@@ -140,7 +140,7 @@ map · multi-pane create tiles the window.
 
 ## Known limitations / deferred
 
-- **ASR name biasing is a no-op** — the installed `parakeet-mlx` `transcribe()` has
+- **ASR name biasing is a no-op** - the installed `parakeet-mlx` `transcribe()` has
   no `hotwords` kwarg, so `asr.py` forwards-then-falls-back. Router name-matching is
   unaffected. For real biasing, swap the `Transcriber` to whisper.cpp/faster-whisper
   with `initial_prompt` (the Protocol keeps this contained).
