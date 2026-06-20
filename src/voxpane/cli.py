@@ -12,7 +12,7 @@ from pathlib import Path
 from voxpane import tmuxio
 from voxpane.asr import ParakeetTranscriber, model_cached
 from voxpane.commands import _CLOSE_VERBS, _CREATE_VERBS
-from voxpane.config import Config, load_config
+from voxpane.config import CONFIG_PATH, Config, load_config, write_journal_config
 from voxpane.daemon import Daemon
 from voxpane.feedback import Feedback
 from voxpane.permissions import (
@@ -300,6 +300,40 @@ def _ensure_model_ready(cfg: Config) -> None:
     print("Speech model: downloaded and ready.")
 
 
+def _prompt_yes_no(question: str, *, default: bool, reader=input) -> bool:
+    """Ask a yes/no question; a bare Enter (or non-tty EOF) keeps `default`."""
+    suffix = " [Y/n] " if default else " [y/N] "
+    try:
+        answer = reader(question + suffix).strip().lower()
+    except EOFError:
+        return default
+    if not answer:
+        return default
+    return answer in ("y", "yes")
+
+
+def _prompt_journal_setup(*, reader=None, config_path: Path | None = None) -> None:
+    """First-run only: ask whether to journal and to retain audio, then write a
+    starter config. Skipped silently once a config file exists, so re-running
+    `setup` to confirm permissions never re-prompts."""
+    reader = reader if reader is not None else input
+    config_path = config_path if config_path is not None else CONFIG_PATH
+    if config_path.exists():
+        return
+    print("\nUtterance journal (transcript + decision per utterance, for "
+          "diagnosing misfires):")
+    enabled = _prompt_yes_no("  Keep a journal?", default=True, reader=reader)
+    keep_audio = False
+    if enabled:
+        keep_audio = _prompt_yes_no(
+            "  Also retain audio recordings (your voice) for offline replay?",
+            default=False, reader=reader)
+    write_journal_config(
+        enabled=enabled, keep_audio=keep_audio, path=config_path)
+    print(f"  Wrote {config_path} "
+          f"(journal_enabled={enabled}, journal_keep_audio={keep_audio}).")
+
+
 def _cmd_setup(args: argparse.Namespace) -> int:
     """Interactive permission bootstrap: probe, then deep-link the user to each
     failing pane (naming the exact terminal app to enable). Cannot grant on the
@@ -312,6 +346,9 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     if missing:
         print("Install the tool(s) above, then re-run `voxpane setup`.")
         return 1
+
+    # First-run only: capture journaling consent before anything is recorded.
+    _prompt_journal_setup()
 
     # Download the speech model up front (visible) so the daemon's first run
     # doesn't stall the hotkey on a silent multi-minute fetch.

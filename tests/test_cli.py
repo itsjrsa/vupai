@@ -49,6 +49,11 @@ def fake_env(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "tmuxio", ft)
     pidfile = tmp_path / "daemon.pid"
     monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    # Pretend a config already exists so `setup`'s first-run journal prompt is a
+    # no-op (it must never block on stdin in the unit suite).
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("")
+    monkeypatch.setattr(cli, "CONFIG_PATH", cfg)
     # Don't launch a real background process or probe a real pid in unit tests.
     monkeypatch.setattr(cli, "_daemon_running", lambda: False)
     monkeypatch.setattr(cli, "_spawn_daemon", lambda: ft.daemon_spawns.append(True))
@@ -583,3 +588,68 @@ def test_daemon_subcommand_is_hidden_in_help():
     parser = cli.build_parser()
     help_text = parser.format_help()
     assert "_daemon" not in help_text   # hidden, though still parseable (above)
+
+
+def test_prompt_yes_no_default_on_empty():
+    assert cli._prompt_yes_no("q?", default=True, reader=lambda _: "") is True
+    assert cli._prompt_yes_no("q?", default=False, reader=lambda _: "") is False
+
+
+def test_prompt_yes_no_parses_answer():
+    assert cli._prompt_yes_no("q?", default=False, reader=lambda _: "y") is True
+    assert cli._prompt_yes_no("q?", default=True, reader=lambda _: "n") is False
+
+
+def test_prompt_yes_no_eof_keeps_default():
+    def boom(_):
+        raise EOFError
+    assert cli._prompt_yes_no("q?", default=True, reader=boom) is True
+
+
+def test_prompt_journal_setup_writes_choices(tmp_path):
+    p = tmp_path / "config.toml"
+    answers = iter(["y", "y"])  # journal? yes; audio? yes
+    cli._prompt_journal_setup(reader=lambda _: next(answers), config_path=p)
+    cfg = cli.load_config(p)
+    assert cfg.journal_enabled is True
+    assert cfg.journal_keep_audio is True
+
+
+def test_prompt_journal_setup_skips_audio_when_disabled(tmp_path):
+    p = tmp_path / "config.toml"
+    # Only one prompt should be consumed when journaling is declined.
+    answers = iter(["n"])
+    cli._prompt_journal_setup(reader=lambda _: next(answers), config_path=p)
+    cfg = cli.load_config(p)
+    assert cfg.journal_enabled is False
+    assert cfg.journal_keep_audio is False
+
+
+def test_prompt_journal_setup_noop_when_config_exists(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text('hotkey = "ctrl_r"\n')
+
+    def boom(_):
+        raise AssertionError("should not prompt when config exists")
+    cli._prompt_journal_setup(reader=boom, config_path=p)
+    assert p.read_text() == 'hotkey = "ctrl_r"\n'  # untouched
+
+
+def test_setup_prompts_journal_on_first_run(fake_env, monkeypatch, tmp_path, capsys):
+    from voxpane.permissions import PermissionStatus, TerminalApp
+    # Point CONFIG_PATH at a missing file so the first-run prompt fires.
+    cfg = tmp_path / "fresh" / "config.toml"
+    monkeypatch.setattr(cli, "CONFIG_PATH", cfg)
+    status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
+    monkeypatch.setattr(cli, "missing_tools", lambda: [])
+    monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
+    monkeypatch.setattr(cli, "model_cached", lambda mid: True)
+    monkeypatch.setattr(cli, "terminal_app", lambda: TerminalApp("Terminal", "com.apple.Terminal"))
+    monkeypatch.setattr(cli, "open_settings_pane", lambda url: None)
+    answers = iter(["y", "n"])  # journal yes, audio no
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    rc = cli.main(["setup"])
+    assert rc == 0
+    written = cli.load_config(cfg)
+    assert written.journal_enabled is True
+    assert written.journal_keep_audio is False

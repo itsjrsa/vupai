@@ -57,3 +57,28 @@ def load_config(path: Path | None = None) -> Config:
     known = {f.name for f in fields(Config)}
     kwargs = {key: value for key, value in data.items() if key in known}
     return Config(**kwargs)
+
+
+def write_journal_config(
+    *, enabled: bool, keep_audio: bool, path: Path | None = None
+) -> Path:
+    """Write a fresh config.toml carrying the journal toggles.
+
+    Intended for the first-run `setup` prompt: it creates a starter file when
+    none exists (it does NOT merge into an existing one). Only the journal keys
+    are written; every other setting keeps its default via `load_config`.
+    """
+    target = path if path is not None else CONFIG_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    body = (
+        "# voxpane config - see Config in src/voxpane/config.py for every key.\n"
+        "\n"
+        "# Utterance journal: a JSONL trail (transcript + decision + outcome)\n"
+        "# at ~/.config/voxpane/journal.jsonl, for diagnosing misfires.\n"
+        f"journal_enabled = {str(enabled).lower()}\n"
+        "# Opt-in: also retain each wav next to the journal (ring-bounded to\n"
+        "# journal_audio_retention files) so a misfire can be replayed offline.\n"
+        f"journal_keep_audio = {str(keep_audio).lower()}\n"
+    )
+    target.write_text(body, encoding="utf-8")
+    return target

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from voxpane.config import Config, load_config
+from voxpane.config import Config, load_config, write_journal_config
 
 
 def test_defaults_when_no_file(tmp_path: Path) -> None:
@@ -109,6 +109,33 @@ def test_loads_slash_commands(tmp_path: Path) -> None:
     c = load_config(p)
     assert c.slash_commands["wipe"] == "/clear"
     assert c.slash_commands["clear"] == "/clear"
+
+
+def test_journal_defaults() -> None:
+    c = Config()
+    assert c.journal_enabled is True
+    assert c.journal_keep_audio is False
+    assert c.journal_audio_retention == 500
+
+
+def test_write_journal_config_roundtrips(tmp_path: Path) -> None:
+    p = tmp_path / "nested" / "config.toml"  # parent created on write
+    out = write_journal_config(enabled=True, keep_audio=True, path=p)
+    assert out == p
+    c = load_config(p)
+    assert c.journal_enabled is True
+    assert c.journal_keep_audio is True
+    # untouched keys stay default
+    assert c.journal_audio_retention == 500
+    assert c.hotkey == "alt_r"
+
+
+def test_write_journal_config_disabled(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    write_journal_config(enabled=False, keep_audio=False, path=p)
+    c = load_config(p)
+    assert c.journal_enabled is False
+    assert c.journal_keep_audio is False
 
 
 def test_addressing_defaults() -> None:

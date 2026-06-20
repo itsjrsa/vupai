@@ -31,7 +31,7 @@ voxpane setup                                          # interactive: probe + de
 - `voxpane name <name> [pane]` - label a pane (rejects confusable names; defaults to focused)
 - `voxpane autoname [pane]` - assign the next free callsign from the pool to a pane unless already named; driven by the tmux pane-creation hooks (also usable by hand). `<prefix>+R` renames the active pane via this path's sibling `voxpane name`
 - `voxpane status` - list panes, daemon pid + log path, permission state
-- `voxpane setup` - interactive permission bootstrap: detects the terminal app from `TERM_PROGRAM`, probes each permission (which triggers the macOS prompts), then `open`s the exact Settings deep-link pane for any that are missing and prints the `tccutil reset` recovery command. **Cannot grant on the user's behalf** - macOS TCC requires a human click; setup removes the navigation, not the consent. Deep-link/app-detect/open helpers live in `permissions.py` (`terminal_app`, `fixes`, `open_settings_pane`), injectable for tests.
+- `voxpane setup` - interactive permission bootstrap: detects the terminal app from `TERM_PROGRAM`, probes each permission (which triggers the macOS prompts), then `open`s the exact Settings deep-link pane for any that are missing and prints the `tccutil reset` recovery command. **Cannot grant on the user's behalf** - macOS TCC requires a human click; setup removes the navigation, not the consent. Deep-link/app-detect/open helpers live in `permissions.py` (`terminal_app`, `fixes`, `open_settings_pane`), injectable for tests. **First run only** (no `config.toml` yet), it also prompts for journaling consent (`journal_enabled` + `journal_keep_audio`) and writes a starter config via `config.write_journal_config`; once a config file exists the prompt is skipped so re-running to confirm permissions never re-asks.
 - `voxpane _daemon` - hidden; the long-running daemon process (spawned detached, logs to `~/.config/voxpane/daemon.log`)
 
 ## Architecture
@@ -56,7 +56,7 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 | `src/voxpane/tmuxio.py` | thin exact-argv wrappers over the `tmux` CLI |
 | `src/voxpane/feedback.py` | status to stdout / `display-message` on the target pane |
 | `src/voxpane/permissions.py` | best-effort macOS permission probes + `hints` |
-| `src/voxpane/config.py` | TOML config at `~/.config/voxpane/config.toml` + defaults |
+| `src/voxpane/config.py` | TOML config at `~/.config/voxpane/config.toml` + defaults; `write_journal_config` writes a fresh starter file (first-run `setup` consent prompt; does NOT merge into an existing file) |
 | `src/voxpane/commands.py` | parse control-word utterances into `Command`s and execute them (create/macro/focus/swap/close/zoom/slash/broadcast); interpretation split from execution |
 | `src/voxpane/journal.py` | append-only JSONL utterance trail (transcript + decision + outcome) at `~/.config/voxpane/journal.jsonl`; opt-in ring-bounded audio retention for offline misfire replay |
 
