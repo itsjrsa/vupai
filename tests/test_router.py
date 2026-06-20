@@ -1,7 +1,16 @@
 import pytest
 
 from voxpane.registry import Pane
-from voxpane.router import CALLSIGNS, name_collides, next_callsign, route
+from voxpane.router import CALLSIGNS, name_collides, next_callsign, route, word_to_int
+
+
+def test_word_to_int_digits_and_words():
+    assert word_to_int("4") == 4
+    assert word_to_int("four") == 4
+    assert word_to_int("nine") == 9
+    assert word_to_int("zero") is None
+    assert word_to_int("frontend") is None
+    assert word_to_int("12") == 12  # raw digits not capped here
 
 
 def mk(id: str, window_id: str, window: str, index: int, name: str,

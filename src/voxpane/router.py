@@ -13,6 +13,17 @@ _NUMBER_WORDS: dict[str, int] = {
     "six": 6, "seven": 7, "eight": 8, "nine": 9,
 }
 
+
+def word_to_int(token: str) -> int | None:
+    """Parse a spoken number token: digits ("4") or words ("four") -> int.
+
+    No range cap here; callers apply their own bounds. Returns None when the
+    token is not a number.
+    """
+    if token.isdigit():
+        return int(token)
+    return _NUMBER_WORDS.get(token)
+
 # Characters stripped from the leading token before comparison (ASR punctuation).
 _STRIP = ".,!?;:'\"()[]{}"
 
@@ -92,13 +103,8 @@ def _phonetic(token: str, panes: list[Pane]) -> Pane | None:
 
 
 def _number(token: str) -> int | None:
-    if token.isdigit():
-        n = int(token)
-    elif token in _NUMBER_WORDS:
-        n = _NUMBER_WORDS[token]
-    else:
-        return None
-    return n if 1 <= n <= 9 else None
+    n = word_to_int(token)
+    return n if n is not None and 1 <= n <= 9 else None
 
 
 def route(transcript: str, panes: list[Pane], focused_id: str | None,
