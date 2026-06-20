@@ -260,6 +260,39 @@ def test_parse_bare_close_is_unknown():
     assert c.kind == "unknown"
 
 
+def test_parse_close_the_others():
+    assert _parse("computer close the others").kind == "close_others"
+    assert _parse("computer close others").kind == "close_others"
+    assert _parse("computer kill the others").kind == "close_others"
+    assert _parse("computer close the rest").kind == "close_others"
+
+
+def test_execute_close_others_kills_all_but_focused():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas"),
+             _pane("%3", "%3")]  # includes an unnamed pane
+    reg = FakeRegistry(panes, focused=panes[0])
+    io = FakeTmux()
+    res = execute_command(Command(kind="close_others"), reg, Config(), io=io)
+    assert res.ok
+    assert io.calls == [("kill_pane", "%2"), ("kill_pane", "%3")]
+
+
+def test_execute_close_others_no_others():
+    focused = _pane("%1", "nova", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux()
+    res = execute_command(Command(kind="close_others"), reg, Config(), io=io)
+    assert res.ok is False and io.calls == []
+
+
+def test_execute_close_others_no_focused():
+    panes = [_pane("%1", "nova"), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=None)
+    io = FakeTmux()
+    res = execute_command(Command(kind="close_others"), reg, Config(), io=io)
+    assert res.ok is False and io.calls == []
+
+
 def test_execute_broadcast_injects_each_named_pane():
     panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas"),
              _pane("%3", "%3")]  # %3 unnamed -> skipped

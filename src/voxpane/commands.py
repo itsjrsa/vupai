@@ -48,7 +48,8 @@ def _resolve_unit(token: str) -> str | None:
 
 @dataclass(frozen=True)
 class Command:
-    kind: str                              # create|macro|close|focus|swap|broadcast|unknown
+    # create|macro|close|close_others|focus|swap|broadcast|unknown
+    kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
     name: str = ""
@@ -96,9 +97,14 @@ def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
 
 
 def _parse_close(toks: list[str]) -> Command | None:
-    if len(toks) >= 2 and toks[0] in _CLOSE_VERBS:
-        return Command(kind="close", name=toks[1])
-    return None
+    if not toks or toks[0] not in _CLOSE_VERBS:
+        return None
+    rest = [t for t in toks[1:] if t != "the"]
+    if not rest:
+        return None
+    if rest[0] in ("others", "rest"):
+        return Command(kind="close_others")
+    return Command(kind="close", name=rest[0])
 
 
 def _parse_focus(toks: list[str]) -> Command | None:
@@ -222,6 +228,19 @@ def _exec_close(cmd: Command, registry, config, io) -> CommandResult:
     return CommandResult(True, f"closed {m.matched_name}")
 
 
+def _exec_close_others(cmd: Command, registry, config, io) -> CommandResult:
+    focused = registry.focused()
+    if focused is None:
+        return CommandResult(False, "no focused pane to keep")
+    victims = [p for p in registry.panes if p.id != focused.id]
+    if not victims:
+        return CommandResult(False, "no other panes to close")
+    for p in victims:
+        io.kill_pane(p.id)
+    kept = focused.name if focused.name != focused.id else "the focused pane"
+    return CommandResult(True, f"closed {len(victims)} panes, kept {kept}")
+
+
 def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
     msgs: list[str] = []
     ok = True
@@ -273,6 +292,8 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_swap(cmd, registry, config, io)
         if cmd.kind == "close":
             return _exec_close(cmd, registry, config, io)
+        if cmd.kind == "close_others":
+            return _exec_close_others(cmd, registry, config, io)
         if cmd.kind == "broadcast":
             return _exec_broadcast(cmd, registry, config, inject_fn)
         return CommandResult(False, f"unknown command: {cmd.raw}")

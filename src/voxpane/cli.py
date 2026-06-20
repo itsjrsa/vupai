@@ -285,6 +285,7 @@ def _voice_commands_text(cfg: Config) -> str:
         f"  {prefix}focus <name>                 focus a pane (also: switch to / go to <name>)",
         f"  {prefix}swap <name> and <name>       swap two named panes",
         f"  {prefix}close <name>                 close a pane (also: {close_alts} <name>)",
+        f"  {prefix}close the others             close every pane but the focused one",
         "",
         f"Broadcast: {cfg.broadcast_word} <message>   send <message> to every named agent",
         "",
