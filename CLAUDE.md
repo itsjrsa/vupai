@@ -162,9 +162,20 @@ Hybrid routing (focus default + leading-name override) · push-to-talk, hold
 Right-Option, no wake word · voice input only (TTS deferred) · Python daemon (not
 Swift/native, not a browser app) · Parakeet via `parakeet-mlx` · **v1 drives Claude
 Code panes only** (Codex/OpenCode have known send-keys submit bugs) · no control
-word (the system key signals a command); `broadcast_word` is configurable · created
-panes default to `pane_command` ("claude"), overridable by voice via the `programs`
-map · multi-pane create tiles the window · addressing mode is configurable (two-key
+word (the system key signals a command); `broadcast_word` is configurable ·
+**agent-first**: both the session's initial pane (`ensure_up`) and created panes
+default to `pane_command` ("claude"). Any program not on PATH degrades to a plain
+shell — both paths check `shutil.which` (a command that exits at once would kill the
+session / leave a dead pane): `ensure_up` warns, `_exec_create` appends a note to
+its feedback. The agent runs **inside a shell** (`commands.wrap_agent_command`:
+`<prog>; exec ${SHELL:-/bin/sh} -i`, passed as a single tmux command arg so tmux's
+shell runs it) — so exiting the agent (e.g. claude's `exit`) drops the pane to an
+interactive shell instead of closing it, leaving a usable terminal. The empty
+plain-shell default is passed through unwrapped. Non-default programs are selected
+by voice via the `programs` map
+("create two shell/codex panes") — a data-driven token, **not** a new verb ·
+multi-pane create
+tiles the window · addressing mode is configurable (two-key
 `button` default vs legacy single-key `keyword`, which has no command layer); the
 dictation key keeps `alt_r` (muscle memory) and the system key defaults to `alt_l`.
 

@@ -54,17 +54,42 @@ def _pane(id, name, window_id="@1", active=False):
                 name=name, command="zsh", active=active)
 
 
-def test_execute_create_splits_names_and_tiles():
+def test_wrap_agent_command_drops_to_shell_on_exit():
+    from voxpane.commands import wrap_agent_command
+    # A real program is wrapped so exiting it re-execs an interactive shell.
+    assert wrap_agent_command("claude") == "claude; exec ${SHELL:-/bin/sh} -i"
+    # Empty (plain-shell default) is left untouched.
+    assert wrap_agent_command("") == ""
+
+
+def test_execute_create_splits_names_and_tiles(monkeypatch):
+    monkeypatch.setattr("voxpane.commands.shutil.which", lambda c: "/bin/claude")
     focused = _pane("%0", "%0", active=True)  # unnamed focused pane
     reg = FakeRegistry([focused], focused=focused)
     io = FakeTmux(new_ids=["%1", "%2"])
     cmd = Command(kind="create", count=2, program=None, unit="pane")
     res = execute_command(cmd, reg, Config(), io=io)
     assert res.ok
-    assert ("split_window", "@1", "claude") in io.calls           # default program
+    # default program, wrapped so the pane survives the agent's exit
+    assert ("split_window", "@1", "claude; exec ${SHELL:-/bin/sh} -i") in io.calls
     assert ("set_pane_name", "%1", "nova") in io.calls
     assert ("set_pane_name", "%2", "atlas") in io.calls
     assert io.calls[-1] == ("select_layout", "@1", "tiled")
+
+
+def test_execute_create_falls_back_to_shell_when_program_missing(monkeypatch):
+    # A named program that isn't on PATH degrades to a shell (panes still get
+    # created + named), with a note instead of spawning panes that exit at once.
+    monkeypatch.setattr("voxpane.commands.shutil.which", lambda c: None)
+    focused = _pane("%0", "%0", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux(new_ids=["%1"])
+    cmd = Command(kind="create", count=1, program="codex", unit="pane")
+    res = execute_command(cmd, reg, Config(), io=io)
+    assert res.ok
+    assert ("split_window", "@1", "") in io.calls   # degraded to a plain shell
+    assert "codex" in res.message and "shell" in res.message
+    assert ("set_pane_name", "%1", "nova") in io.calls
 
 
 def test_execute_create_windows_not_supported():

@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -11,7 +13,7 @@ from pathlib import Path
 
 from voxpane import tmuxio
 from voxpane.asr import ParakeetTranscriber, model_cached
-from voxpane.commands import _CLOSE_VERBS, _CREATE_VERBS
+from voxpane.commands import _CLOSE_VERBS, _CREATE_VERBS, wrap_agent_command
 from voxpane.config import CONFIG_PATH, Config, load_config, write_journal_config
 from voxpane.daemon import Daemon
 from voxpane.feedback import Feedback
@@ -108,12 +110,38 @@ def _autoname_unnamed_panes() -> None:
         used.append(callsign)
 
 
+def _initial_pane_command(cfg: Config) -> str:
+    """Program for the session's first pane: the agent if it's on PATH, else a shell.
+
+    voxpane is agent-first - the initial pane runs `pane_command` (the agentic
+    tool, e.g. "claude") so a fresh session opens with an agent ready to address.
+    But `new-session` with a command that exits at once would kill the session
+    (no windows remain), so an agent that isn't installed degrades to a plain
+    shell. An empty `pane_command` is an intentional shell default, not an error.
+    """
+    prog = cfg.pane_command
+    if prog and shutil.which(shlex.split(prog)[0]):
+        return prog
+    return ""  # plain shell
+
+
 def ensure_up() -> None:
     """Start the tmux server, configure naming, and ensure the voice daemon is running."""
+    cfg = load_config()
     if not tmuxio.server_running():
         # Start a detached server. NOTE: tmuxio.run() already prepends "tmux",
-        # so the argv must NOT include it again.
-        tmuxio.run(["new-session", "-d", "-s", "voxpane"])
+        # so the argv must NOT include it again. Open the initial pane on the
+        # agent (agent-first); fall back to a shell if it isn't installed.
+        argv = ["new-session", "-d", "-s", "voxpane"]
+        prog = _initial_pane_command(cfg)
+        if prog:
+            # Single arg: tmux runs it through the shell, so the wrapper's
+            # `exec $SHELL` drops the pane to a terminal when the agent exits.
+            argv.append(wrap_agent_command(prog))
+        elif cfg.pane_command:
+            print(f"'{cfg.pane_command}' not found on PATH - opening a shell "
+                  "instead. Install it or set pane_command in the config.")
+        tmuxio.run(argv)
     tmuxio.enable_pane_titles()
     tmuxio.set_extended_keys_off()
     self_cmd = _self_cmd()
@@ -126,7 +154,7 @@ def ensure_up() -> None:
         # the hotkey looks dead until it finishes, with output buried in the
         # daemon log. Warn up front so a slow cold start isn't mistaken for a
         # broken hotkey. (Run `voxpane setup` to download it visibly first.)
-        if not model_cached(load_config().model_id):
+        if not model_cached(cfg.model_id):
             print("First run: the daemon is downloading the speech model "
                   "(~600MB, one time).")
             print("The hotkey won't respond until it finishes. Watch progress:")

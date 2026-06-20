@@ -123,6 +123,8 @@ def test_up_starts_server_when_down(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
     monkeypatch.setattr(cli, "_daemon_running", lambda: False)
     monkeypatch.setattr(cli, "_spawn_daemon", lambda: None)
+    # Force the agent-missing path so the asserted argv is the plain shell form.
+    monkeypatch.setattr(cli.shutil, "which", lambda c: None)
     _stub_registry(monkeypatch, [])  # ensure_up sweeps the registry; keep it hermetic
     rc = cli.main(["up"])
     assert rc == 0
@@ -130,6 +132,40 @@ def test_up_starts_server_when_down(monkeypatch, tmp_path):
     run_calls = [c for c in ft.calls if c[0] == "run"]
     assert ["new-session", "-d", "-s", "voxpane"] in [list(c[1]) for c in run_calls]
     assert all(c[1][0] != "tmux" for c in run_calls)  # run() prepends tmux itself
+
+
+def test_up_opens_initial_pane_on_agent_when_installed(monkeypatch, tmp_path):
+    # Agent-first: when `pane_command` is on PATH, the session's first pane runs it.
+    ft = FakeTmux(server=False)
+    monkeypatch.setattr(cli, "tmuxio", ft)
+    monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
+    monkeypatch.setattr(cli, "_daemon_running", lambda: False)
+    monkeypatch.setattr(cli, "_spawn_daemon", lambda: None)
+    monkeypatch.setattr(cli.shutil, "which", lambda c: "/usr/bin/claude")
+    _stub_registry(monkeypatch, [])
+    rc = cli.main(["up"])
+    assert rc == 0
+    run_calls = [list(c[1]) for c in ft.calls if c[0] == "run"]
+    # The agent is wrapped so the pane drops to a shell when it exits.
+    assert ["new-session", "-d", "-s", "voxpane",
+            "claude; exec ${SHELL:-/bin/sh} -i"] in run_calls
+
+
+def test_up_falls_back_to_shell_when_agent_missing(monkeypatch, tmp_path, capsys):
+    # Missing agent must degrade to a plain shell (a command that exits at once
+    # would kill the session) and warn the user.
+    ft = FakeTmux(server=False)
+    monkeypatch.setattr(cli, "tmuxio", ft)
+    monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
+    monkeypatch.setattr(cli, "_daemon_running", lambda: False)
+    monkeypatch.setattr(cli, "_spawn_daemon", lambda: None)
+    monkeypatch.setattr(cli.shutil, "which", lambda c: None)
+    _stub_registry(monkeypatch, [])
+    rc = cli.main(["up"])
+    assert rc == 0
+    run_calls = [list(c[1]) for c in ft.calls if c[0] == "run"]
+    assert ["new-session", "-d", "-s", "voxpane"] in run_calls  # no trailing program
+    assert "not found on PATH" in capsys.readouterr().out
 
 
 def test_spawn_daemon_uses_venv_interpreter_and_detaches(monkeypatch, tmp_path):

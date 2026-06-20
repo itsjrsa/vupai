@@ -7,6 +7,8 @@ Commands, escalated to only on kind == "unknown". No LLM here.
 """
 from __future__ import annotations
 
+import shlex
+import shutil
 from dataclasses import dataclass
 
 from voxpane import tmuxio
@@ -231,6 +233,21 @@ class CommandResult:
     message: str
 
 
+def wrap_agent_command(program: str) -> str:
+    """Run `program` inside a shell that survives the program's exit.
+
+    Spawning the agent *as* the pane process means quitting it (e.g. claude's
+    `exit`) leaves no process, so tmux closes the pane. Wrapping it so the shell
+    re-execs an interactive shell when the agent exits lets the pane fall back to
+    a usable terminal instead. Empty `program` is the intentional plain-shell
+    default and is returned unchanged. tmux runs a single command argument
+    through the shell, so the `;`/`exec`/`$SHELL` expansion all resolve there.
+    """
+    if not program:
+        return program
+    return f"{program}; exec ${{SHELL:-/bin/sh}} -i"
+
+
 def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
     if cmd.unit == "window":
         return CommandResult(False, "creating windows by voice isn't supported yet - try panes")
@@ -239,6 +256,13 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
         return CommandResult(False, "no focused pane to split")
     target = focused.window_id
     program = config.pane_command if cmd.program is None else cmd.program
+    # "" is the intentional plain-shell default. A named program that isn't on
+    # PATH would spawn panes that exit immediately, so degrade to a shell (same
+    # rule as the initial pane) and tell the user, rather than tiling dead panes.
+    note = ""
+    if program and shutil.which(shlex.split(program)[0]) is None:
+        note = f" ('{program}' not found - opened a shell)"
+        program = ""
     used = [p.name for p in registry.panes if p.name != p.id]
     assigned: list[str] = []
     for _ in range(cmd.count):
@@ -247,12 +271,12 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
             io.select_layout(target, "tiled")
             return CommandResult(
                 False, f"callsign pool exhausted - named {len(assigned)} of {cmd.count}")
-        new_id = io.split_window(target, program)
+        new_id = io.split_window(target, wrap_agent_command(program))
         io.set_pane_name(new_id, name)
         used.append(name)
         assigned.append(name)
     io.select_layout(target, "tiled")
-    return CommandResult(True, f"created {cmd.count} panes: {' '.join(assigned)}")
+    return CommandResult(True, f"created {cmd.count} panes: {' '.join(assigned)}{note}")
 
 
 def _exec_focus(cmd: Command, registry, config, io) -> CommandResult:
