@@ -27,6 +27,39 @@ def word_to_int(token: str) -> int | None:
 # Characters stripped from the leading token before comparison (ASR punctuation).
 _STRIP = ".,!?;:'\"()[]{}"
 
+# Leading vocative / transition fillers peeled before addressing ("okay Atlas ...",
+# "hey Nova ..."). Curated to be disjoint from CALLSIGNS, the broadcast word, the
+# command verbs, the number words, and the slash/unit nouns; polysemous content
+# words (so/now/right/well/look/listen/all) are deliberately EXCLUDED so plain
+# dictation is never corrupted. A peel is kept only when an EXACT address follows
+# (see `route`), so a filler that happens to start a dictated sentence is safe.
+# Shared with commands.py (the button-mode verb peel). One-line edit + a test to
+# extend, like commands._UNIT_ALIASES.
+_FILLERS: frozenset[str] = frozenset({
+    "okay", "ok", "hey", "alright", "um", "uh", "yeah", "hi", "hello", "yo",
+})
+# Cap the peel so a long stutter run can never swallow real leading content.
+_MAX_FILLER_PEEL = 2
+
+
+def _peel_fillers(transcript: str) -> tuple[str, int]:
+    """Peel up to `_MAX_FILLER_PEEL` leading filler tokens.
+
+    Returns ``(remainder, count)`` where `remainder` is the transcript past the
+    peeled fillers (original casing preserved) and `count` is how many were
+    removed. Stops at the first non-filler token even if more fillers follow.
+    """
+    rest = transcript
+    count = 0
+    while count < _MAX_FILLER_PEEL:
+        token, remainder = _first_token(rest)
+        if token and token in _FILLERS:
+            rest = remainder
+            count += 1
+        else:
+            break
+    return rest, count
+
 
 @dataclass(frozen=True)
 class Route:
@@ -173,6 +206,21 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
             if target is not None:
                 return Route(pane_id=target.id, text=remainder, matched_name=None,
                              confidence=100.0, fallback=False)
+
+    # 5. Vocative filler peel. No confident match on the raw leading token; if it
+    # is a filler ("okay Atlas ..."), peel up to two fillers and retry an EXACT
+    # name match ONLY. Fuzzy/phonetic/number are intentionally NOT retried, so a
+    # common content word after a filler ("okay member ...", "okay two ...") can
+    # never be mistaken for an address. On any miss we fall through to the focus
+    # fallback below, which injects the ORIGINAL transcript verbatim.
+    if token in _FILLERS:
+        peeled, n = _peel_fillers(transcript)
+        if n:
+            ptoken, premainder = _first_token(peeled)
+            hit = _exact(ptoken, panes)
+            if hit is not None:
+                return Route(pane_id=hit.id, text=premainder,
+                             matched_name=hit.name, confidence=100.0, fallback=False)
 
     # else: focus fallback (text unchanged).
     return fallback()

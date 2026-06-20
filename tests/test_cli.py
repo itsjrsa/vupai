@@ -200,10 +200,10 @@ def test_name_explicit_pane_arg(fake_env, monkeypatch):
     assert ("set_pane_name", "%7", "beta") in ft.calls
 
 
-def test_name_rejects_control_word(fake_env, monkeypatch, capsys):
+def test_name_rejects_broadcast_word(fake_env, monkeypatch, capsys):
     ft, pidfile = fake_env
     _stub_registry(monkeypatch, [])
-    rc = cli.main(["name", "computer"])
+    rc = cli.main(["name", "everyone"])
     assert rc == 1
     assert not any(c[0] == "set_pane_name" for c in ft.calls)
     assert "reserved" in capsys.readouterr().out
@@ -398,20 +398,21 @@ def test_daemon_builds_and_runs(monkeypatch, tmp_path):
 def test_voice_commands_text_lists_verbs_and_words():
     from voxpane.commands import _CLOSE_VERBS, _CREATE_VERBS
     from voxpane.config import Config
-    text = cli._voice_commands_text(Config())
+    text = cli._voice_commands_text(Config())  # button is the default mode
     # Every create/close verb the parser accepts must appear in the cheat sheet.
     for verb in (*_CREATE_VERBS, *_CLOSE_VERBS):
         assert verb in text
     assert "focus" in text and "swap" in text
-    # Config-driven words.
-    assert "computer" in text and "everyone" in text
+    # Config-driven broadcast word.
+    assert "everyone" in text
 
 
-def test_voice_commands_text_keyword_mode_prefixes_control_word():
+def test_voice_commands_text_keyword_mode_has_no_command_layer():
     from voxpane.config import Config
     text = cli._voice_commands_text(Config(addressing="keyword"))
     assert "keyword" in text
-    assert "computer create" in text  # commands are prefixed in keyword mode
+    assert "no command layer" in text       # commands live on the button system key
+    assert "create <n> panes" not in text   # no command table in keyword mode
 
 
 def test_voice_commands_text_button_mode_shows_both_keys():

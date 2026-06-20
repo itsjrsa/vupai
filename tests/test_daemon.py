@@ -120,8 +120,10 @@ def make_daemon(tmp_path, *, transcript: str, lines: list[str], focused: str | N
         inject_calls.append((pane_id, text, confirm_timeout, poll_interval))
         return inject_ok
 
-    daemon = Daemon(Config(), recorder, transcriber, registry, feedback,
-                    route_fn=route_fn, inject_fn=inject_fn)
+    # These helper-based tests drive the single-key (keyword) path directly via
+    # on_press/on_release and the keyword Hotkey; button mode has its own tests.
+    daemon = Daemon(Config(addressing="keyword"), recorder, transcriber, registry,
+                    feedback, route_fn=route_fn, inject_fn=inject_fn)
     return daemon, recorder, transcriber, feedback, route_calls, inject_calls
 
 

@@ -71,7 +71,6 @@ def test_config_is_frozen() -> None:
 
 def test_command_defaults() -> None:
     c = Config()
-    assert c.control_word == "computer"
     assert c.broadcast_word == "everyone"
     assert c.pane_command == "claude"
     assert c.programs == {"claude": "claude", "shell": ""}
@@ -81,7 +80,6 @@ def test_command_defaults() -> None:
 def test_loads_command_config(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text(
-        'control_word = "jarvis"\n'
         'broadcast_word = "team"\n'
         'pane_command = "claude"\n\n'
         "[programs]\n"
@@ -91,7 +89,6 @@ def test_loads_command_config(tmp_path: Path) -> None:
         '"dev layout" = ["create 3 claude panes", "tile"]\n'
     )
     c = load_config(p)
-    assert c.control_word == "jarvis"
     assert c.broadcast_word == "team"
     assert c.macros["dev layout"] == ["create 3 claude panes", "tile"]
     assert c.programs["shell"] == ""
@@ -116,7 +113,7 @@ def test_loads_slash_commands(tmp_path: Path) -> None:
 
 def test_addressing_defaults() -> None:
     c = Config()
-    assert c.addressing == "keyword"
+    assert c.addressing == "button"
     assert c.command_hotkey == "ctrl_l"
 
 

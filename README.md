@@ -87,20 +87,22 @@ candidates so you can re-say.
 
 ### Voice commands
 
-Beyond dictation, voxpane has a small command layer: prefix an utterance with the
-**control word** (`computer` by default) and voxpane executes it instead of typing
-it into a pane. Run `voxpane voice-commands` for a cheat sheet tailored to your
-config.
+Beyond dictation, voxpane has a small command layer. Hold the **system key** (the
+`command_hotkey`, Left-Control by default) and speak; voxpane executes the command
+instead of typing it into a pane. The key is the signal, so there is no spoken
+control word. Run `voxpane voice-commands` for a cheat sheet tailored to your config.
 
-- *"computer create 3 panes"* → spin up 3 auto-named panes, tiled (add a program:
+- *"create 3 panes"* → spin up 3 auto-named panes, tiled (add a program:
   *"…create 2 shell panes"*).
-- *"computer focus nova"* → focus the **nova** pane (also: *"switch to / go to …"*).
-- *"computer swap nova and atlas"* → swap two named panes.
-- *"computer close nova"* → close a pane.
-- *"computer clear"* / *"computer clear nova"* / *"computer clear all"* → send a
-  **slash command** (`/clear`) to the focused pane, a named pane, or every named
-  agent. Extend the spoken verbs via `slash_commands` in the config.
+- *"focus nova"* → focus the **nova** pane (also: *"switch to / go to …"*).
+- *"swap nova and atlas"* → swap two named panes.
+- *"close nova"* → close a pane.
+- *"clear"* / *"clear nova"* / *"clear all"* → send a **slash command** (`/clear`)
+  to the focused pane, a named pane, or every named agent. Extend the spoken verbs
+  via `slash_commands` in the config.
 - *"everyone, pull main"* → broadcast the message to **every named agent**.
+- A non-command on the system key (e.g. *"nova, run the tests"*) falls through to
+  name addressing, so the same key both commands and addresses agents.
 - Define your own **macros** (phrase → list of actions) in the config.
 
 ## Commands
@@ -127,9 +129,8 @@ Optional TOML at `~/.config/voxpane/config.toml` (every field has a default):
 
 ```toml
 hotkey = "alt_r"                                  # pynput key name; alt_r = Right-Option (dictation key in button mode)
-addressing = "keyword"                            # "keyword" (one key + control word) | "button" (two keys)
+addressing = "button"                             # "button" (two keys, default) | "keyword" (one key, no command layer)
 command_hotkey = "ctrl_l"                         # button mode: the "system" key (Left-Control)
-control_word = "computer"                         # keyword mode: leading word that addresses voxpane
 broadcast_word = "everyone"                       # leading word that injects to all named agents
 model_id = "mlx-community/parakeet-tdt-0.6b-v2"   # English-only (v3 is multilingual and drifts to Russian on short clips)
 sample_rate = 16000
@@ -150,17 +151,17 @@ shell = ""
 # "start the squad" = ["create 3 panes", "tile"]
 
 [slash_commands]                                  # spoken verb -> literal injected into the pane(s)
-clear = "/clear"                                  # "computer clear [name|all]"
+clear = "/clear"                                  # system key: "clear [name|all]"
 compact = "/compact"
 ```
 
-**Addressing modes.** In `keyword` mode (default) you hold one key and select a
-voxpane command by speaking the `control_word` ("computer ...") or broadcast with
-the `broadcast_word` ("everyone ..."). In `button` mode you hold one of two keys:
-the dictation key (`hotkey`) types your words verbatim into the focused pane,
-while the system key (`command_hotkey`) interprets them as a command, a broadcast,
-or a name-addressed message ("nova, are you there?"). The button is the control
-signal, so no control word is needed.
+**Addressing modes.** In `button` mode (default) you hold one of two keys: the
+dictation key (`hotkey`) types your words verbatim into the focused pane, while the
+system key (`command_hotkey`) interprets them as a command, a broadcast, or a
+name-addressed message ("nova, are you there?"). The key is the control signal, so
+no spoken control word is needed. `keyword` mode is the legacy single-key mode: it
+has no command layer - only the `broadcast_word` ("everyone ...") leads; everything
+else is name-addressed or dictated verbatim to the focused pane.
 
 ## Scope & limitations
 

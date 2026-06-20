@@ -11,7 +11,12 @@ from dataclasses import dataclass
 
 from voxpane import tmuxio
 from voxpane.injector import inject
-from voxpane.router import next_callsign, resolve_pane_by_name, word_to_int
+from voxpane.router import (
+    _peel_fillers,
+    next_callsign,
+    resolve_pane_by_name,
+    word_to_int,
+)
 from voxpane.tmuxio import TmuxError
 
 _STRIP = ".,!?;:'\"()[]{}"
@@ -181,32 +186,34 @@ def _parse_body(body: str, macros: dict[str, list[str]],
 
 
 def parse_command(
-    text: str, *, control_word: str, broadcast_word: str,
+    text: str, *, broadcast_word: str,
     macros: dict[str, list[str]], programs: dict[str, str],
     slash_commands: dict[str, str] | None = None,
-    addressing: str = "keyword",
+    addressing: str = "button",
 ) -> Command | None:
     slash_commands = slash_commands or {}
     lead, remainder = _lead(text)
     if addressing == "button":
         # The system key is the control signal; no control word is required.
-        # A redundant leading control word is consumed and ignored.
-        body_source = text
-        if lead == control_word:
-            body_source = remainder
-            lead, remainder = _lead(remainder)
         if lead == broadcast_word:
             return Command(kind="broadcast", text=remainder.strip())
-        # None here means "not a command" -> the daemon routes + injects it.
-        return _parse_body(body_source, macros, programs, slash_commands)
-    # keyword mode (unchanged)
+        cmd = _parse_body(text, macros, programs, slash_commands)
+        if cmd is not None:
+            return cmd
+        # Vocative filler before a verb ("okay focus nova", "um create two
+        # panes"): peel up to two fillers and retry the verb parse. Broadcast is
+        # deliberately NOT peeled (it fans out to every agent; keep it raw-led).
+        # A non-command after peeling still returns None -> route + inject.
+        peeled, n = _peel_fillers(text)
+        if n:
+            return _parse_body(peeled, macros, programs, slash_commands)
+        return None
+    # keyword mode: single key, no command layer (commands live on the button
+    # system key). Only the broadcast word leads; everything else falls through
+    # to the router (name addressing) or verbatim focus injection.
     if lead == broadcast_word:
         return Command(kind="broadcast", text=remainder.strip())
-    if lead != control_word:
-        return None
-    body = remainder.strip()
-    cmd = _parse_body(body, macros, programs, slash_commands)
-    return cmd if cmd is not None else Command(kind="unknown", raw=body)
+    return None
 
 
 @dataclass(frozen=True)
@@ -421,9 +428,9 @@ def execute_command(cmd: Command, registry, config, *,
 
 def handle_command(text: str, registry, config, *,
                    io=tmuxio, inject_fn=inject,
-                   addressing: str = "keyword") -> CommandResult | None:
+                   addressing: str = "button") -> CommandResult | None:
     cmd = parse_command(
-        text, control_word=config.control_word, broadcast_word=config.broadcast_word,
+        text, broadcast_word=config.broadcast_word,
         macros=config.macros, programs=config.programs,
         slash_commands=config.slash_commands, addressing=addressing)
     if cmd is None:

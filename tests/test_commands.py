@@ -89,14 +89,15 @@ def test_handle_command_none_when_not_addressed():
 def _parse(text, cfg=None):
     cfg = cfg or Config()
     return parse_command(
-        text, control_word=cfg.control_word, broadcast_word=cfg.broadcast_word,
-        macros=cfg.macros, programs=cfg.programs, slash_commands=cfg.slash_commands)
+        text, broadcast_word=cfg.broadcast_word,
+        macros=cfg.macros, programs=cfg.programs, slash_commands=cfg.slash_commands,
+        addressing="keyword")
 
 
 def _parse_btn(text, cfg=None):
     cfg = cfg or Config()
     return parse_command(
-        text, control_word=cfg.control_word, broadcast_word=cfg.broadcast_word,
+        text, broadcast_word=cfg.broadcast_word,
         macros=cfg.macros, programs=cfg.programs, slash_commands=cfg.slash_commands,
         addressing="button")
 
@@ -106,28 +107,23 @@ def test_parse_not_addressed_returns_none():
 
 
 def test_parse_create_default_program():
-    c = _parse("computer, create four panes")
+    c = _parse_btn("create four panes")
     assert c.kind == "create" and c.count == 4 and c.program is None and c.unit == "pane"
 
 
 def test_parse_create_explicit_shell_program():
-    c = _parse("computer create two shell panes")
+    c = _parse_btn("create two shell panes")
     assert c.kind == "create" and c.count == 2 and c.program == ""
 
 
 def test_parse_create_windows_unit():
-    c = _parse("computer make two windows")
+    c = _parse_btn("make two windows")
     assert c.kind == "create" and c.count == 2 and c.unit == "window"
 
 
-def test_parse_unknown_when_addressed_gibberish():
-    c = _parse("computer flibbertigibbet")
-    assert c.kind == "unknown" and c.raw == "flibbertigibbet"
-
-
-def test_parse_create_unknown_program_is_unknown():
-    c = _parse("computer create two banana panes")
-    assert c.kind == "unknown"
+def test_parse_create_unknown_program_falls_through():
+    # An unrecognized program is not a command -> None (router/inject handles it).
+    assert _parse_btn("create two banana panes") is None
 
 
 # --- ASR homophone tolerance for the unit noun (paints/pains -> pane) ---------
@@ -138,23 +134,23 @@ def test_parse_create_unknown_program_is_unknown():
 
 def test_parse_create_misheard_paints_is_pane():
     # The headline bug: "create four panes" -> "create four paints".
-    c = _parse("computer create four paints")
+    c = _parse_btn("create four paints")
     assert c.kind == "create" and c.count == 4 and c.program is None and c.unit == "pane"
 
 
 def test_parse_create_misheard_pains_is_pane():
-    c = _parse("computer create four pains")
+    c = _parse_btn("create four pains")
     assert c.kind == "create" and c.count == 4 and c.unit == "pane"
 
 
 def test_parse_create_misheard_paint_singular():
-    c = _parse("computer make one paint")
+    c = _parse_btn("make one paint")
     assert c.kind == "create" and c.count == 1 and c.unit == "pane"
 
 
 def test_parse_create_misheard_with_program():
     # A misheard unit still composes with a valid mid-token program.
-    c = _parse("computer create two shell pains")
+    c = _parse_btn("create two shell pains")
     assert c.kind == "create" and c.count == 2 and c.program == "" and c.unit == "pane"
 
 
@@ -174,29 +170,14 @@ def test_resolve_unit_rejects_real_word_lookalikes():
         assert _resolve_unit(word) is None
 
 
-def test_parse_create_rhyme_is_unknown():
-    # End-to-end: a rhyming real word is not silently turned into a create.
-    assert _parse("computer create three lanes").kind == "unknown"
-
-
-def test_parse_control_word_configurable():
-    cfg = Config()
-    c = parse_command(
-        "jarvis create one pane", control_word="jarvis",
-        broadcast_word="team", macros={}, programs=cfg.programs)
-    assert c.kind == "create" and c.count == 1
+def test_parse_create_rhyme_falls_through():
+    # End-to-end: a rhyming real word is not a unit -> not a create -> None.
+    assert _parse_btn("create three lanes") is None
 
 
 def test_parse_broadcast_preserves_text():
     c = _parse("everyone run the tests")
     assert c.kind == "broadcast" and c.text == "run the tests"
-
-
-def test_parse_macro_matches_normalized_phrase():
-    cfg = Config()
-    object.__setattr__(cfg, "macros", {"dev layout": ["create 3 claude panes", "tile"]})
-    c = _parse("computer, Dev Layout", cfg)
-    assert c.kind == "macro" and c.actions == ("create 3 claude panes", "tile")
 
 
 def test_execute_macro_runs_create_then_tile():
@@ -265,19 +246,19 @@ def test_execute_close_named_pane():
     assert res.ok and io.calls == [("kill_pane", "%2")]
 
 
-def test_parse_bare_close_is_unknown():
-    c = _parse("computer close")
-    assert c.kind == "unknown"
+def test_parse_bare_close_falls_through():
+    # "close" with no target is not a command -> None (not swallowed).
+    assert _parse_btn("close") is None
 
 
 def test_parse_close_the_others():
-    assert _parse("computer close the others").kind == "close_others"
-    assert _parse("computer close others").kind == "close_others"
-    assert _parse("computer kill the others").kind == "close_others"
-    assert _parse("computer close the rest").kind == "close_others"
-    assert _parse("computer close all").kind == "close_others"
-    assert _parse("computer close all panes").kind == "close_others"
-    assert not _parse("computer close the others").name
+    assert _parse_btn("close the others").kind == "close_others"
+    assert _parse_btn("close others").kind == "close_others"
+    assert _parse_btn("kill the others").kind == "close_others"
+    assert _parse_btn("close the rest").kind == "close_others"
+    assert _parse_btn("close all").kind == "close_others"
+    assert _parse_btn("close all panes").kind == "close_others"
+    assert not _parse_btn("close the others").name
 
 
 def test_execute_close_others_kills_all_but_focused():
@@ -351,14 +332,17 @@ def test_execute_broadcast_partial_success():
     assert sent == ["%1", "%2"]
 
 
-def test_button_create_without_control_word():
+def test_button_create():
     c = _parse_btn("create two panes")
     assert c is not None and c.kind == "create" and c.count == 2
 
 
-def test_button_optional_leading_control_word():
-    c = _parse_btn("computer create two panes")
-    assert c is not None and c.kind == "create" and c.count == 2
+def test_keyword_mode_has_no_command_layer():
+    # Single-key keyword mode no longer parses commands; only the broadcast word
+    # leads, everything else is None (router / verbatim dictation handles it).
+    assert _parse("create two panes") is None
+    assert _parse("close the others") is None
+    assert _parse("flibbertigibbet") is None
 
 
 def test_button_broadcast_word_still_works():
@@ -366,7 +350,7 @@ def test_button_broadcast_word_still_works():
     assert c is not None and c.kind == "broadcast" and c.text == "run the tests"
 
 
-def test_button_macro_without_control_word():
+def test_button_macro():
     cfg = Config()
     object.__setattr__(cfg, "macros", {"dev layout": ["create 3 claude panes", "tile"]})
     c = _parse_btn("Dev Layout", cfg)
@@ -380,11 +364,6 @@ def test_button_name_address_falls_through_to_none():
 
 def test_button_gibberish_falls_through_to_none():
     assert _parse_btn("flibbertigibbet") is None
-
-
-def test_keyword_mode_still_swallows_unknown():
-    c = _parse("computer flibbertigibbet")
-    assert c.kind == "unknown"
 
 
 def test_handle_command_button_returns_none_for_non_command():
@@ -404,33 +383,33 @@ def test_handle_command_button_executes_create():
 # --- zoom / unzoom -----------------------------------------------------------
 
 def test_parse_zoom_focused():
-    c = _parse("computer zoom")
+    c = _parse_btn("zoom")
     assert c.kind == "zoom" and c.name == ""
 
 
 def test_parse_zoom_by_name():
-    c = _parse("computer zoom nova")
+    c = _parse_btn("zoom nova")
     assert c.kind == "zoom" and c.name == "nova"
 
 
 def test_parse_zoom_synonyms():
-    assert _parse("computer maximize").kind == "zoom"
-    assert _parse("computer full screen").kind == "zoom"
-    assert _parse("computer full screen nova") == Command(kind="zoom", name="nova")
+    assert _parse_btn("maximize").kind == "zoom"
+    assert _parse_btn("full screen").kind == "zoom"
+    assert _parse_btn("full screen nova") == Command(kind="zoom", name="nova")
 
 
 def test_parse_unzoom_synonyms():
-    assert _parse("computer unzoom").kind == "unzoom"
-    assert _parse("computer minimize").kind == "unzoom"
-    assert _parse("computer restore").kind == "unzoom"
+    assert _parse_btn("unzoom").kind == "unzoom"
+    assert _parse_btn("minimize").kind == "unzoom"
+    assert _parse_btn("restore").kind == "unzoom"
 
 
 def test_parse_unzoom_misheard_split():
     # Parakeet renders "unzoom" as "and zoom" / "un zoom"; a trailing name is
     # ignored (zoom is window-level, only one pane can be zoomed).
-    assert _parse("computer and zoom").kind == "unzoom"
-    assert _parse("computer un zoom").kind == "unzoom"
-    assert _parse("computer and zoom sage").kind == "unzoom"
+    assert _parse_btn("and zoom").kind == "unzoom"
+    assert _parse_btn("un zoom").kind == "unzoom"
+    assert _parse_btn("and zoom sage").kind == "unzoom"
 
 
 def test_execute_zoom_focused_selects_then_zooms():
@@ -503,28 +482,28 @@ def test_execute_unzoom_no_focused():
 # command into one pane (focused or named) or all named panes ("... all").
 
 def test_parse_slash_bare_targets_focused():
-    c = _parse("computer clear")
+    c = _parse_btn("clear")
     assert c == Command(kind="slash", text="/clear", name="", to_all=False)
 
 
 def test_parse_slash_by_name():
-    c = _parse("computer clear nova")
+    c = _parse_btn("clear nova")
     assert c == Command(kind="slash", text="/clear", name="nova")
 
 
 def test_parse_slash_all():
-    assert _parse("computer clear all") == Command(kind="slash", text="/clear", to_all=True)
-    assert _parse("computer clear everyone") == Command(kind="slash", text="/clear", to_all=True)
+    assert _parse_btn("clear all") == Command(kind="slash", text="/clear", to_all=True)
+    assert _parse_btn("clear everyone") == Command(kind="slash", text="/clear", to_all=True)
 
 
 def test_parse_slash_compact_default():
-    c = _parse("computer compact")
+    c = _parse_btn("compact")
     assert c.kind == "slash" and c.text == "/compact"
 
 
-def test_parse_slash_verb_not_in_map_is_unknown():
-    # "model" is not a default slash command -> stays unknown, never injected.
-    assert _parse("computer model").kind == "unknown"
+def test_parse_slash_verb_not_in_map_falls_through():
+    # "model" is not a default slash command -> not a command -> None.
+    assert _parse_btn("model") is None
 
 
 def test_button_slash_by_name():
@@ -620,3 +599,33 @@ def test_execute_slash_injection_failure_reports_not_ok():
     res = execute_command(Command(kind="slash", text="/clear"), reg, Config(),
                           io=FakeTmux(), inject_fn=lambda *a, **k: False)
     assert res.ok is False
+
+
+# --- vocative filler peel before command verbs (button mode) ------------------
+# "okay focus nova" / "um create two panes": a leading filler is peeled before
+# the verb. Broadcast is NOT peeled (mass-broadcast blast radius). A non-command
+# after peeling still falls through to None (router/inject handles it).
+
+def test_button_filler_then_create():
+    c = _parse_btn("okay create two panes")
+    assert c is not None and c.kind == "create" and c.count == 2
+
+
+def test_button_two_fillers_then_focus():
+    c = _parse_btn("um okay focus nova")
+    assert c is not None and c.kind == "focus" and c.name == "nova"
+
+
+def test_button_filler_then_slash_all():
+    c = _parse_btn("hey clear all")
+    assert c == Command(kind="slash", text="/clear", to_all=True)
+
+
+def test_button_filler_then_non_command_falls_through():
+    assert _parse_btn("okay just chatting here") is None
+
+
+def test_button_filler_before_broadcast_is_not_peeled():
+    # Broadcast must stay raw-led; "um everyone ..." is not broadcast (no peel),
+    # it falls through to None and the router/inject handles it verbatim.
+    assert _parse_btn("um everyone deploy") is None

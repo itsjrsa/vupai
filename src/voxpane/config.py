@@ -10,7 +10,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class Config:
     hotkey: str = "alt_r"                 # pynput Key name; alt_r = Right-Option
-    addressing: str = "keyword"           # "keyword" | "button" (two-key mode)
+    addressing: str = "button"            # "button" (two-key, default) | "keyword"
     command_hotkey: str = "ctrl_l"        # button mode: the system key (Left-Control)
     # English-only; v3 multilingual drifts to Russian on short audio.
     model_id: str = "mlx-community/parakeet-tdt-0.6b-v2"
@@ -20,7 +20,6 @@ class Config:
     inject_confirm_timeout: float = 2.0    # s to wait for pasted text to appear
     inject_poll_interval: float = 0.05
     aliases: dict[str, str] = field(default_factory=dict)  # spoken alias -> pane name
-    control_word: str = "computer"        # leading word = a voxpane command
     broadcast_word: str = "everyone"      # leading word = inject to all agents
     pane_command: str = "claude"          # default program for created panes
     programs: dict[str, str] = field(     # spoken token -> argv ("" = default shell)

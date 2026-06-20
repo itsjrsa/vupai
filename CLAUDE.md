@@ -114,22 +114,36 @@ Invariants) and talks to tmux purely via the CLI.
   to the *terminal app*, not the script - they silent-fail otherwise. Use `voxpane doctor`.
 - Tests inject collaborators (`io=`, `lister=`, `route_fn=`, `recorder_factory=`…)
   so units run with fakes - no real tmux/mic/model in the unit suite.
-- **Addressing mode (`addressing` config):** `keyword` (default) keeps the single
-  PTT key and the spoken `control_word`/`broadcast_word`. `button` uses two keys:
+- **Addressing mode (`addressing` config):** `button` (default) uses two keys:
   the `hotkey` (dictation) injects verbatim into the focused pane (no parse, no
   name routing), and the `command_hotkey` (system, default Left-Control) runs the
-  command layer with `addressing="button"` (no control word needed; a non-command
-  falls through to route+inject and is never swallowed as `unknown`). The daemon
-  threads a per-utterance `mode` through its jobs queue as `(wav, mode)`. Bad
-  button config (duplicate or unknown key names) falls back to a single keyword
-  `Hotkey` with a feedback error.
+  command layer with `addressing="button"` (no control word; a non-command falls
+  through to route+inject and is never swallowed as `unknown`). `keyword` is the
+  legacy single-PTT-key mode and **has no command layer** - only the spoken
+  `broadcast_word` leads; everything else falls through to the router (name
+  addressing) or verbatim focus dictation. The daemon threads a per-utterance
+  `mode` through its jobs queue as `(wav, mode)`. Bad button config (duplicate or
+  unknown key names) falls back to a single keyword `Hotkey` with a feedback error.
+- **No control word.** Commands are signalled by the *key* (button mode's system
+  key), not a spoken magic word - `control_word` was removed. Only `broadcast_word`
+  (default "everyone") still leads as a spoken word, in both modes.
+- **Vocative filler peel (exact-anchor).** Leading fillers ("okay Atlas ...", "um
+  create two panes") are peeled before addressing, in two places that share
+  `router._FILLERS` + `router._peel_fillers` (cap 2 tokens): (1) `route()` retries
+  an **exact name match only** on the peeled token - fuzzy/phonetic/number are NOT
+  retried, so "okay member ..." can't hit `ember` and "okay two ..." can't route to
+  pane 2; (2) `parse_command` button mode peels before the **verb** parse, but NOT
+  before `broadcast_word` (mass-broadcast blast radius). The peel is kept only on a
+  hit; on any miss the **original transcript is injected verbatim** (non-destructive,
+  so plain dictation that starts with a filler is never corrupted). The button
+  dictation key never reaches either path (verbatim). Extend `_FILLERS` with a
+  one-line edit + a test, like `commands._UNIT_ALIASES`.
 - **Command layer runs before the router.** `daemon._process` calls `handle_command`
-  after transcribe; utterances led by `control_word` (default "computer") or
-  `broadcast_word` (default "everyone") are executed by voxpane, never injected.
-  An addressed-but-unrecognized utterance returns `unknown` and is **never injected**
-  (no garbage typed into an agent). Interpretation (`parse_command`) is separate from
-  execution (`execute_command`); the `Command` dataclass is the seam for a future
-  local-LLM interpreter (rules-first, escalate only on `unknown` - deferred, not built).
+  after transcribe; in button mode the system key's utterance is parsed as a command
+  (or broadcast), executed by voxpane and never injected. A non-command falls through
+  to route+inject (never swallowed as `unknown`). Interpretation (`parse_command`) is
+  separate from execution (`execute_command`); the `Command` dataclass is the seam for
+  a future local-LLM interpreter (rules-first, deferred, not built).
 - **Slash commands** (`slash_commands` config map, default `clear`->`/clear`,
   `compact`->`/compact`): grammar is `<verb> [name|all]` (verb leads, matching
   focus/close/swap). Bare verb -> focused pane, a name -> that pane, "all"/"everyone"
@@ -145,12 +159,12 @@ Invariants) and talks to tmux purely via the CLI.
 Hybrid routing (focus default + leading-name override) · push-to-talk, hold
 Right-Option, no wake word · voice input only (TTS deferred) · Python daemon (not
 Swift/native, not a browser app) · Parakeet via `parakeet-mlx` · **v1 drives Claude
-Code panes only** (Codex/OpenCode have known send-keys submit bugs) · control word +
-broadcast word are configurable (`control_word`, `broadcast_word` in config) · created
+Code panes only** (Codex/OpenCode have known send-keys submit bugs) · no control
+word (the system key signals a command); `broadcast_word` is configurable · created
 panes default to `pane_command` ("claude"), overridable by voice via the `programs`
-map · multi-pane create tiles the window · addressing mode is configurable (`keyword`
-default vs two-key `button`); the dictation key keeps `alt_r` (muscle memory) and the
-system key defaults to `ctrl_l`.
+map · multi-pane create tiles the window · addressing mode is configurable (two-key
+`button` default vs legacy single-key `keyword`, which has no command layer); the
+dictation key keeps `alt_r` (muscle memory) and the system key defaults to `ctrl_l`.
 
 ## Conventions
 

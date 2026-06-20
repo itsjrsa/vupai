@@ -180,9 +180,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 def _cmd_name(args: argparse.Namespace) -> int:
     cfg = load_config()
-    reserved = {cfg.control_word.strip().lower(), cfg.broadcast_word.strip().lower()}
+    reserved = {cfg.broadcast_word.strip().lower()}
     if args.name.strip().lower() in reserved:
-        print(f"name '{args.name}' is reserved (control/broadcast word)")
+        print(f"name '{args.name}' is reserved (broadcast word)")
         return 1
     registry = PaneRegistry()
     registry.refresh()
@@ -248,9 +248,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 def _voice_commands_text(cfg: Config) -> str:
     """Render a quick reference of the spoken commands for the active config.
 
-    Config-driven so the control/broadcast words, hotkeys, program tokens and
-    macros shown match the user's setup; verb sets come from commands.py so they
-    never drift from the parser.
+    Config-driven so the broadcast word, hotkeys, program tokens and macros
+    shown match the user's setup; verb sets come from commands.py so they never
+    drift from the parser.
     """
     create_verbs = " / ".join((*_CREATE_VERBS, "spin up"))
     close_alts = " / ".join(_CLOSE_VERBS[1:])  # row label is the first verb already
@@ -258,47 +258,49 @@ def _voice_commands_text(cfg: Config) -> str:
     slash_verbs = " / ".join(sorted(cfg.slash_commands)) or "(none)"
     lines = ["voxpane voice commands", ""]
 
-    if cfg.addressing == "button":
-        lines += [
-            "Addressing mode: button (hold a key, then speak)",
-            f"  system key    ({cfg.command_hotkey}): a command, broadcast, or an agent by name",
-            f"  dictation key ({cfg.hotkey}): typed verbatim into the focused pane",
-            "",
-            "Commands (hold the system key, then speak):",
-        ]
-        prefix = ""
-        name_intro = "Address an agent (hold the system key):"
-    else:
+    if cfg.addressing != "button":
+        # Keyword mode is a single key with no command layer: dictation, name
+        # addressing, and broadcast only. Commands live on the button system key.
         lines += [
             f"Addressing mode: keyword (hold {cfg.hotkey}, then speak)",
+            "  no command layer here - switch to button mode for commands",
             "",
-            f'Commands (prefix with "{cfg.control_word}"):',
+            f"Broadcast: {cfg.broadcast_word} <message>   send <message> to every named agent",
+            "",
+            "Address an agent (no prefix):",
+            '  <name>, <message>              e.g. "nova, run the tests" -> the nova pane',
+            "",
+            "Anything else is typed verbatim into the focused pane.",
         ]
-        prefix = f"{cfg.control_word} "
-        name_intro = "Address an agent (no prefix):"
+        return "\n".join(lines)
 
     lines += [
-        f"  {prefix}create <n> panes [program]   spin up n auto-named panes, tiled",
+        "Addressing mode: button (hold a key, then speak)",
+        f"  system key    ({cfg.command_hotkey}): a command, broadcast, or an agent by name",
+        f"  dictation key ({cfg.hotkey}): typed verbatim into the focused pane",
+        "",
+        "Commands (hold the system key, then speak):",
+        "  create <n> panes [program]   spin up n auto-named panes, tiled",
         f"      verbs: {create_verbs}   n: 1-9 (or one..nine)   program: {programs}",
-        f"  {prefix}focus <name>                 focus a pane (also: switch to / go to <name>)",
-        f"  {prefix}swap <name> and <name>       swap two named panes",
-        f"  {prefix}close <name>                 close a pane (also: {close_alts} <name>)",
-        f"  {prefix}close the others             close every pane but the focused one",
-        f"  {prefix}zoom [name]                  zoom a pane (also: maximize / full screen)",
-        f"  {prefix}unzoom                       restore layout (also: minimize / restore)",
-        f"  {prefix}<slash> [name|all]           send a slash command (focused / named / all)",
-        f"      slash: {slash_verbs}   e.g. \"{prefix}clear all\" -> /clear to every agent",
+        "  focus <name>                 focus a pane (also: switch to / go to <name>)",
+        "  swap <name> and <name>       swap two named panes",
+        f"  close <name>                 close a pane (also: {close_alts} <name>)",
+        "  close the others             close every pane but the focused one",
+        "  zoom [name]                  zoom a pane (also: maximize / full screen)",
+        "  unzoom                       restore layout (also: minimize / restore)",
+        "  <slash> [name|all]           send a slash command (focused / named / all)",
+        f'      slash: {slash_verbs}   e.g. "clear all" -> /clear to every agent',
         "",
         f"Broadcast: {cfg.broadcast_word} <message>   send <message> to every named agent",
         "",
-        name_intro,
+        "Address an agent (hold the system key):",
         '  <name>, <message>              e.g. "nova, run the tests" -> the nova pane',
         "",
         "Macros:",
     ]
     if cfg.macros:
         for phrase, actions in cfg.macros.items():
-            lines.append(f"  {prefix}{phrase}  ->  {', '.join(actions)}")
+            lines.append(f"  {phrase}  ->  {', '.join(actions)}")
     else:
         lines.append("  (none configured)")
 

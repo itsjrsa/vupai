@@ -268,3 +268,73 @@ def test_exact_match_wins_over_fuzzy_near_tie():
     assert r.pane_id == "%1"
     assert r.matched_name == "nova"
     assert r.candidates == ()
+
+
+# ---------------------------------------------------------------------------
+# Vocative filler peel: "okay Atlas, run the tests" -> address Atlas.
+# Exact-anchor: a filler is dropped ONLY when an EXACT name follows; otherwise
+# the original transcript is injected verbatim (non-destructive).
+# ---------------------------------------------------------------------------
+
+def test_filler_then_exact_name_routes():
+    p = [mk("%1", "@1", "main", 1, "atlas"), mk("%2", "@1", "main", 2, "nova")]
+    r = route("okay atlas run the tests", p, focused_id="%2")
+    assert r.pane_id == "%1"
+    assert r.matched_name == "atlas"
+    assert r.text == "run the tests"
+    assert r.fallback is False
+
+
+def test_filler_with_punctuation_routes():
+    p = [mk("%1", "@1", "main", 1, "nova")]
+    r = route("hey, nova ship it", p, focused_id="%1")
+    assert r.pane_id == "%1" and r.text == "ship it"
+
+
+def test_two_fillers_then_name_routes():
+    p = [mk("%1", "@1", "main", 1, "nova"), mk("%2", "@1", "main", 2, "atlas")]
+    r = route("um okay nova status", p, focused_id="%2")
+    assert r.pane_id == "%1" and r.text == "status"
+
+
+def test_filler_alone_is_verbatim_focus():
+    # No name after the filler -> peel discarded, original injected to focus.
+    p = [mk("%1", "@1", "main", 1, "nova")]
+    r = route("okay let us refactor this", p, focused_id="%1")
+    assert r.fallback is True
+    assert r.pane_id == "%1"
+    assert r.text == "okay let us refactor this"   # UNCHANGED
+
+
+def test_filler_then_fuzzy_name_does_not_route():
+    # Exact-anchor: a near-miss after a filler is NOT matched (no fuzzy/phonetic
+    # on the peeled token). "member" must not become "ember".
+    p = [mk("%1", "@1", "main", 1, "ember")]
+    r = route("okay member should review", p, focused_id="%1")
+    assert r.fallback is True
+    assert r.text == "okay member should review"
+
+
+def test_filler_then_number_does_not_route():
+    # Exact-anchor excludes number routing on the peeled token: "okay two ..."
+    # in a tiled window stays verbatim dictation, not a route to pane 2.
+    p = [mk("%1", "@1", "main", 1, "nova"), mk("%2", "@1", "main", 2, "atlas")]
+    r = route("okay two more things", p, focused_id="%1")
+    assert r.fallback is True
+    assert r.text == "okay two more things"
+
+
+def test_pane_named_like_filler_still_reachable():
+    # A pane literally named "hey" is matched by the RAW pass before any filler
+    # logic runs, so it stays addressable.
+    p = [mk("%1", "@1", "main", 1, "hey"), mk("%2", "@1", "main", 2, "nova")]
+    r = route("hey run the build", p, focused_id="%2")
+    assert r.pane_id == "%1" and r.text == "run the build"
+
+
+def test_no_filler_unmatched_is_unchanged():
+    # Regression: a non-filler leading word still falls back verbatim.
+    p = [mk("%1", "@1", "main", 1, "nova")]
+    r = route("so deploy the staging build", p, focused_id="%1")
+    assert r.fallback is True
+    assert r.text == "so deploy the staging build"
