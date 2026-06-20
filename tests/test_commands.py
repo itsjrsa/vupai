@@ -170,3 +170,19 @@ def test_execute_swap_unknown_name():
     res = execute_command(Command(kind="swap", name="nova", name_b="zzzz"),
                           FakeRegistry(panes, focused=panes[0]), Config(), io=FakeTmux())
     assert res.ok is False
+
+
+def test_execute_swap_unknown_first_name():
+    panes = [_pane("%1", "nova", active=True)]
+    res = execute_command(Command(kind="swap", name="zzzz", name_b="nova"),
+                          FakeRegistry(panes, focused=panes[0]), Config(), io=FakeTmux())
+    assert res.ok is False
+
+
+def test_execute_swap_ambiguous_name_does_not_swap():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "novo")]
+    io = FakeTmux()
+    res = execute_command(Command(kind="swap", name="nov", name_b="nova"),
+                          FakeRegistry(panes, focused=panes[0]), Config(), io=io)
+    assert res.ok is False
+    assert not any(c[0] == "swap_pane" for c in io.calls)

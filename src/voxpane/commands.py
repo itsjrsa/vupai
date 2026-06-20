@@ -163,7 +163,8 @@ def _exec_swap(cmd: Command, registry, config, io) -> CommandResult:
     b = resolve_pane_by_name(cmd.name_b, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
     for m, raw in ((a, cmd.name), (b, cmd.name_b)):
         if m.candidates:
-            return CommandResult(False, "ambiguous: " + " / ".join(m.candidates))
+            msg = "ambiguous: " + " / ".join(m.candidates) + " - say the name again"
+            return CommandResult(False, msg)
         if m.pane_id is None:
             return CommandResult(False, f"no pane named {raw}")
     io.swap_pane(a.pane_id, b.pane_id)
