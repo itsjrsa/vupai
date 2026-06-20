@@ -172,8 +172,15 @@ def swap_pane(src: str, dst: str) -> None:
     run(["swap-pane", "-s", src, "-t", dst])
 
 
-def kill_window(name: str) -> None:
-    run(["kill-window", "-t", name])
+def pane_zoomed(pane_id: str) -> bool:
+    """Whether the window containing `pane_id` is currently zoomed."""
+    out = run(["display-message", "-p", "-t", pane_id, "#{window_zoomed_flag}"])
+    return out.strip() == "1"
+
+
+def toggle_zoom(pane_id: str) -> None:
+    """Toggle the zoom state of `pane_id`'s window (tmux `resize-pane -Z`)."""
+    run(["resize-pane", "-Z", "-t", pane_id])
 
 
 def attach() -> None:

@@ -131,7 +131,8 @@ def _cmd_default(args: argparse.Namespace) -> int:
 
 
 def _cmd_down(args: argparse.Namespace) -> int:
-    # Terminate the daemon process if we recorded its pid.
+    # Terminate the daemon process if we recorded its pid. The daemon is a
+    # detached background process (not a tmux window), so SIGTERM is all it takes.
     if PIDFILE.exists():
         try:
             pid = int(PIDFILE.read_text().strip())
@@ -139,12 +140,6 @@ def _cmd_down(args: argparse.Namespace) -> int:
         except (ValueError, ProcessLookupError):
             pass
         PIDFILE.unlink(missing_ok=True)
-    # Always tear down the voice window so a later `up` can recreate the daemon,
-    # even when the pidfile is missing/stale (orphaned window).
-    try:
-        tmuxio.kill_window(load_config().voice_window_name)
-    except TmuxError:
-        pass
     return 0
 
 
@@ -286,6 +281,8 @@ def _voice_commands_text(cfg: Config) -> str:
         f"  {prefix}swap <name> and <name>       swap two named panes",
         f"  {prefix}close <name>                 close a pane (also: {close_alts} <name>)",
         f"  {prefix}close the others             close every pane but the focused one",
+        f"  {prefix}zoom [name]                  zoom a pane (also: maximize / full screen)",
+        f"  {prefix}unzoom                       restore layout (also: minimize / restore)",
         "",
         f"Broadcast: {cfg.broadcast_word} <message>   send <message> to every named agent",
         "",

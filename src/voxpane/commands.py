@@ -17,6 +17,8 @@ from voxpane.tmuxio import TmuxError
 _STRIP = ".,!?;:'\"()[]{}"
 _CREATE_VERBS = ("create", "make", "add", "open", "new")
 _CLOSE_VERBS = ("close", "kill")
+_ZOOM_VERBS = ("zoom", "maximize")
+_UNZOOM_VERBS = ("unzoom", "minimize", "restore")
 _UNITS = {"pane": "pane", "panes": "pane", "window": "window", "windows": "window"}
 # Curated ASR mishearings of the unit noun -> canonical unit. The trailing unit
 # token is the most-misheard part of "create N panes" ("paints"/"pains"). A
@@ -48,7 +50,7 @@ def _resolve_unit(token: str) -> str | None:
 
 @dataclass(frozen=True)
 class Command:
-    # create|macro|close|close_others|focus|swap|broadcast|unknown
+    # create|macro|close|close_others|focus|swap|zoom|unzoom|broadcast|unknown
     kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
@@ -123,6 +125,20 @@ def _parse_swap(toks: list[str]) -> Command | None:
     return None
 
 
+def _parse_zoom(toks: list[str]) -> Command | None:
+    if not toks:
+        return None
+    if toks[0] in _UNZOOM_VERBS:
+        return Command(kind="unzoom")
+    if toks[0] in _ZOOM_VERBS:
+        rest = toks[1:]
+    elif toks[:2] == ["full", "screen"]:
+        rest = toks[2:]
+    else:
+        return None
+    return Command(kind="zoom", name=rest[0] if rest else "")
+
+
 def _parse_body(body: str, macros: dict[str, list[str]],
                 programs: dict[str, str]) -> Command | None:
     """Macro match, then the verb chain. Returns None when nothing matches
@@ -133,7 +149,7 @@ def _parse_body(body: str, macros: dict[str, list[str]],
             return Command(kind="macro", actions=tuple(actions))
     toks = _tokens(body)
     return (_parse_create(toks, programs) or _parse_close(toks)
-            or _parse_focus(toks) or _parse_swap(toks))
+            or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks))
 
 
 def parse_command(
@@ -241,6 +257,40 @@ def _exec_close_others(cmd: Command, registry, config, io) -> CommandResult:
     return CommandResult(True, f"closed {len(victims)} panes, kept {kept}")
 
 
+def _exec_zoom(cmd: Command, registry, config, io) -> CommandResult:
+    if cmd.name:
+        m = resolve_pane_by_name(cmd.name, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
+        if m.candidates:
+            msg = "ambiguous: " + " / ".join(m.candidates) + " - say the name again"
+            return CommandResult(False, msg)
+        if m.pane_id is None:
+            return CommandResult(False, f"no pane named {cmd.name}")
+        pane_id, label = m.pane_id, m.matched_name
+    else:
+        focused = registry.focused()
+        if focused is None:
+            return CommandResult(False, "no focused pane to zoom")
+        pane_id = focused.id
+        label = focused.name if focused.name != focused.id else "the focused pane"
+    # Select first: selecting a pane in an already-zoomed window unzooms it, so
+    # read the flag afterwards and toggle only if not yet zoomed (deterministic).
+    io.select_pane(pane_id)
+    if not io.pane_zoomed(pane_id):
+        io.toggle_zoom(pane_id)
+    return CommandResult(True, f"zoomed {label}")
+
+
+def _exec_unzoom(cmd: Command, registry, config, io) -> CommandResult:
+    # Zoom is window-level (one pane per window); unzoom the focused pane's window.
+    focused = registry.focused()
+    if focused is None:
+        return CommandResult(False, "no focused pane")
+    if io.pane_zoomed(focused.id):
+        io.toggle_zoom(focused.id)
+        return CommandResult(True, "unzoomed")
+    return CommandResult(True, "already unzoomed")
+
+
 def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
     msgs: list[str] = []
     ok = True
@@ -294,6 +344,10 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_close(cmd, registry, config, io)
         if cmd.kind == "close_others":
             return _exec_close_others(cmd, registry, config, io)
+        if cmd.kind == "zoom":
+            return _exec_zoom(cmd, registry, config, io)
+        if cmd.kind == "unzoom":
+            return _exec_unzoom(cmd, registry, config, io)
         if cmd.kind == "broadcast":
             return _exec_broadcast(cmd, registry, config, inject_fn)
         return CommandResult(False, f"unknown command: {cmd.raw}")

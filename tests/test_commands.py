@@ -4,9 +4,10 @@ from voxpane.registry import Pane
 
 
 class FakeTmux:
-    def __init__(self, new_ids=()):
+    def __init__(self, new_ids=(), zoomed=False):
         self.calls = []
         self._ids = list(new_ids)
+        self._zoomed = zoomed
 
     def split_window(self, target, program):
         self.calls.append(("split_window", target, program))
@@ -26,6 +27,14 @@ class FakeTmux:
 
     def kill_pane(self, pane_id):
         self.calls.append(("kill_pane", pane_id))
+
+    def pane_zoomed(self, pane_id):
+        self.calls.append(("pane_zoomed", pane_id))
+        return self._zoomed
+
+    def toggle_zoom(self, pane_id):
+        self.calls.append(("toggle_zoom", pane_id))
+        self._zoomed = not self._zoomed
 
 
 class FakeRegistry:
@@ -386,3 +395,92 @@ def test_handle_command_button_executes_create():
     res = handle_command("create two panes", reg, Config(),
                          io=io, inject_fn=lambda *a, **k: True, addressing="button")
     assert res is not None and res.ok
+
+
+# --- zoom / unzoom -----------------------------------------------------------
+
+def test_parse_zoom_focused():
+    c = _parse("computer zoom")
+    assert c.kind == "zoom" and c.name == ""
+
+
+def test_parse_zoom_by_name():
+    c = _parse("computer zoom nova")
+    assert c.kind == "zoom" and c.name == "nova"
+
+
+def test_parse_zoom_synonyms():
+    assert _parse("computer maximize").kind == "zoom"
+    assert _parse("computer full screen").kind == "zoom"
+    assert _parse("computer full screen nova") == Command(kind="zoom", name="nova")
+
+
+def test_parse_unzoom_synonyms():
+    assert _parse("computer unzoom").kind == "unzoom"
+    assert _parse("computer minimize").kind == "unzoom"
+    assert _parse("computer restore").kind == "unzoom"
+
+
+def test_execute_zoom_focused_selects_then_zooms():
+    focused = _pane("%1", "nova", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux()  # not zoomed
+    res = execute_command(Command(kind="zoom"), reg, Config(), io=io)
+    assert res.ok
+    assert io.calls == [("select_pane", "%1"), ("pane_zoomed", "%1"),
+                        ("toggle_zoom", "%1")]
+
+
+def test_execute_zoom_by_name():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    io = FakeTmux()
+    res = execute_command(Command(kind="zoom", name="atlas"), reg, Config(), io=io)
+    assert res.ok
+    assert io.calls == [("select_pane", "%2"), ("pane_zoomed", "%2"),
+                        ("toggle_zoom", "%2")]
+
+
+def test_execute_zoom_already_zoomed_is_noop_toggle():
+    focused = _pane("%1", "nova", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux(zoomed=True)
+    res = execute_command(Command(kind="zoom"), reg, Config(), io=io)
+    assert res.ok
+    assert ("toggle_zoom", "%1") not in io.calls
+
+
+def test_execute_zoom_unknown_name():
+    reg = FakeRegistry([_pane("%1", "nova", active=True)])
+    res = execute_command(Command(kind="zoom", name="zzzz"), reg, Config(), io=FakeTmux())
+    assert res.ok is False
+
+
+def test_execute_zoom_no_focused():
+    reg = FakeRegistry([_pane("%1", "nova")], focused=None)
+    io = FakeTmux()
+    res = execute_command(Command(kind="zoom"), reg, Config(), io=io)
+    assert res.ok is False and io.calls == []
+
+
+def test_execute_unzoom_when_zoomed():
+    focused = _pane("%1", "nova", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux(zoomed=True)
+    res = execute_command(Command(kind="unzoom"), reg, Config(), io=io)
+    assert res.ok and ("toggle_zoom", "%1") in io.calls
+
+
+def test_execute_unzoom_when_not_zoomed_is_noop():
+    focused = _pane("%1", "nova", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux(zoomed=False)
+    res = execute_command(Command(kind="unzoom"), reg, Config(), io=io)
+    assert res.ok and not any(c[0] == "toggle_zoom" for c in io.calls)
+
+
+def test_execute_unzoom_no_focused():
+    reg = FakeRegistry([_pane("%1", "nova")], focused=None)
+    io = FakeTmux()
+    res = execute_command(Command(kind="unzoom"), reg, Config(), io=io)
+    assert res.ok is False and io.calls == []
