@@ -127,6 +127,47 @@ def test_transcribe_falls_back_when_model_rejects_hotwords(monkeypatch) -> None:
     assert model.calls == ["/tmp/a.wav"]
 
 
+def test_transcribe_caches_hotword_unsupported(monkeypatch) -> None:
+    # After one TypeError the transcriber must stop re-attempting the hotwords
+    # kwarg, so a build without support doesn't raise/catch on every utterance.
+    class CountingModel:
+        def __init__(self) -> None:
+            self.hotword_attempts = 0
+            self.plain_calls = 0
+
+        def transcribe(self, path: str, **kwargs) -> _FakeResult:
+            if "hotwords" in kwargs:
+                self.hotword_attempts += 1
+                raise TypeError("no hotwords kwarg")
+            self.plain_calls += 1
+            return _FakeResult("hi")
+
+    model = CountingModel()
+    monkeypatch.setattr("voxpane.asr.from_pretrained", lambda model_id: model)
+    t = ParakeetTranscriber("x")
+    t.transcribe(Path("/tmp/a.wav"), hints=["z"])
+    t.transcribe(Path("/tmp/b.wav"), hints=["z"])
+    t.transcribe(Path("/tmp/c.wav"), hints=["z"])
+    assert model.hotword_attempts == 1  # probed once, then cached as unsupported
+    assert model.plain_calls == 3
+
+
+def test_warm_warns_on_multilingual_model(patched_parakeet, caplog) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="voxpane.asr"):
+        ParakeetTranscriber("mlx-community/parakeet-tdt-0.6b-v3").warm()
+    assert any("multilingual" in r.message.lower() for r in caplog.records)
+
+
+def test_warm_no_warning_on_english_model(patched_parakeet, caplog) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="voxpane.asr"):
+        ParakeetTranscriber("mlx-community/parakeet-tdt-0.6b-v2").warm()
+    assert not any("multilingual" in r.message.lower() for r in caplog.records)
+
+
 @pytest.mark.slow
 def test_real_model_smoke() -> None:
     """Skipped by default (run with `-m slow`). Loads the real model."""

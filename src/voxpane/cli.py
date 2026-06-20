@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import signal
 import subprocess
@@ -52,9 +53,10 @@ def _spawn_daemon() -> None:
     that launched `voxpane`, which the user already granted - so the hotkey works.
     """
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
-    # Append the daemon's stdout/stderr to a log the user can tail; the fd is
+    # Truncate: each daemon start gets a fresh log so stale tracebacks from a
+    # previous (possibly pre-fix) run can't pile up and mislead. The fd is
     # inherited by the child and our copy is released when this process exits.
-    log = open(DAEMON_LOG, "a")  # noqa: SIM115 - handed to the child process
+    log = open(DAEMON_LOG, "w")  # noqa: SIM115 - handed to the child process
     proc = subprocess.Popen(
         [sys.executable, "-m", "voxpane", "_daemon"],
         stdout=log,
@@ -309,6 +311,14 @@ def _cmd_voice_commands(args: argparse.Namespace) -> int:
 
 
 def _cmd_daemon(args: argparse.Namespace) -> int:
+    # Route our loggers (asr model id/warnings, daemon errors) to the inherited
+    # stdout fd so they land in daemon.log; without this nothing below WARNING
+    # from our modules is emitted and "loading parakeet model X" is invisible.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stdout,
+    )
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
     PIDFILE.write_text(str(os.getpid()))
     cfg = load_config()

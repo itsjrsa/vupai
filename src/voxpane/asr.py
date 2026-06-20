@@ -24,12 +24,24 @@ class ParakeetTranscriber:
     def __init__(self, model_id: str) -> None:
         self._model_id = model_id
         self._model = None  # populated by warm(); cached for the process lifetime
+        # Tri-state hotword-support probe: None = unknown, True/False = known after
+        # the first hinted transcribe. Avoids re-raising TypeError every utterance.
+        self._supports_hotwords: bool | None = None
 
     def warm(self) -> None:
         """Load and cache the model. Idempotent: a second call is a no-op."""
         if self._model is not None:
             return
         logger.info("loading parakeet model %s", self._model_id)
+        # Surface a misconfigured/stale multilingual model: v3 does per-utterance
+        # language detection and drifts to German/Russian on short audio. v2 is
+        # English-only. Warn loudly so a wrong model_id is visible in the log.
+        lowered = self._model_id.lower()
+        if "multilingual" in lowered or "v3" in lowered:
+            logger.warning(
+                "model %s looks multilingual - it may drift to non-English "
+                "transcriptions on short audio; prefer the English-only v2 model",
+                self._model_id)
         self._model = from_pretrained(self._model_id)
 
     def transcribe(self, wav_path: Path, hints: Sequence[str] = ()) -> str:
@@ -43,11 +55,17 @@ class ParakeetTranscriber:
         if self._model is None:
             self.warm()
         path = str(wav_path)
-        if hints:
+        if hints and self._supports_hotwords is not False:
             try:
                 result = self._model.transcribe(path, hotwords=list(hints))
+                self._supports_hotwords = True
             except TypeError:
-                logger.debug("model.transcribe has no hotwords kwarg; hints not applied")
+                # Probe failed once: cache it so we never re-attempt (and re-log).
+                if self._supports_hotwords is None:
+                    logger.info(
+                        "parakeet build has no hotwords kwarg; name biasing "
+                        "disabled (router name-matching is unaffected)")
+                self._supports_hotwords = False
                 result = self._model.transcribe(path)
         else:
             result = self._model.transcribe(path)
