@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 
 from .asr import Transcriber
+from .commands import handle_command
 from .config import Config
 from .feedback import Feedback
 from .hotkey import Hotkey
@@ -30,7 +31,7 @@ class Daemon:
 
     def __init__(self, config: Config, recorder: Recorder, transcriber: Transcriber,
                  registry: PaneRegistry, feedback: Feedback,
-                 *, route_fn=route, inject_fn=inject) -> None:
+                 *, route_fn=route, inject_fn=inject, command_fn=handle_command) -> None:
         self._config = config
         self._recorder = recorder
         self._transcriber = transcriber
@@ -38,6 +39,7 @@ class Daemon:
         self._feedback = feedback
         self._route_fn = route_fn
         self._inject_fn = inject_fn
+        self._command_fn = command_fn
         self._hotkey: Hotkey | None = None
         self._stop_event = threading.Event()
         self._mic_hint_shown = False
@@ -90,6 +92,14 @@ class Daemon:
         text = self._transcriber.transcribe(wav, hints=hints)
         if not text or not text.strip():
             self._feedback.status("didn't catch that")
+            return
+
+        # Command layer: utterances addressed to the control/broadcast word are
+        # interpreted by voxpane itself, not injected into a pane.
+        result = self._command_fn(
+            text, self._registry, self._config, inject_fn=self._inject_fn)
+        if result is not None:
+            (self._feedback.status if result.ok else self._feedback.error)(result.message)
             return
 
         focused = self._registry.focused()

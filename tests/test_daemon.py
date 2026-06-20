@@ -3,9 +3,11 @@ from __future__ import annotations
 import queue
 from pathlib import Path
 
+from voxpane.commands import CommandResult
 from voxpane.config import Config
 from voxpane.daemon import Daemon
-from voxpane.registry import PaneRegistry
+from voxpane.recorder import MIN_WAV_BYTES
+from voxpane.registry import Pane, PaneRegistry
 from voxpane.router import Route
 
 
@@ -313,3 +315,87 @@ def test_ambiguous_route_surfaces_candidates_without_inject(tmp_path):
     assert feedback.errors
     msg = feedback.errors[0].lower()
     assert "nova" in msg and "novo" in msg
+
+
+# ---------------------------------------------------------------------------
+# Task 6: command layer interception
+# ---------------------------------------------------------------------------
+
+
+class _Rec:
+    def start(self): ...
+    def stop(self): ...
+
+
+class _Tx:
+    def __init__(self, text): self._t = text
+    def warm(self): ...
+    def transcribe(self, wav, hints=None): return self._t
+
+
+class _Reg:
+    def __init__(self, panes): self._p = panes
+    def refresh(self): ...
+    @property
+    def panes(self): return self._p
+    def focused(self): return self._p[0] if self._p else None
+
+
+class _Fb:
+    def __init__(self): self.msgs = []
+    def status(self, t): self.msgs.append(("status", t))
+    def error(self, t): self.msgs.append(("error", t))
+    def announce(self, r): self.msgs.append(("announce",))
+
+
+def _wav(tmp_path):
+    w = tmp_path / "a.wav"
+    w.write_bytes(b"\x00" * (MIN_WAV_BYTES + 16))
+    return w
+
+
+def _panes():
+    return [Pane(id="%1", window_id="@1", window="main", index=0,
+                 name="nova", command="claude", active=True)]
+
+
+def test_command_path_skips_route_and_inject(tmp_path):
+    calls = {"route": 0, "inject": 0}
+
+    def route_fn(text, panes, focused_id, *, fuzzy_cutoff=82):
+        calls["route"] += 1
+        return Route(pane_id="%1", text=text, matched_name=None,
+                     confidence=0.0, fallback=True)
+
+    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05):
+        calls["inject"] += 1
+        return True
+
+    def command_fn(text, registry, config, *, inject_fn):
+        return CommandResult(True, "created") if text.startswith("computer") else None
+
+    d = Daemon(Config(), _Rec(), _Tx("computer create two panes"), _Reg(_panes()),
+               _Fb(), route_fn=route_fn, inject_fn=inject_fn, command_fn=command_fn)
+    d._process(_wav(tmp_path))
+    assert calls == {"route": 0, "inject": 0}
+
+
+def test_normal_text_still_routes(tmp_path):
+    calls = {"route": 0, "inject": 0}
+
+    def route_fn(text, panes, focused_id, *, fuzzy_cutoff=82):
+        calls["route"] += 1
+        return Route(pane_id="%1", text=text, matched_name="nova",
+                     confidence=100.0, fallback=False)
+
+    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05):
+        calls["inject"] += 1
+        return True
+
+    def command_fn(text, registry, config, *, inject_fn):
+        return None
+
+    d = Daemon(Config(), _Rec(), _Tx("nova run the tests"), _Reg(_panes()),
+               _Fb(), route_fn=route_fn, inject_fn=inject_fn, command_fn=command_fn)
+    d._process(_wav(tmp_path))
+    assert calls == {"route": 1, "inject": 1}

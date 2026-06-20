@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from voxpane.router import word_to_int
+from voxpane import tmuxio
+from voxpane.injector import inject
+from voxpane.router import next_callsign, word_to_int
+from voxpane.tmuxio import TmuxError
 
 _STRIP = ".,!?;:'\"()[]{}"
 _CREATE_VERBS = ("create", "make", "add", "open", "new")
@@ -112,3 +115,53 @@ def parse_command(
     if cmd is not None:
         return cmd
     return Command(kind="unknown", raw=body)
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    ok: bool
+    message: str
+
+
+def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
+    if cmd.unit == "window":
+        return CommandResult(False, "creating windows by voice isn't supported yet - try panes")
+    focused = registry.focused()
+    if focused is None:
+        return CommandResult(False, "no focused pane to split")
+    target = focused.window_id
+    program = config.pane_command if cmd.program is None else cmd.program
+    used = [p.name for p in registry.panes if p.name != p.id]
+    assigned: list[str] = []
+    for _ in range(cmd.count):
+        name = next_callsign(used, fuzzy_cutoff=config.fuzzy_cutoff)
+        if name is None:
+            io.select_layout(target, "tiled")
+            return CommandResult(
+                False, f"callsign pool exhausted - named {len(assigned)} of {cmd.count}")
+        new_id = io.split_window(target, program)
+        io.set_pane_name(new_id, name)
+        used.append(name)
+        assigned.append(name)
+    io.select_layout(target, "tiled")
+    return CommandResult(True, f"created {cmd.count} panes: {' '.join(assigned)}")
+
+
+def execute_command(cmd: Command, registry, config, *,
+                    io=tmuxio, inject_fn=inject) -> CommandResult:
+    try:
+        if cmd.kind == "create":
+            return _exec_create(cmd, registry, config, io)
+        return CommandResult(False, f"unknown command: {cmd.raw}")
+    except TmuxError as exc:
+        return CommandResult(False, f"tmux error: {exc}")
+
+
+def handle_command(text: str, registry, config, *,
+                   io=tmuxio, inject_fn=inject) -> CommandResult | None:
+    cmd = parse_command(
+        text, control_word=config.control_word, broadcast_word=config.broadcast_word,
+        macros=config.macros, programs=config.programs)
+    if cmd is None:
+        return None
+    return execute_command(cmd, registry, config, io=io, inject_fn=inject_fn)
