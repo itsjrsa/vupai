@@ -120,6 +120,55 @@ def test_parse_create_unknown_program_is_unknown():
     assert c.kind == "unknown"
 
 
+# --- ASR homophone tolerance for the unit noun (paints/pains -> pane) ---------
+# The trailing unit token is the most-misheard part of "create N panes". A
+# curated alias table maps known mis-transcriptions to the canonical unit; a
+# scoring approach would over-match real words (plans/lanes/planes), so the
+# table stays deterministic and the precision guards below pin its boundaries.
+
+def test_parse_create_misheard_paints_is_pane():
+    # The headline bug: "create four panes" -> "create four paints".
+    c = _parse("computer create four paints")
+    assert c.kind == "create" and c.count == 4 and c.program is None and c.unit == "pane"
+
+
+def test_parse_create_misheard_pains_is_pane():
+    c = _parse("computer create four pains")
+    assert c.kind == "create" and c.count == 4 and c.unit == "pane"
+
+
+def test_parse_create_misheard_paint_singular():
+    c = _parse("computer make one paint")
+    assert c.kind == "create" and c.count == 1 and c.unit == "pane"
+
+
+def test_parse_create_misheard_with_program():
+    # A misheard unit still composes with a valid mid-token program.
+    c = _parse("computer create two shell pains")
+    assert c.kind == "create" and c.count == 2 and c.program == "" and c.unit == "pane"
+
+
+def test_resolve_unit_exact_and_aliases():
+    from voxpane.commands import _resolve_unit
+    assert _resolve_unit("panes") == "pane"     # exact path still wins
+    assert _resolve_unit("windows") == "window"
+    assert _resolve_unit("paints") == "pane"     # alias
+    assert _resolve_unit("pains") == "pane"
+
+
+def test_resolve_unit_rejects_real_word_lookalikes():
+    # Precision guard: real English words that merely rhyme must NOT be units,
+    # or "create three lanes"/"create four plans" would spawn panes.
+    from voxpane.commands import _resolve_unit
+    for word in ("panel", "panels", "plane", "planes", "plain", "lanes", "plans"):
+        assert _resolve_unit(word) is None
+
+
+def test_parse_create_rhyme_is_unknown():
+    # End-to-end: a rhyming real word is not silently turned into a create.
+    assert _parse("computer create three lanes").kind == "unknown"
+
+
 def test_parse_control_word_configurable():
     cfg = Config()
     c = parse_command(

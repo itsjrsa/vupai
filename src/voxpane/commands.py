@@ -18,6 +18,32 @@ _STRIP = ".,!?;:'\"()[]{}"
 _CREATE_VERBS = ("create", "make", "add", "open", "new")
 _CLOSE_VERBS = ("close", "kill")
 _UNITS = {"pane": "pane", "panes": "pane", "window": "window", "windows": "window"}
+# Curated ASR mishearings of the unit noun -> canonical unit. The trailing unit
+# token is the most-misheard part of "create N panes" ("paints"/"pains"). A
+# fuzzy or phonetic match cannot help here: by Levenshtein ratio the real errors
+# are inseparable from real words (pains==plans==lanes==80 vs "panes";
+# paint==plain==66.7), so any threshold that catches the bug also turns
+# "create three lanes" into panes. This table is deterministic instead: it lists
+# only implausible-as-literal homophones and deliberately OMITS real words
+# (panel/plane/plain/lane/plan), which stay non-units. A miss is safe (the
+# utterance just becomes `unknown`, never injected); extend with a one-line edit
+# plus a test when a new mishearing shows up in the wild.
+_UNIT_ALIASES = {
+    "pain": "pane", "pains": "pane", "paine": "pane", "payne": "pane",
+    "paint": "pane", "paints": "pane",
+    "windo": "window", "windos": "window", "windoes": "window",
+}
+
+
+def _resolve_unit(token: str) -> str | None:
+    """Map a trailing token to a canonical unit ("pane"/"window"), or None.
+
+    Exact unit words win; curated homophones are the deterministic fallback.
+    `token` is already lowercased and punctuation-stripped by `_tokens`.
+    """
+    if token in _UNITS:
+        return _UNITS[token]
+    return _UNIT_ALIASES.get(token)
 
 
 @dataclass(frozen=True)
@@ -56,9 +82,9 @@ def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
     n = word_to_int(rest[0])
     if n is None or not (1 <= n <= 9):
         return None
-    if rest[-1] not in _UNITS:
+    unit = _resolve_unit(rest[-1])
+    if unit is None:
         return None
-    unit = _UNITS[rest[-1]]
     mid = rest[1:-1]
     if not mid:
         program: str | None = None
