@@ -171,6 +171,17 @@ def _exec_swap(cmd: Command, registry, config, io) -> CommandResult:
     return CommandResult(True, f"swapped {a.matched_name} <-> {b.matched_name}")
 
 
+def _exec_close(cmd: Command, registry, config, io) -> CommandResult:
+    m = resolve_pane_by_name(cmd.name, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
+    if m.candidates:
+        msg = "ambiguous: " + " / ".join(m.candidates) + " - say the name again"
+        return CommandResult(False, msg)
+    if m.pane_id is None:
+        return CommandResult(False, f"no pane named {cmd.name}")
+    io.kill_pane(m.pane_id)
+    return CommandResult(True, f"closed {m.matched_name}")
+
+
 def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
     msgs: list[str] = []
     for action in cmd.actions:
@@ -199,6 +210,8 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_focus(cmd, registry, config, io)
         if cmd.kind == "swap":
             return _exec_swap(cmd, registry, config, io)
+        if cmd.kind == "close":
+            return _exec_close(cmd, registry, config, io)
         return CommandResult(False, f"unknown command: {cmd.raw}")
     except TmuxError as exc:
         return CommandResult(False, f"tmux error: {exc}")

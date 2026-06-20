@@ -24,6 +24,9 @@ class FakeTmux:
     def swap_pane(self, a, b):
         self.calls.append(("swap_pane", a, b))
 
+    def kill_pane(self, pane_id):
+        self.calls.append(("kill_pane", pane_id))
+
 
 class FakeRegistry:
     def __init__(self, panes, focused=None):
@@ -186,3 +189,16 @@ def test_execute_swap_ambiguous_name_does_not_swap():
                           FakeRegistry(panes, focused=panes[0]), Config(), io=io)
     assert res.ok is False
     assert not any(c[0] == "swap_pane" for c in io.calls)
+
+
+def test_execute_close_named_pane():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    io = FakeTmux()
+    res = execute_command(Command(kind="close", name="atlas"), reg, Config(), io=io)
+    assert res.ok and io.calls == [("kill_pane", "%2")]
+
+
+def test_parse_bare_close_is_unknown():
+    c = _parse("computer close")
+    assert c.kind == "unknown"
