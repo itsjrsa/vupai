@@ -7,11 +7,25 @@ on timeout; never send Enter blindly.
 
 from __future__ import annotations
 
+import re
 import time
 
 from voxpane import tmuxio
 
 _NEEDLE_MAX = 40  # use the trailing <=40 chars of the last line as the confirmation needle
+
+_WS = re.compile(r"\s+")
+
+
+def _norm(text: str) -> str:
+    """Collapse every run of whitespace (incl. newlines) to a single space.
+
+    The target app word-wraps a long pasted line across several drawn rows with
+    its own indentation; tmux `capture-pane -J` only joins tmux's *own* wrap, not
+    the app's. Normalising both needle and capture this way lets the needle match
+    even when it straddles such an app-drawn wrap (the inter-word break becomes a
+    single space either way)."""
+    return _WS.sub(" ", text).strip()
 
 
 def _needle(text: str) -> str:
@@ -33,9 +47,10 @@ def _paste_and_poll(
     """Load+paste once, then poll capture-pane until `needle` shows or timeout."""
     io.load_buffer(text)
     io.paste_buffer(pane_id)
+    needle_n = _norm(needle)
     deadline = time.monotonic() + confirm_timeout
     while True:
-        if needle in io.capture_pane(pane_id):
+        if needle_n in _norm(io.capture_pane(pane_id)):
             return True
         if time.monotonic() >= deadline:
             return False

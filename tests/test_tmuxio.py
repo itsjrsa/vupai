@@ -105,7 +105,7 @@ def test_capture_pane_argv_returns_stdout(monkeypatch):
     patch_run(monkeypatch, fake)
     out = tmuxio.capture_pane("%3")
     assert out == "line1\nline2\n"
-    assert fake.calls[0]["args"] == ["tmux", "capture-pane", "-p", "-t", "%3"]
+    assert fake.calls[0]["args"] == ["tmux", "capture-pane", "-J", "-p", "-t", "%3"]
 
 
 def test_send_enter_argv(monkeypatch):

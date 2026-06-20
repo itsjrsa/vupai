@@ -123,6 +123,30 @@ def test_needle_matches_last_nonempty_line_with_trailing_newline() -> None:
     assert io.entered == ["%1"]  # exactly one Enter sent
 
 
+def test_inject_confirms_when_needle_straddles_a_wrap() -> None:
+    # A long single-line utterance word-wraps across rows in the target pane, so
+    # the trailing-40 needle is split over two captured lines with indentation.
+    # Whitespace-insensitive matching must still confirm it (regression: long
+    # utterances failed with "text not confirmed").
+    text = (
+        "everything on macOS and I don't have a Linux machine "
+        "right now with me but do you think this will work?"
+    )
+    wrapped_capture = (
+        "> everything on macOS and I don't have a Linux machine right now with me but\n"
+        "  do you think this will work?"
+    )
+    io = FakeIO(capture_frames=[wrapped_capture])
+
+    result = injector.inject(
+        "%5", text, confirm_timeout=0.2, poll_interval=0.01, io=io
+    )
+
+    assert result is True
+    assert io.entered == ["%5"]  # exactly one Enter, no retry-paste duplication
+    assert io.pasted == ["%5"]
+
+
 @pytest.mark.integration
 def test_inject_delivers_line_to_real_cat_pane() -> None:
     if shutil.which("tmux") is None:

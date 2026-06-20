@@ -74,7 +74,10 @@ def paste_buffer(pane_id: str) -> None:
 
 
 def capture_pane(pane_id: str) -> str:
-    return run(["capture-pane", "-p", "-t", pane_id])
+    # -J joins tmux-wrapped lines so a long pasted line that wraps at the
+    # terminal width is captured as one contiguous line (the injector's
+    # confirmation needle would otherwise straddle a wrap break and never match).
+    return run(["capture-pane", "-J", "-p", "-t", pane_id])
 
 
 def send_enter(pane_id: str) -> None:
