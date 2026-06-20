@@ -110,6 +110,7 @@ control word. Run `voxpane voice-commands` for a cheat sheet tailored to your co
 | Command | What it does |
 |---|---|
 | `voxpane` | Ensure tmux + the voice daemon, then attach (default) |
+| `voxpane --reload` | Respawn the daemon (pick up source edits), then attach — `reload && voxpane` in one step |
 | `voxpane up` | Start the daemon without attaching |
 | `voxpane down` | Stop the daemon |
 | `voxpane reload` | Restart the daemon so source edits take effect (`down` + `up`) |
@@ -180,6 +181,15 @@ uv run pytest -m "not integration and not slow"   # fast unit suite (no tmux/mic
 uv run pytest -m integration                      # needs a real tmux
 uv run pytest -m slow                             # needs the real model + tests/fixtures/tiny.wav
 uv run ruff check .                               # lint
+```
+
+**Dogfooding tip:** the daemon loads voxpane's modules once at spawn, so a live
+one runs stale code after you edit the source. `uv run voxpane --reload`
+respawns it and re-attaches in one step. Install it as an editable tool to drop
+the `uv run` prefix entirely:
+
+```bash
+uv tool install --editable .   # then just: voxpane --reload
 ```
 
 Architecture, module map, and the invariants to preserve are documented in

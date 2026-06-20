@@ -218,6 +218,23 @@ def test_default_no_subcommand_attaches(fake_env):
     assert ("attach",) in ft.calls
 
 
+def test_default_reload_respawns_daemon_then_attaches(fake_env, monkeypatch):
+    # `voxpane --reload` collapses `reload && voxpane`: kill the running daemon,
+    # respawn it (so source edits load), then attach.
+    ft, pidfile = fake_env
+    pidfile.write_text("4321")
+    killed = []
+    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+
+    rc = cli.main(["--reload"])
+
+    assert rc == 0
+    assert killed == [(4321, cli.signal.SIGTERM)]
+    assert not pidfile.exists()  # _cmd_down clears the stale pidfile
+    assert ft.daemon_spawns == [True]  # ensure_up respawned the daemon
+    assert ("attach",) in ft.calls
+
+
 # ---------------------------------------------------------------------------
 # name subcommand
 # ---------------------------------------------------------------------------

@@ -176,6 +176,10 @@ def _cmd_up(args: argparse.Namespace) -> int:
 
 
 def _cmd_default(args: argparse.Namespace) -> int:
+    # `--reload` respawns the daemon first so source edits take effect, then
+    # attaches - collapsing the `voxpane reload && voxpane` dogfooding loop.
+    if getattr(args, "reload", False):
+        _cmd_down(args)
     ensure_up()
     tmuxio.attach()
     return 0
@@ -502,6 +506,11 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="voxpane")
     parser.set_defaults(func=_cmd_default)
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="respawn the daemon (pick up source edits) before attaching",
+    )
     sub = parser.add_subparsers(dest="command", metavar="command")
 
     sub.add_parser("up").set_defaults(func=_cmd_up)
