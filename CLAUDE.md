@@ -6,7 +6,7 @@ the focused one by default, or an agent addressed by name ("Nova, run the tests"
 
 ## Status
 
-v1 implemented and on `master` (188 unit tests pass, `ruff` clean). Validated by
+v1 implemented and on `master` (317 unit tests pass, `ruff` clean). Validated by
 **unit tests only** - the `@integration` (real tmux) and `@slow` (real Parakeet
 model + mic) suites and the live daemon must run on a macOS Apple-Silicon machine.
 The design spec + implementation plan live under `docs/superpowers/`
