@@ -12,13 +12,13 @@ class Config:
     hotkey: str = "alt_r"                 # pynput Key name; alt_r = Right-Option
     addressing: str = "keyword"           # "keyword" | "button" (two-key mode)
     command_hotkey: str = "ctrl_l"        # button mode: the system key (Left-Control)
-    model_id: str = "mlx-community/parakeet-tdt-0.6b-v2"  # English-only; v3 multilingual drifts to Russian on short audio
+    # English-only; v3 multilingual drifts to Russian on short audio.
+    model_id: str = "mlx-community/parakeet-tdt-0.6b-v2"
     sample_rate: int = 16000
     fuzzy_cutoff: int = 82                 # rapidfuzz score 0..100
     poll_interval: float = 0.5             # registry refresh cadence (s)
     inject_confirm_timeout: float = 2.0    # s to wait for pasted text to appear
     inject_poll_interval: float = 0.05
-    voice_window_name: str = "voice"
     aliases: dict[str, str] = field(default_factory=dict)  # spoken alias -> pane name
     control_word: str = "computer"        # leading word = a voxpane command
     broadcast_word: str = "everyone"      # leading word = inject to all agents

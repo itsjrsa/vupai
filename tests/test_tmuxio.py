@@ -182,30 +182,6 @@ def test_server_running_false_on_error(monkeypatch):
     assert tmuxio.server_running() is False
 
 
-def test_window_exists_argv_and_match(monkeypatch):
-    fake = FakeRun(stdout="main\nvoice\n")
-    patch_run(monkeypatch, fake)
-    assert tmuxio.window_exists("voice") is True
-    assert tmuxio.window_exists("missing") is False
-    assert fake.calls[0]["args"] == ["tmux", "list-windows", "-F", "#{window_name}"]
-
-
-def test_new_window_argv(monkeypatch):
-    fake = FakeRun()
-    patch_run(monkeypatch, fake)
-    tmuxio.new_window("voice", "python -m voxpane _daemon")
-    assert fake.calls[0]["args"] == [
-        "tmux", "new-window", "-n", "voice", "python -m voxpane _daemon",
-    ]
-
-
-def test_kill_window_argv(monkeypatch):
-    fake = FakeRun()
-    patch_run(monkeypatch, fake)
-    tmuxio.kill_window("voice")
-    assert fake.calls[0]["args"] == ["tmux", "kill-window", "-t", "voice"]
-
-
 def test_split_window_argv_returns_pane_id(monkeypatch):
     fake = FakeRun(stdout="%9\n")
     patch_run(monkeypatch, fake)

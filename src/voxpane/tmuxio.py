@@ -136,15 +136,6 @@ def server_running() -> bool:
     return True
 
 
-def window_exists(name: str) -> bool:
-    out = run(["list-windows", "-F", "#{window_name}"])
-    return name in [line.strip() for line in out.splitlines()]
-
-
-def new_window(name: str, command: str) -> None:
-    run(["new-window", "-n", name, command])
-
-
 def split_window(target: str, program: str) -> str:
     """Split `target` (window or pane id); return the new pane id.
 

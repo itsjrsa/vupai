@@ -25,7 +25,7 @@ voxpane doctor                                         # check macOS permissions
 
 `voxpane` CLI (entry point `voxpane.cli:main`):
 - `voxpane` - ensure tmux + spawn the voice daemon (detached), then attach (default, no subcommand)
-- `voxpane up` / `voxpane down` - start / stop the daemon (`down` SIGTERMs the pid; also clears a legacy voice window)
+- `voxpane up` / `voxpane down` - start / stop the daemon (`down` SIGTERMs the recorded pid; the daemon is a detached process, not a tmux window)
 - `voxpane reload` - `down` + `ensure_up` in one step; respawns the daemon so source edits take effect (the daemon loads modules once at spawn, so a live one runs stale code). For dogfooding voxpane on itself
 - `voxpane name <name> [pane]` - label a pane (rejects confusable names; defaults to focused)
 - `voxpane autoname [pane]` - assign the next free callsign from the pool to a pane unless already named; driven by the tmux pane-creation hooks (also usable by hand). `<prefix>+R` renames the active pane via this path's sibling `voxpane name`

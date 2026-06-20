@@ -3,18 +3,14 @@ import sys
 import pytest
 
 from voxpane import cli
-from voxpane.tmuxio import TmuxError
 
 
 class FakeTmux:
     """In-memory stand-in for the tmuxio module."""
 
-    def __init__(self, *, server=True, windows=None, focused="%1",
-                 kill_window_raises=False):
+    def __init__(self, *, server=True, focused="%1"):
         self._server = server
-        self.windows = set(windows or [])
         self._focused = focused
-        self._kill_window_raises = kill_window_raises
         self.calls: list[tuple] = []
         self.daemon_spawns: list = []
 
@@ -26,19 +22,6 @@ class FakeTmux:
 
     def set_extended_keys_off(self) -> None:
         self.calls.append(("set_extended_keys_off",))
-
-    def window_exists(self, name: str) -> bool:
-        return name in self.windows
-
-    def new_window(self, name: str, command: str) -> None:
-        self.calls.append(("new_window", name, command))
-        self.windows.add(name)
-
-    def kill_window(self, name: str) -> None:
-        self.calls.append(("kill_window", name))
-        if self._kill_window_raises:
-            raise TmuxError("no window named voice")
-        self.windows.discard(name)
 
     def attach(self) -> None:
         self.calls.append(("attach",))
@@ -62,7 +45,7 @@ class FakeTmux:
 
 @pytest.fixture
 def fake_env(monkeypatch, tmp_path):
-    ft = FakeTmux(server=True, windows=set(), focused="%1")
+    ft = FakeTmux(server=True, focused="%1")
     monkeypatch.setattr(cli, "tmuxio", ft)
     pidfile = tmp_path / "daemon.pid"
     monkeypatch.setattr(cli, "PIDFILE", pidfile)
@@ -81,7 +64,6 @@ def test_up_spawns_daemon_when_not_running(fake_env):
     assert rc == 0
     # The daemon runs as a detached background process, NOT in a tmux window.
     assert ft.daemon_spawns == [True]
-    assert not any(c[0] == "new_window" for c in ft.calls)
     assert ("enable_pane_titles",) in ft.calls
 
 
@@ -131,7 +113,7 @@ def test_up_skips_spawn_when_daemon_already_running(fake_env, monkeypatch):
 
 
 def test_up_starts_server_when_down(monkeypatch, tmp_path):
-    ft = FakeTmux(server=False, windows=set())
+    ft = FakeTmux(server=False)
     monkeypatch.setattr(cli, "tmuxio", ft)
     monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
     monkeypatch.setattr(cli, "_daemon_running", lambda: False)
@@ -320,28 +302,12 @@ def test_down_terminates_and_removes_pidfile(monkeypatch, tmp_path):
     rc = cli.main(["down"])
     assert rc == 0
     assert killed == [(4242, cli.signal.SIGTERM)]
-    # Fix 2: voice window must be killed so `up` can restart the daemon.
-    assert ("kill_window", "voice") in ft.calls
     assert not pidfile.exists()
 
 
-def test_down_with_pidfile_survives_kill_window_error(monkeypatch, tmp_path):
-    # pidfile present; kill_window raises TmuxError (window gone); down must not crash.
-    ft = FakeTmux(server=True, kill_window_raises=True)
-    monkeypatch.setattr(cli, "tmuxio", ft)
-    pidfile = tmp_path / "daemon.pid"
-    pidfile.write_text("9999")
-    monkeypatch.setattr(cli, "PIDFILE", pidfile)
-    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: None)
-    rc = cli.main(["down"])
-    assert rc == 0
-    assert not pidfile.exists()
-
-
-def test_down_kills_orphaned_window_without_pidfile(monkeypatch, tmp_path):
-    # No pidfile (daemon crashed before writing it, or it was removed), but the
-    # voice window may still be alive: down must still tear it down so a later
-    # `up` can recreate the daemon.
+def test_down_without_pidfile_is_noop(monkeypatch, tmp_path):
+    # No pidfile (daemon crashed before writing it, or already stopped): down must
+    # not os.kill anything and must not crash. The daemon owns no tmux window.
     ft = FakeTmux(server=True)
     monkeypatch.setattr(cli, "tmuxio", ft)
     monkeypatch.setattr(cli, "PIDFILE", tmp_path / "missing.pid")
@@ -350,11 +316,10 @@ def test_down_kills_orphaned_window_without_pidfile(monkeypatch, tmp_path):
     rc = cli.main(["down"])
     assert rc == 0
     assert killed == []                        # no pid -> no os.kill
-    assert ("kill_window", "voice") in ft.calls
 
 
 def test_reload_stops_then_restarts_daemon(monkeypatch, tmp_path):
-    # reload = down (SIGTERM + clear pidfile/window) then ensure_up (respawn).
+    # reload = down (SIGTERM + clear pidfile) then ensure_up (respawn).
     ft = FakeTmux(server=True)
     monkeypatch.setattr(cli, "tmuxio", ft)
     pidfile = tmp_path / "daemon.pid"
@@ -370,7 +335,6 @@ def test_reload_stops_then_restarts_daemon(monkeypatch, tmp_path):
     assert rc == 0
     assert killed == [(4242, cli.signal.SIGTERM)]  # old daemon terminated
     assert spawns == [True]                         # fresh daemon spawned
-    assert ("kill_window", "voice") in ft.calls
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,6 @@ def test_defaults_when_no_file(tmp_path: Path) -> None:
     assert cfg.poll_interval == 0.5
     assert cfg.inject_confirm_timeout == 2.0
     assert cfg.inject_poll_interval == 0.05
-    assert cfg.voice_window_name == "voice"
     assert cfg.aliases == {}
 
 
