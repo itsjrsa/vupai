@@ -67,6 +67,9 @@ def fake_env(monkeypatch, tmp_path):
     # `setup` lists mic devices; keep it from shelling out to system_profiler /
     # blocking on stdin. Tests that exercise the mic flow override this.
     monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: [])
+    # Mic pinning probes the device with `rec`; default to "usable" so the
+    # existing pin tests stay hermetic. Tests that exercise the probe override it.
+    monkeypatch.setattr(cli.audio, "probe_capture", lambda *a, **k: None)
     # Don't launch a real background process or probe a real pid in unit tests.
     monkeypatch.setattr(cli, "_daemon_running", lambda: False)
     monkeypatch.setattr(cli, "_spawn_daemon", lambda: ft.daemon_spawns.append(True))
@@ -805,6 +808,48 @@ def test_mic_select_by_name_persists(fake_env, monkeypatch, capsys):
     rc = cli.main(["mic", "airpods pro"])  # case-insensitive
     assert rc == 0
     assert saved["name"] == "AirPods Pro"
+
+
+def test_mic_select_refuses_unusable_device(fake_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: _devs())
+    monkeypatch.setattr(
+        cli.audio, "probe_capture",
+        lambda name, **k: "cannot record from 'AirPods Pro': name collision")
+    wrote = []
+    monkeypatch.setattr(cli, "set_mic_device", lambda name: wrote.append(name))
+    rc = cli.main(["mic", "1"])
+    assert rc == 1
+    assert wrote == []  # not pinned
+    out = capsys.readouterr().out
+    assert "Cannot use 'AirPods Pro'" in out
+    assert "--force" in out
+
+
+def test_mic_force_pins_despite_probe_failure(fake_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: _devs())
+    probed = []
+    monkeypatch.setattr(
+        cli.audio, "probe_capture",
+        lambda name, **k: probed.append(name) or "broken")
+    saved = {}
+    monkeypatch.setattr(
+        cli, "set_mic_device", lambda name: saved.setdefault("name", name))
+    rc = cli.main(["mic", "1", "--force"])
+    assert rc == 0
+    assert saved["name"] == "AirPods Pro"
+    assert probed == []  # --force skips the probe entirely
+
+
+def test_mic_default_skips_probe(fake_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: _devs())
+    probed = []
+    monkeypatch.setattr(
+        cli.audio, "probe_capture",
+        lambda name, **k: probed.append(name) or "should not be called")
+    monkeypatch.setattr(cli, "set_mic_device", lambda name: None)
+    rc = cli.main(["mic", "default"])
+    assert rc == 0
+    assert probed == []  # clearing the pin never probes
 
 
 def test_mic_default_clears_pin(fake_env, monkeypatch, capsys):

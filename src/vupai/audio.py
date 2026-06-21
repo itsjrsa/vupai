@@ -13,8 +13,11 @@ the device ONCE (CLI listing, daemon startup) - never per key-press.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -79,3 +82,64 @@ def resolve_device(configured: str, *, runner=None) -> tuple[str, str | None]:
     if configured in names:
         return configured, None
     return "", f"configured mic {configured!r} not found; using system default"
+
+
+def _default_capture_probe(device: str) -> tuple[int, str, int]:
+    """Record a brief clip with `rec` and report (returncode, stderr, wav bytes).
+
+    Mirrors recorder.py's argv so the probe exercises the same path the daemon
+    will. An empty `device` records from the system default; otherwise AUDIODEV
+    pins the named CoreAudio device. The clip is short (the probe only needs to
+    confirm the stream opens and produces samples) and is always cleaned up.
+    """
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp.close()
+    path = Path(tmp.name)
+    env = None
+    if device:
+        env = {**os.environ, "AUDIODEV": device}
+    try:
+        proc = subprocess.run(
+            ["rec", "-q", "-c", "1", "-r", "16000", "-b", "16",
+             str(path), "trim", "0", "0.4"],
+            capture_output=True, text=True, env=env, timeout=15,
+        )
+        size = path.stat().st_size if path.exists() else 0
+        return proc.returncode, proc.stderr, size
+    finally:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def probe_capture(device: str, *, runner=None) -> str | None:
+    """Verify sox can actually capture audio from `device`.
+
+    Returns None when a brief recording succeeds, else a human-readable reason
+    the device is unusable. This catches failures that mere enumeration cannot:
+    a name that collides with an output-only device (some USB mics expose a
+    speaker and a mic under the *same* name, and sox's AUDIODEV name-match grabs
+    the output), a disconnected device, a muted input, or a missing Microphone
+    permission. `runner(device) -> (returncode, stderr, wav_bytes)` is injectable
+    for tests. An empty `device` probes the system default.
+    """
+    from .recorder import MIN_WAV_BYTES
+
+    runner = runner if runner is not None else _default_capture_probe
+    label = device or "system default"
+    try:
+        returncode, stderr, size = runner(device)
+    except Exception as exc:  # probe must never crash the caller
+        return f"could not probe {label!r}: {exc}"
+    if returncode != 0:
+        lines = [ln for ln in (stderr or "").splitlines() if ln.strip()]
+        detail = lines[-1].strip() if lines else f"rec exited {returncode}"
+        return f"cannot record from {label!r}: {detail}"
+    if size < MIN_WAV_BYTES:
+        return (
+            f"recording from {label!r} produced no audio ({size} bytes); "
+            "the device may share its name with an output, be muted, or lack "
+            "Microphone permission"
+        )
+    return None

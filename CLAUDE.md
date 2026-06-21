@@ -6,7 +6,7 @@ the focused one by default, or an agent addressed by name ("Nova, run the tests"
 
 ## Status
 
-v1 implemented and on `master` (317 unit tests pass, `ruff` clean). Validated by
+v1 implemented and on `master` (400 unit tests pass, `ruff` clean). Validated by
 **unit tests only** - the `@integration` (real tmux) and `@slow` (real Parakeet
 model + mic) suites and the live daemon must run on a macOS Apple-Silicon machine.
 The design spec + implementation plan live under `docs/superpowers/`
@@ -31,7 +31,7 @@ vupai setup                                          # interactive: probe + deep
 - `vupai name <name> [pane]` - label a pane (rejects confusable names; defaults to focused)
 - `vupai autoname [pane]` - assign the next free callsign from the pool to a pane unless already named; driven by the tmux pane-creation hooks (also usable by hand). `<prefix>+R` renames the active pane via this path's sibling `vupai name`
 - `vupai status` - list panes, daemon pid + log path, permission state
-- `vupai mic [index|name|default]` - no arg lists CoreAudio **input** devices (marks the system default and the current pin); an index/exact-name pins that device into `config.toml` via `config.set_mic_device` (a merge writer that preserves comments/other keys), the literal `default` clears the pin. Selection persists; a running daemon needs `vupai reload` to apply it. Enumeration is `audio.list_input_devices` (`system_profiler -json SPAudioDataType`, ~1s).
+- `vupai mic [index|name|default] [--force]` - no arg lists CoreAudio **input** devices (marks the system default and the current pin); an index/exact-name pins that device into `config.toml` via `config.set_mic_device` (a merge writer that preserves comments/other keys), the literal `default` clears the pin. Before pinning a named device it runs `audio.probe_capture` (a 0.4s `rec` with `AUDIODEV` set) and **refuses an unusable device** (exit 1) rather than letting it silently yield "no audio captured" at speech time; `--force` pins anyway, and `default` (clearing the pin) skips the probe. The probe catches the failure mode where a USB mic exposes a speaker and a mic under the **same CoreAudio name** and sox's `AUDIODEV` name-match grabs the output (`can not get audio device properties`), plus disconnected/muted inputs and missing Microphone permission. Selection persists; a running daemon needs `vupai reload` to apply it. Enumeration is `audio.list_input_devices` (`system_profiler -json SPAudioDataType`, ~1s).
 - `vupai setup` - interactive permission bootstrap: detects the terminal app from `TERM_PROGRAM`, probes each permission (which triggers the macOS prompts), then `open`s the exact Settings deep-link pane for any that are missing and prints the `tccutil reset` recovery command. **Cannot grant on the user's behalf** - macOS TCC requires a human click; setup removes the navigation, not the consent. Deep-link/app-detect/open helpers live in `permissions.py` (`terminal_app`, `fixes`, `open_settings_pane`), injectable for tests. **First run only** (no `config.toml` yet), it also prompts for journaling consent (`journal_enabled` + `journal_keep_audio`) and writes a starter config via `config.write_journal_config`; once a config file exists the prompt is skipped so re-running to confirm permissions never re-asks. It **always** runs a re-runnable mic-selection step (`_prompt_mic_setup`; bare Enter keeps the current device).
 - `vupai _daemon` - hidden; the long-running daemon process (spawned detached, logs to `~/.config/vupai/daemon.log`)
 
@@ -128,7 +128,7 @@ Invariants) and talks to tmux purely via the CLI.
   so units run with fakes - no real tmux/mic/model in the unit suite.
 - **Addressing mode (`addressing` config):** `button` (default) uses two keys:
   the `hotkey` (dictation) injects verbatim into the focused pane (no parse, no
-  name routing), and the `command_hotkey` (system, default Left-Option) runs the
+  name routing), and the `command_hotkey` (system, default Right-Command) runs the
   command layer with `addressing="button"` (no control word; a non-command falls
   through to route+inject and is never swallowed as `unknown`). `keyword` is the
   legacy single-PTT-key mode and **has no command layer** - only the spoken
@@ -202,7 +202,7 @@ by voice via the `programs` map
 multi-pane create
 tiles the window · addressing mode is configurable (two-key
 `button` default vs legacy single-key `keyword`, which has no command layer); the
-dictation key keeps `alt_r` (muscle memory) and the system key defaults to `alt_l`.
+dictation key keeps `alt_r` (muscle memory) and the system key defaults to `cmd_r`.
 
 ## Conventions
 

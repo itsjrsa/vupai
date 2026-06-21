@@ -71,3 +71,38 @@ def test_resolve_device_absent_falls_back_to_default_with_warning():
     assert name == ""
     assert "Ghost Mic" in warning
     assert "system default" in warning
+
+
+def test_probe_capture_success_returns_none():
+    assert audio.probe_capture(
+        "KIMU PRO", runner=lambda d: (0, "", 64044)) is None
+
+
+def test_probe_capture_nonzero_returncode_reports_stderr_tail():
+    def runner(device):
+        return 1, "rec WARN something\nrec FAIL formats: can not get audio device properties\n", 0
+
+    err = audio.probe_capture("KIMU PRO", runner=runner)
+    assert "KIMU PRO" in err
+    assert "can not get audio device properties" in err
+
+
+def test_probe_capture_empty_wav_reports_no_audio():
+    err = audio.probe_capture("KIMU PRO", runner=lambda d: (0, "", 44))
+    assert "no audio" in err
+    assert "44 bytes" in err
+
+
+def test_probe_capture_runner_exception_is_caught():
+    def boom(device):
+        raise OSError("rec missing")
+
+    err = audio.probe_capture("KIMU PRO", runner=boom)
+    assert "rec missing" in err
+
+
+def test_probe_capture_passes_device_to_runner():
+    seen = []
+    audio.probe_capture("Zulu Microphone",
+                        runner=lambda d: seen.append(d) or (0, "", 9000))
+    assert seen == ["Zulu Microphone"]

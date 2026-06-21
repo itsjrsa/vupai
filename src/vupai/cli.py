@@ -445,6 +445,17 @@ def _cmd_mic(args: argparse.Namespace) -> int:
     if error:
         print(error)
         return 1
+    # Probe a specific device before pinning so an unusable one (e.g. a name that
+    # collides with an output) fails loudly here instead of silently yielding
+    # "no audio captured" at speech time. Clearing the pin ("default") needs no
+    # probe. `--force` pins anyway.
+    if name and not getattr(args, "force", False):
+        probe_error = audio.probe_capture(name)
+        if probe_error:
+            print(f"Cannot use {name!r}: {probe_error}")
+            print("Pick another device, or `vupai mic <name> --force` to pin "
+                  "it anyway.")
+            return 1
     set_mic_device(name)
     label = name if name else "system default"
     print(f"Mic set to: {label}")
@@ -478,6 +489,11 @@ def _prompt_mic_setup(*, reader=None, runner=None, config_path: Path | None = No
     if error:
         print(f"  {error} Keeping {current}.")
         return
+    if name:
+        probe_error = audio.probe_capture(name)
+        if probe_error:
+            print(f"  Cannot use {name!r}: {probe_error}. Keeping {current}.")
+            return
     set_mic_device(name, path=config_path)
     print(f"  Mic set to: {name if name else 'system default'}.")
 
@@ -650,6 +666,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_mic = sub.add_parser(
         "mic", help="list input devices, or pin one (index|name|default)")
     p_mic.add_argument("selection", nargs="?", default=None)
+    p_mic.add_argument(
+        "--force", action="store_true",
+        help="pin even if the capture probe fails")
     p_mic.set_defaults(func=_cmd_mic)
 
     sub.add_parser("doctor").set_defaults(func=_cmd_doctor)
