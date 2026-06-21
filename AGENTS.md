@@ -4,9 +4,12 @@ Push-to-talk voice control over a tmux-based multi-agent workflow on macOS.
 Hold a hotkey, speak, and the transcript is injected into the right tmux pane:
 the focused one by default, or an agent addressed by name ("Nova, run the tests").
 
+> This file is the single source of truth for all AI coding agents (Claude Code,
+> Codex, opencode, Cursor, Aider, …). `CLAUDE.md` is a stub that points here.
+
 ## Status
 
-v1 implemented and on `master` (400 unit tests pass, `ruff` clean). Validated by
+v1 implemented and on `master` (448 unit tests pass, `ruff` clean). Validated by
 **unit tests only** - the `@integration` (real tmux) and `@slow` (real Parakeet
 model + mic) suites and the live daemon must run on a macOS Apple-Silicon machine.
 The design spec + implementation plan live under `docs/superpowers/`
