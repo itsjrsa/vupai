@@ -43,6 +43,27 @@ limitations / deferred".
 
 - **Codex / OpenCode pane support.** _(deferred)_ v1 is Claude-Code-only by
   design, pending those tools' send-keys submit bugs.
+- **Linux (Ubuntu) support.** Architecture is portable (tmux-CLI core, injected
+  collaborators, `Transcriber` Protocol seam); two real blockers + one runtime
+  risk. Scoped tasks:
+  - **ASR — primary blocker.** `parakeet-mlx` requires MLX (Apple-Silicon Metal);
+    it won't install on Linux. Add platform markers to `pyproject.toml`
+    (`parakeet-mlx; sys_platform == 'darwin'`,
+    `faster-whisper; sys_platform == 'linux'`) and ship a `faster-whisper`
+    `Transcriber` impl behind the existing Protocol (asr.py:15-18). Bonus: its
+    `initial_prompt` closes the "real name biasing" deferred item above.
+  - **Permissions — UX blocker, not functional.** Linux has no TCC, so
+    pynput/sox/tmux just work; but `permissions.py` (AXIsProcessTrusted via
+    pyobjc, `open x-apple.systempreferences:` deep-links) and `cli.py`
+    (`brew install`, `tccutil reset`) print misleading macOS advice. Guard with
+    `sys.platform != "darwin"`: no-op the TCC probes, swap `open`->`xdg-open`,
+    `brew`->`apt`.
+  - **Wayland hotkey risk — must test on real hardware.** pynput's global
+    listener wants X11; Wayland may silently eat key events (analogous to the
+    macOS Input-Monitoring gotcha). X11 sessions expected fine. Verify before
+    promising support.
+  - recorder (`sox rec`), tmuxio, injector are already portable (only the
+    install hint differs).
 
 ## Polish / infra
 

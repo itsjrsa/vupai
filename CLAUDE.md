@@ -171,7 +171,7 @@ Invariants) and talks to tmux purely via the CLI.
   deliberately avoided (it over-matches real words like "plans"/"lanes"), so the
   sets list only known mis-transcriptions and OMIT real-word lookalikes. Current
   sets: `_UNIT_ALIASES` (pain/pen/paint -> pane; windo* -> window), `_CREATE_VERB_ALIASES`
-  (ate/hate/eight/crate), `_CLOSE_VERB_ALIASES` (clothes/cloze),
+  (ate/hate/eight/crate/creator), `_CLOSE_VERB_ALIASES` (clothes/cloze/rose),
   `_SWAP_VERB_ALIASES` (swab/swamp), `_ZOOM_VERB_ALIASES` (zoo). **Precision over
   recall, scaled to blast radius:** destructive verbs keep tighter sets, and every
   alias is safe by construction because the parse still requires its operands (create
