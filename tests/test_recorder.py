@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from voxpane.recorder import Recorder
+from vupai.recorder import Recorder
 
 
 class FakePopen:

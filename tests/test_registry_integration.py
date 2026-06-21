@@ -4,8 +4,8 @@ import uuid
 
 import pytest
 
-from voxpane import tmuxio
-from voxpane.registry import PaneRegistry
+from vupai import tmuxio
+from vupai.registry import PaneRegistry
 
 pytestmark = pytest.mark.integration
 
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.integration
 def tmux_session():
     if shutil.which("tmux") is None:
         pytest.skip("tmux not installed")
-    session = "voxpane-it-" + uuid.uuid4().hex[:8]
+    session = "vupai-it-" + uuid.uuid4().hex[:8]
     # Detached session so the test never grabs the terminal.
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", session, "-n", "main"],
@@ -28,10 +28,10 @@ def tmux_session():
 
 def test_registry_lists_real_pane(tmux_session):
     session = tmux_session
-    # Give the single pane a deterministic voice name (the @voxpane_name option,
+    # Give the single pane a deterministic voice name (the @vupai_name option,
     # which is what the registry reads - pane_title is owned by the running app).
     subprocess.run(
-        ["tmux", "set", "-p", "-t", f"{session}:main.0", "@voxpane_name", "backend"],
+        ["tmux", "set", "-p", "-t", f"{session}:main.0", "@vupai_name", "backend"],
         check=True,
     )
 

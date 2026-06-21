@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from voxpane.asr import ParakeetTranscriber, Transcriber, model_cached
+from vupai.asr import ParakeetTranscriber, Transcriber, model_cached
 
 
 # ---- A fake Transcriber other layers (daemon, etc.) can depend on ----
@@ -50,7 +50,7 @@ class _FakeModel:
 
 @pytest.fixture
 def patched_parakeet(monkeypatch):
-    """Patch voxpane.asr.from_pretrained; record how many times it loads."""
+    """Patch vupai.asr.from_pretrained; record how many times it loads."""
     state = {"loads": 0, "last_model_id": None, "model": _FakeModel("  routed text \n")}
 
     def fake_from_pretrained(model_id: str):
@@ -58,7 +58,7 @@ def patched_parakeet(monkeypatch):
         state["last_model_id"] = model_id
         return state["model"]
 
-    monkeypatch.setattr("voxpane.asr.from_pretrained", fake_from_pretrained)
+    monkeypatch.setattr("vupai.asr.from_pretrained", fake_from_pretrained)
     return state
 
 
@@ -120,7 +120,7 @@ def test_transcribe_falls_back_when_model_rejects_hotwords(monkeypatch) -> None:
             return _FakeResult("hi")
 
     model = NoHotwordsModel()
-    monkeypatch.setattr("voxpane.asr.from_pretrained", lambda model_id: model)
+    monkeypatch.setattr("vupai.asr.from_pretrained", lambda model_id: model)
     t = ParakeetTranscriber("x")
     out = t.transcribe(Path("/tmp/a.wav"), hints=["z"])
     assert out == "hi"
@@ -143,7 +143,7 @@ def test_transcribe_caches_hotword_unsupported(monkeypatch) -> None:
             return _FakeResult("hi")
 
     model = CountingModel()
-    monkeypatch.setattr("voxpane.asr.from_pretrained", lambda model_id: model)
+    monkeypatch.setattr("vupai.asr.from_pretrained", lambda model_id: model)
     t = ParakeetTranscriber("x")
     t.transcribe(Path("/tmp/a.wav"), hints=["z"])
     t.transcribe(Path("/tmp/b.wav"), hints=["z"])
@@ -155,7 +155,7 @@ def test_transcribe_caches_hotword_unsupported(monkeypatch) -> None:
 def test_warm_warns_on_multilingual_model(patched_parakeet, caplog) -> None:
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="voxpane.asr"):
+    with caplog.at_level(logging.WARNING, logger="vupai.asr"):
         ParakeetTranscriber("mlx-community/parakeet-tdt-0.6b-v3").warm()
     assert any("multilingual" in r.message.lower() for r in caplog.records)
 
@@ -163,7 +163,7 @@ def test_warm_warns_on_multilingual_model(patched_parakeet, caplog) -> None:
 def test_warm_no_warning_on_english_model(patched_parakeet, caplog) -> None:
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="voxpane.asr"):
+    with caplog.at_level(logging.WARNING, logger="vupai.asr"):
         ParakeetTranscriber("mlx-community/parakeet-tdt-0.6b-v2").warm()
     assert not any("multilingual" in r.message.lower() for r in caplog.records)
 

@@ -1,6 +1,6 @@
-from voxpane.commands import Command, execute_command, handle_command, parse_command
-from voxpane.config import Config
-from voxpane.registry import Pane
+from vupai.commands import Command, execute_command, handle_command, parse_command
+from vupai.config import Config
+from vupai.registry import Pane
 
 
 class FakeTmux:
@@ -55,7 +55,7 @@ def _pane(id, name, window_id="@1", active=False):
 
 
 def test_wrap_agent_command_drops_to_shell_on_exit():
-    from voxpane.commands import wrap_agent_command
+    from vupai.commands import wrap_agent_command
     # A real program is wrapped so exiting it re-execs an interactive shell.
     assert wrap_agent_command("claude") == "claude; exec ${SHELL:-/bin/sh} -i"
     # Empty (plain-shell default) is left untouched.
@@ -63,7 +63,7 @@ def test_wrap_agent_command_drops_to_shell_on_exit():
 
 
 def test_execute_create_splits_names_and_tiles(monkeypatch):
-    monkeypatch.setattr("voxpane.commands.shutil.which", lambda c: "/bin/claude")
+    monkeypatch.setattr("vupai.commands.shutil.which", lambda c: "/bin/claude")
     focused = _pane("%0", "%0", active=True)  # unnamed focused pane
     reg = FakeRegistry([focused], focused=focused)
     io = FakeTmux(new_ids=["%1", "%2"])
@@ -80,7 +80,7 @@ def test_execute_create_splits_names_and_tiles(monkeypatch):
 def test_execute_create_retiles_after_every_split(monkeypatch):
     # Re-tile after each split so tmux redistributes space and never hits
     # "no space for new pane" mid-create (regression: was tiled only once).
-    monkeypatch.setattr("voxpane.commands.shutil.which", lambda c: "/bin/claude")
+    monkeypatch.setattr("vupai.commands.shutil.which", lambda c: "/bin/claude")
     focused = _pane("%0", "%0", active=True)
     reg = FakeRegistry([focused], focused=focused)
     io = FakeTmux(new_ids=["%1", "%2", "%3", "%4", "%5", "%6", "%7"])
@@ -97,7 +97,7 @@ def test_execute_create_retiles_after_every_split(monkeypatch):
 def test_execute_create_falls_back_to_shell_when_program_missing(monkeypatch):
     # A named program that isn't on PATH degrades to a shell (panes still get
     # created + named), with a note instead of spawning panes that exit at once.
-    monkeypatch.setattr("voxpane.commands.shutil.which", lambda c: None)
+    monkeypatch.setattr("vupai.commands.shutil.which", lambda c: None)
     focused = _pane("%0", "%0", active=True)
     reg = FakeRegistry([focused], focused=focused)
     io = FakeTmux(new_ids=["%1"])
@@ -334,7 +334,7 @@ def test_parse_create_misheard_with_program():
 
 
 def test_resolve_unit_exact_and_aliases():
-    from voxpane.commands import _resolve_unit
+    from vupai.commands import _resolve_unit
     assert _resolve_unit("panes") == "pane"     # exact path still wins
     assert _resolve_unit("windows") == "window"
     assert _resolve_unit("paints") == "pane"     # alias
@@ -344,7 +344,7 @@ def test_resolve_unit_exact_and_aliases():
 def test_resolve_unit_rejects_real_word_lookalikes():
     # Precision guard: real English words that merely rhyme must NOT be units,
     # or "create three lanes"/"create four plans" would spawn panes.
-    from voxpane.commands import _resolve_unit
+    from vupai.commands import _resolve_unit
     for word in ("panel", "panels", "plane", "planes", "plain", "lanes", "plans"):
         assert _resolve_unit(word) is None
 

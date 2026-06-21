@@ -1,10 +1,10 @@
-# voxpane - ideas & backlog
+# vupai - ideas & backlog
 
 Loose, unprioritized backlog of potential directions. Not commitments. Items
 marked _(deferred)_ are already called out in `CLAUDE.md` under "Known
 limitations / deferred".
 
-## Closing the loop (voxpane is input-only today)
+## Closing the loop (vupai is input-only today)
 
 - **Audio / TTS feedback.** Confirmation chime on successful inject, a distinct
   error tone, and optional spoken read-back of an agent's last output line. TTS

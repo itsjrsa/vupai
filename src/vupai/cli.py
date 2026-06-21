@@ -1,4 +1,4 @@
-"""voxpane CLI entry point — subcommand dispatch."""
+"""vupai CLI entry point — subcommand dispatch."""
 from __future__ import annotations
 
 import argparse
@@ -11,19 +11,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-from voxpane import audio, tmuxio
-from voxpane.asr import ParakeetTranscriber, model_cached
-from voxpane.commands import _CLOSE_VERBS, _CREATE_VERBS, wrap_agent_command
-from voxpane.config import (
+from vupai import audio, tmuxio
+from vupai.asr import ParakeetTranscriber, model_cached
+from vupai.commands import _CLOSE_VERBS, _CREATE_VERBS, wrap_agent_command
+from vupai.config import (
     CONFIG_PATH,
     Config,
     load_config,
     set_mic_device,
     write_journal_config,
 )
-from voxpane.daemon import Daemon
-from voxpane.feedback import Feedback
-from voxpane.permissions import (
+from vupai.daemon import Daemon
+from vupai.feedback import Feedback
+from vupai.permissions import (
     check_permissions,
     fixes,
     hints,
@@ -31,13 +31,13 @@ from voxpane.permissions import (
     open_settings_pane,
     terminal_app,
 )
-from voxpane.recorder import Recorder
-from voxpane.registry import PaneRegistry
-from voxpane.router import name_collides, next_callsign
-from voxpane.tmuxio import TmuxError
+from vupai.recorder import Recorder
+from vupai.registry import PaneRegistry
+from vupai.router import name_collides, next_callsign
+from vupai.tmuxio import TmuxError
 
-PIDFILE: Path = Path.home() / ".config" / "voxpane" / "daemon.pid"
-DAEMON_LOG: Path = Path.home() / ".config" / "voxpane" / "daemon.log"
+PIDFILE: Path = Path.home() / ".config" / "vupai" / "daemon.pid"
+DAEMON_LOG: Path = Path.home() / ".config" / "vupai" / "daemon.log"
 
 
 def _daemon_running() -> bool:
@@ -65,7 +65,7 @@ def _spawn_daemon() -> None:
     Monitoring + Accessibility. Inside tmux the responsible process is the long-
     lived tmux server (which lacks those grants), so the hotkey silently never
     fires. Spawned here, the daemon's responsible process is the terminal app
-    that launched `voxpane`, which the user already granted - so the hotkey works.
+    that launched `vupai`, which the user already granted - so the hotkey works.
     """
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
     # Truncate: each daemon start gets a fresh log so stale tracebacks from a
@@ -73,7 +73,7 @@ def _spawn_daemon() -> None:
     # inherited by the child and our copy is released when this process exits.
     log = open(DAEMON_LOG, "w")  # noqa: SIM115 - handed to the child process
     proc = subprocess.Popen(
-        [sys.executable, "-m", "voxpane", "_daemon"],
+        [sys.executable, "-m", "vupai", "_daemon"],
         stdout=log,
         stderr=subprocess.STDOUT,
         start_new_session=True,  # detach from our controlling terminal
@@ -85,10 +85,10 @@ def _spawn_daemon() -> None:
 def _self_cmd() -> str:
     """How tmux hooks/bindings should re-invoke this CLI.
 
-    Uses the absolute venv interpreter so `voxpane` need not be on tmux's PATH
+    Uses the absolute venv interpreter so `vupai` need not be on tmux's PATH
     (run-shell executes via /bin/sh, which lacks the venv activation).
     """
-    return f"{sys.executable} -m voxpane"
+    return f"{sys.executable} -m vupai"
 
 
 def _autoname_unnamed_panes() -> None:
@@ -119,7 +119,7 @@ def _autoname_unnamed_panes() -> None:
 def _initial_pane_command(cfg: Config) -> str:
     """Program for the session's first pane: the agent if it's on PATH, else a shell.
 
-    voxpane is agent-first - the initial pane runs `pane_command` (the agentic
+    vupai is agent-first - the initial pane runs `pane_command` (the agentic
     tool, e.g. "claude") so a fresh session opens with an agent ready to address.
     But `new-session` with a command that exits at once would kill the session
     (no windows remain), so an agent that isn't installed degrades to a plain
@@ -138,7 +138,7 @@ def ensure_up() -> None:
         # Start a detached server. NOTE: tmuxio.run() already prepends "tmux",
         # so the argv must NOT include it again. Open the initial pane on the
         # agent (agent-first); fall back to a shell if it isn't installed.
-        argv = ["new-session", "-d", "-s", "voxpane"]
+        argv = ["new-session", "-d", "-s", "vupai"]
         prog = _initial_pane_command(cfg)
         if prog:
             # Single arg: tmux runs it through the shell, so the wrapper's
@@ -163,7 +163,7 @@ def ensure_up() -> None:
         # daemon, which blocks warm() *before* the hotkey listener starts - so
         # the hotkey looks dead until it finishes, with output buried in the
         # daemon log. Warn up front so a slow cold start isn't mistaken for a
-        # broken hotkey. (Run `voxpane setup` to download it visibly first.)
+        # broken hotkey. (Run `vupai setup` to download it visibly first.)
         if not model_cached(cfg.model_id):
             print("First run: the daemon is downloading the speech model "
                   "(~600MB, one time).")
@@ -183,7 +183,7 @@ def _cmd_up(args: argparse.Namespace) -> int:
 
 def _cmd_default(args: argparse.Namespace) -> int:
     # `--reload` respawns the daemon first so source edits take effect, then
-    # attaches - collapsing the `voxpane reload && voxpane` dogfooding loop.
+    # attaches - collapsing the `vupai reload && vupai` dogfooding loop.
     if getattr(args, "reload", False):
         _cmd_down(args)
     ensure_up()
@@ -214,9 +214,9 @@ def _cmd_down(args: argparse.Namespace) -> int:
 def _cmd_reload(args: argparse.Namespace) -> int:
     """Stop a running daemon, then start a fresh one so code changes take effect.
 
-    The daemon loads voxpane's modules once at spawn time, so edits to the source
+    The daemon loads vupai's modules once at spawn time, so edits to the source
     are invisible until it is respawned. `reload` is `down` + `ensure_up` in a
-    single step for the edit-test loop while dogfooding voxpane on itself.
+    single step for the edit-test loop while dogfooding vupai on itself.
     """
     _cmd_down(args)
     ensure_up()
@@ -319,8 +319,8 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     model_ready = model_cached(cfg.model_id)
     if not model_ready:
         print(f"Speech model not downloaded ({cfg.model_id}); the first "
-              "`voxpane` launch fetches ~600MB before the hotkey responds. "
-              "Run `voxpane setup` to download it now.")
+              "`vupai` launch fetches ~600MB before the hotkey responds. "
+              "Run `vupai setup` to download it now.")
     if not missing and not hint_lines and model_ready:
         print("All checks passed.")
     return 0
@@ -344,7 +344,7 @@ def _ensure_model_ready(cfg: Config) -> None:
         ParakeetTranscriber(cfg.model_id).warm()
     except Exception as exc:  # network/cache errors must not abort setup
         print(f"Speech model: download did not complete ({exc}).")
-        print("  It will be retried automatically on first `voxpane` launch.")
+        print("  It will be retried automatically on first `vupai` launch.")
         return
     print("Speech model: downloaded and ready.")
 
@@ -384,7 +384,7 @@ def _prompt_journal_setup(*, reader=None, config_path: Path | None = None) -> No
 
 
 def _format_device_line(index, device, *, selected: str, prefix: bool) -> str:
-    """Render one input-device row for `voxpane mic` / the setup prompt."""
+    """Render one input-device row for `vupai mic` / the setup prompt."""
     marks = []
     if device.is_default:
         marks.append("default")
@@ -421,7 +421,7 @@ def _cmd_mic(args: argparse.Namespace) -> int:
 
     No argument lists devices (marking the system default and current pin). An
     index, exact name, or the literal `default` (to unpin) persists the choice;
-    a running daemon must `voxpane reload` to pick it up.
+    a running daemon must `vupai reload` to pick it up.
     """
     devices = audio.list_input_devices()
     cfg = load_config()
@@ -435,10 +435,10 @@ def _cmd_mic(args: argparse.Namespace) -> int:
                 i, device, selected=cfg.mic_device, prefix=True))
         if cfg.mic_device:
             print(f"\nPinned: {cfg.mic_device}. "
-                  "`voxpane mic default` to use the system default.")
+                  "`vupai mic default` to use the system default.")
         else:
             print("\nUsing the system default. "
-                  "`voxpane mic <index|name>` to pin one.")
+                  "`vupai mic <index|name>` to pin one.")
         return 0
 
     name, error = _resolve_mic_selection(args.selection, devices)
@@ -449,7 +449,7 @@ def _cmd_mic(args: argparse.Namespace) -> int:
     label = name if name else "system default"
     print(f"Mic set to: {label}")
     if _daemon_running():
-        print("Run `voxpane reload` for the daemon to pick it up.")
+        print("Run `vupai reload` for the daemon to pick it up.")
     return 0
 
 
@@ -492,7 +492,7 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     for pkg in missing:
         print(f"{pkg}: not found on PATH - install it with `brew install {pkg}`")
     if missing:
-        print("Install the tool(s) above, then re-run `voxpane setup`.")
+        print("Install the tool(s) above, then re-run `vupai setup`.")
         return 1
 
     # First-run only: capture journaling consent before anything is recorded.
@@ -512,7 +512,7 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     status = check_permissions()
     pending = fixes(status)
     if not pending:
-        print("All permissions granted. You're ready - run `voxpane`.")
+        print("All permissions granted. You're ready - run `vupai`.")
         return 0
 
     print(f"\n{len(pending)} permission(s) still needed - "
@@ -523,7 +523,7 @@ def _cmd_setup(args: argparse.Namespace) -> int:
             print(f"    if {app.name} is missing or stuck off, reset and retry:")
             print(f"      tccutil reset {fix.reset_service} {app.bundle_id}")
         open_settings_pane(fix.url)
-    print("\nAfter enabling them, re-run `voxpane setup` to confirm.")
+    print("\nAfter enabling them, re-run `vupai setup` to confirm.")
     return 1
 
 
@@ -538,7 +538,7 @@ def _voice_commands_text(cfg: Config) -> str:
     close_alts = " / ".join(_CLOSE_VERBS[1:])  # row label is the first verb already
     programs = " / ".join(sorted(cfg.programs)) or "(none)"
     slash_verbs = " / ".join(sorted(cfg.slash_commands)) or "(none)"
-    lines = ["voxpane voice commands", ""]
+    lines = ["vupai voice commands", ""]
 
     if cfg.addressing != "button":
         # Keyword mode is a single key with no command layer: dictation, name
@@ -608,7 +608,7 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     cfg = load_config()
     device, warning = audio.resolve_device(cfg.mic_device)
     if warning:
-        logging.getLogger("voxpane.recorder").warning(warning)
+        logging.getLogger("vupai.recorder").warning(warning)
     recorder = Recorder(sample_rate=cfg.sample_rate, device=device)
     transcriber = ParakeetTranscriber(cfg.model_id)
     registry = PaneRegistry()
@@ -622,7 +622,7 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="voxpane")
+    parser = argparse.ArgumentParser(prog="vupai")
     parser.set_defaults(func=_cmd_default)
     parser.add_argument(
         "--reload",
@@ -663,7 +663,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Hidden: internal entrypoint the voice window runs; not shown in --help.
     # Registered directly in the name map rather than via add_parser so it
     # never appears in format_help() output.
-    hidden = argparse.ArgumentParser(prog="voxpane _daemon")
+    hidden = argparse.ArgumentParser(prog="vupai _daemon")
     hidden.set_defaults(func=_cmd_daemon, command="_daemon")
     sub._name_parser_map["_daemon"] = hidden
 

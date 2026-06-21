@@ -1,7 +1,7 @@
 import pytest
 
-from voxpane.registry import Pane
-from voxpane.router import (
+from vupai.registry import Pane
+from vupai.router import (
     CALLSIGNS,
     name_collides,
     next_callsign,

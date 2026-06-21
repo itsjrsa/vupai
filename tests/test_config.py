@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from voxpane.config import (
+from vupai.config import (
     Config,
     load_config,
     set_mic_device,
@@ -24,7 +24,7 @@ def test_defaults_when_no_file(tmp_path: Path) -> None:
 def test_default_when_path_is_none(monkeypatch, tmp_path: Path) -> None:
     # path=None falls back to CONFIG_PATH; point that at a missing file.
     monkeypatch.setattr(
-        "voxpane.config.CONFIG_PATH", tmp_path / "missing" / "config.toml"
+        "vupai.config.CONFIG_PATH", tmp_path / "missing" / "config.toml"
     )
     cfg = load_config(None)
     assert cfg == Config()
@@ -164,7 +164,7 @@ def test_set_mic_device_merges_preserving_other_keys(tmp_path: Path) -> None:
     assert c.journal_enabled is False
     assert c.journal_keep_audio is True
     # comments preserved
-    assert "# voxpane config" in p.read_text()
+    assert "# vupai config" in p.read_text()
 
 
 def test_set_mic_device_replaces_existing_value(tmp_path: Path) -> None:

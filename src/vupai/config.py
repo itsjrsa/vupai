@@ -1,4 +1,4 @@
-"""Configuration model and loader for voxpane."""
+"""Configuration model and loader for vupai."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ class Config:
     model_id: str = "mlx-community/parakeet-tdt-0.6b-v2"
     sample_rate: int = 16000
     # CoreAudio input device name (sox AUDIODEV). "" = macOS system default.
-    # Set via `voxpane mic`; resolved at daemon startup with fallback to default
+    # Set via `vupai mic`; resolved at daemon startup with fallback to default
     # if the device is absent (see audio.resolve_device).
     mic_device: str = ""
     fuzzy_cutoff: int = 82                 # rapidfuzz score 0..100
@@ -47,7 +47,7 @@ class Config:
     status_indicator: bool = True
 
 
-CONFIG_PATH = Path.home() / ".config" / "voxpane" / "config.toml"
+CONFIG_PATH = Path.home() / ".config" / "vupai" / "config.toml"
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -79,10 +79,10 @@ def write_journal_config(
     target = path if path is not None else CONFIG_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     body = (
-        "# voxpane config - see Config in src/voxpane/config.py for every key.\n"
+        "# vupai config - see Config in src/vupai/config.py for every key.\n"
         "\n"
         "# Utterance journal: a JSONL trail (transcript + decision + outcome)\n"
-        "# at ~/.config/voxpane/journal.jsonl, for diagnosing misfires.\n"
+        "# at ~/.config/vupai/journal.jsonl, for diagnosing misfires.\n"
         f"journal_enabled = {str(enabled).lower()}\n"
         "# Opt-in: also retain each wav next to the journal (ring-bounded to\n"
         "# journal_audio_retention files) so a misfire can be replayed offline.\n"
@@ -112,7 +112,7 @@ def set_mic_device(name: str, *, path: Path | None = None) -> Path:
         lines = target.read_text(encoding="utf-8").splitlines()
     else:
         lines = [
-            "# voxpane config - see Config in src/voxpane/config.py for every key."
+            "# vupai config - see Config in src/vupai/config.py for every key."
         ]
 
     out: list[str] = []

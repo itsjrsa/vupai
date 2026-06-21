@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from voxpane import cli
+from vupai import cli
 
 
 class FakeTmux:
@@ -92,7 +92,7 @@ def test_up_installs_status_indicator_by_default(fake_env):
 
 
 def test_up_skips_status_indicator_when_disabled(fake_env, monkeypatch):
-    from voxpane.config import Config
+    from vupai.config import Config
     ft, _ = fake_env
     monkeypatch.setattr(cli, "load_config", lambda: Config(status_indicator=False))
     assert cli.main(["up"]) == 0
@@ -112,7 +112,7 @@ def test_up_installs_naming_hooks_and_binding(fake_env):
 def test_up_names_unnamed_initial_pane(fake_env, monkeypatch):
     # The session's first pane is created by new-session (no split hook fires),
     # so ensure_up's sweep must give it a callsign.
-    from voxpane.router import CALLSIGNS
+    from vupai.router import CALLSIGNS
     ft, pidfile = fake_env
     _stub_registry(monkeypatch, [_pane("%0", "%0")])  # one unnamed pane
     rc = cli.main(["up"])
@@ -121,7 +121,7 @@ def test_up_names_unnamed_initial_pane(fake_env, monkeypatch):
 
 
 def test_autoname_unnamed_panes_sweeps_only_unnamed(fake_env, monkeypatch):
-    from voxpane.router import CALLSIGNS
+    from vupai.router import CALLSIGNS
     ft, pidfile = fake_env
     _stub_registry(monkeypatch, [
         _pane(CALLSIGNS[0], "%1"),  # already named -> skipped, but its name is "used"
@@ -158,7 +158,7 @@ def test_up_starts_server_when_down(monkeypatch, tmp_path):
     assert rc == 0
     # new-session issued via tmuxio.run WITHOUT a redundant leading "tmux"
     run_calls = [c for c in ft.calls if c[0] == "run"]
-    assert ["new-session", "-d", "-s", "voxpane"] in [list(c[1]) for c in run_calls]
+    assert ["new-session", "-d", "-s", "vupai"] in [list(c[1]) for c in run_calls]
     assert all(c[1][0] != "tmux" for c in run_calls)  # run() prepends tmux itself
 
 
@@ -175,7 +175,7 @@ def test_up_opens_initial_pane_on_agent_when_installed(monkeypatch, tmp_path):
     assert rc == 0
     run_calls = [list(c[1]) for c in ft.calls if c[0] == "run"]
     # The agent is wrapped so the pane drops to a shell when it exits.
-    assert ["new-session", "-d", "-s", "voxpane",
+    assert ["new-session", "-d", "-s", "vupai",
             "claude; exec ${SHELL:-/bin/sh} -i"] in run_calls
 
 
@@ -192,7 +192,7 @@ def test_up_falls_back_to_shell_when_agent_missing(monkeypatch, tmp_path, capsys
     rc = cli.main(["up"])
     assert rc == 0
     run_calls = [list(c[1]) for c in ft.calls if c[0] == "run"]
-    assert ["new-session", "-d", "-s", "voxpane"] in run_calls  # no trailing program
+    assert ["new-session", "-d", "-s", "vupai"] in run_calls  # no trailing program
     assert "not found on PATH" in capsys.readouterr().out
 
 
@@ -209,9 +209,9 @@ def test_spawn_daemon_uses_venv_interpreter_and_detaches(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
     cli._spawn_daemon()
-    # Must use the venv interpreter so the daemon imports voxpane's deps.
+    # Must use the venv interpreter so the daemon imports vupai's deps.
     assert captured["argv"][0] == sys.executable
-    assert captured["argv"][1:] == ["-m", "voxpane", "_daemon"]
+    assert captured["argv"][1:] == ["-m", "vupai", "_daemon"]
     # Must detach from the controlling terminal.
     assert captured["kwargs"].get("start_new_session") is True
     # pid recorded for `down`/`status`.
@@ -226,7 +226,7 @@ def test_default_no_subcommand_attaches(fake_env):
 
 
 def test_default_reload_respawns_daemon_then_attaches(fake_env, monkeypatch):
-    # `voxpane --reload` collapses `reload && voxpane`: kill the running daemon,
+    # `vupai --reload` collapses `reload && vupai`: kill the running daemon,
     # respawn it (so source edits load), then attach.
     ft, pidfile = fake_env
     pidfile.write_text("4321")
@@ -280,7 +280,7 @@ def _stub_registry(monkeypatch, panes):
 
 
 def _pane(name, pane_id="%2"):
-    from voxpane.registry import Pane
+    from vupai.registry import Pane
     return Pane(id=pane_id, window_id="@1", window="w", index=1,
                 name=name, command="claude", active=True)
 
@@ -327,7 +327,7 @@ def test_name_rejects_colliding_name(fake_env, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 
 def test_autoname_assigns_callsign_to_unnamed_focused(fake_env, monkeypatch):
-    from voxpane.router import CALLSIGNS
+    from vupai.router import CALLSIGNS
     ft, pidfile = fake_env                       # focused pane is %1
     _stub_registry(monkeypatch, [_pane("%1", "%1")])  # unnamed: name == id
     rc = cli.main(["autoname"])
@@ -345,7 +345,7 @@ def test_autoname_skips_already_named_pane(fake_env, monkeypatch, capsys):
 
 
 def test_autoname_explicit_pane_arg(fake_env, monkeypatch):
-    from voxpane.router import CALLSIGNS
+    from vupai.router import CALLSIGNS
     ft, pidfile = fake_env
     _stub_registry(monkeypatch, [_pane("%7", "%7")])
     rc = cli.main(["autoname", "%7"])
@@ -354,7 +354,7 @@ def test_autoname_explicit_pane_arg(fake_env, monkeypatch):
 
 
 def test_autoname_avoids_callsign_already_in_use(fake_env, monkeypatch):
-    from voxpane.router import CALLSIGNS
+    from vupai.router import CALLSIGNS
     ft, pidfile = fake_env
     # CALLSIGNS[0] is taken by another pane; the unnamed one must get CALLSIGNS[1].
     _stub_registry(monkeypatch, [_pane(CALLSIGNS[0], "%2"), _pane("%1", "%1")])
@@ -368,7 +368,7 @@ def test_autoname_avoids_callsign_already_in_use(fake_env, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_doctor_prints_hints(fake_env, monkeypatch, capsys):
-    from voxpane.permissions import PermissionStatus
+    from vupai.permissions import PermissionStatus
     status = PermissionStatus(microphone=False, input_monitoring=True, accessibility=True)
     monkeypatch.setattr(cli, "missing_tools", lambda: [])
     monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
@@ -381,7 +381,7 @@ def test_doctor_prints_hints(fake_env, monkeypatch, capsys):
 
 def test_doctor_reports_missing_sox_and_skips_mic_hint(fake_env, monkeypatch, capsys):
     # When sox is absent, the real fix is "install sox" - NOT "grant Microphone".
-    from voxpane.permissions import PermissionStatus
+    from vupai.permissions import PermissionStatus
     status = PermissionStatus(microphone=False, input_monitoring=True, accessibility=True)
     monkeypatch.setattr(cli, "missing_tools", lambda: ["sox"])
     monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
@@ -394,7 +394,7 @@ def test_doctor_reports_missing_sox_and_skips_mic_hint(fake_env, monkeypatch, ca
 
 
 def test_setup_all_granted_reports_ready(fake_env, monkeypatch, capsys):
-    from voxpane.permissions import PermissionStatus, TerminalApp
+    from vupai.permissions import PermissionStatus, TerminalApp
     status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
     monkeypatch.setattr(cli, "missing_tools", lambda: [])
     monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
@@ -409,7 +409,7 @@ def test_setup_all_granted_reports_ready(fake_env, monkeypatch, capsys):
 
 
 def test_setup_opens_panes_for_missing_permissions(fake_env, monkeypatch, capsys):
-    from voxpane.permissions import PermissionStatus, TerminalApp
+    from vupai.permissions import PermissionStatus, TerminalApp
     status = PermissionStatus(microphone=False, input_monitoring=True, accessibility=False)
     monkeypatch.setattr(cli, "missing_tools", lambda: [])
     monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
@@ -437,7 +437,7 @@ def test_setup_aborts_when_tools_missing(fake_env, monkeypatch, capsys):
 
 
 def test_setup_downloads_model_when_missing(fake_env, monkeypatch, capsys):
-    from voxpane.permissions import PermissionStatus, TerminalApp
+    from vupai.permissions import PermissionStatus, TerminalApp
     status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
     monkeypatch.setattr(cli, "missing_tools", lambda: [])
     monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
@@ -462,7 +462,7 @@ def test_setup_downloads_model_when_missing(fake_env, monkeypatch, capsys):
 
 
 def test_setup_skips_download_when_model_cached(fake_env, monkeypatch, capsys):
-    from voxpane.permissions import PermissionStatus, TerminalApp
+    from vupai.permissions import PermissionStatus, TerminalApp
     status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
     monkeypatch.setattr(cli, "missing_tools", lambda: [])
     monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
@@ -480,7 +480,7 @@ def test_setup_skips_download_when_model_cached(fake_env, monkeypatch, capsys):
 
 
 def test_doctor_warns_when_model_not_downloaded(fake_env, monkeypatch, capsys):
-    from voxpane.permissions import PermissionStatus
+    from vupai.permissions import PermissionStatus
     status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
     monkeypatch.setattr(cli, "missing_tools", lambda: [])
     monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
@@ -493,7 +493,7 @@ def test_doctor_warns_when_model_not_downloaded(fake_env, monkeypatch, capsys):
 
 
 def test_doctor_all_passed_includes_model(fake_env, monkeypatch, capsys):
-    from voxpane.permissions import PermissionStatus
+    from vupai.permissions import PermissionStatus
     status = PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
     monkeypatch.setattr(cli, "missing_tools", lambda: [])
     monkeypatch.setattr(cli, "check_permissions", lambda **k: status)
@@ -504,7 +504,7 @@ def test_doctor_all_passed_includes_model(fake_env, monkeypatch, capsys):
 
 
 def test_status_reports_model_state(fake_env, monkeypatch, capsys):
-    from voxpane.permissions import PermissionStatus
+    from vupai.permissions import PermissionStatus
     monkeypatch.setattr(cli, "_daemon_running", lambda: False)
     _stub_registry(monkeypatch, [])
     monkeypatch.setattr(
@@ -568,7 +568,7 @@ def test_reload_stops_then_restarts_daemon(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_status_prints_panes_and_pidfile_and_permissions(fake_env, monkeypatch, capsys):
-    from voxpane.permissions import PermissionStatus
+    from vupai.permissions import PermissionStatus
     ft, pidfile = fake_env
     pidfile.write_text("999")
     monkeypatch.setattr(cli, "_daemon_running", lambda: True)
@@ -622,8 +622,8 @@ def test_daemon_builds_and_runs(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_voice_commands_text_lists_verbs_and_words():
-    from voxpane.commands import _CLOSE_VERBS, _CREATE_VERBS
-    from voxpane.config import Config
+    from vupai.commands import _CLOSE_VERBS, _CREATE_VERBS
+    from vupai.config import Config
     text = cli._voice_commands_text(Config())  # button is the default mode
     # Every create/close verb the parser accepts must appear in the cheat sheet.
     for verb in (*_CREATE_VERBS, *_CLOSE_VERBS):
@@ -634,7 +634,7 @@ def test_voice_commands_text_lists_verbs_and_words():
 
 
 def test_voice_commands_text_keyword_mode_has_no_command_layer():
-    from voxpane.config import Config
+    from vupai.config import Config
     text = cli._voice_commands_text(Config(addressing="keyword"))
     assert "keyword" in text
     assert "no command layer" in text       # commands live on the button system key
@@ -642,7 +642,7 @@ def test_voice_commands_text_keyword_mode_has_no_command_layer():
 
 
 def test_voice_commands_text_button_mode_shows_both_keys():
-    from voxpane.config import Config
+    from vupai.config import Config
     cfg = Config(addressing="button", hotkey="alt_r", command_hotkey="alt_l")
     text = cli._voice_commands_text(cfg)
     assert "button" in text
@@ -651,7 +651,7 @@ def test_voice_commands_text_button_mode_shows_both_keys():
 
 
 def test_voice_commands_text_lists_configured_macros():
-    from voxpane.config import Config
+    from vupai.config import Config
     cfg = Config(macros={"set up": ["create two panes", "tile"]})
     text = cli._voice_commands_text(cfg)
     assert "set up" in text
@@ -659,7 +659,7 @@ def test_voice_commands_text_lists_configured_macros():
 
 
 def test_voice_commands_prints(fake_env, monkeypatch, capsys):
-    from voxpane.config import Config
+    from vupai.config import Config
     monkeypatch.setattr(cli, "load_config", lambda *a, **k: Config())
     rc = cli.main(["voice-commands"])
     assert rc == 0
@@ -733,7 +733,7 @@ def test_prompt_journal_setup_noop_when_config_exists(tmp_path):
 
 
 def test_setup_prompts_journal_on_first_run(fake_env, monkeypatch, tmp_path, capsys):
-    from voxpane.permissions import PermissionStatus, TerminalApp
+    from vupai.permissions import PermissionStatus, TerminalApp
     # Point CONFIG_PATH at a missing file so the first-run prompt fires.
     cfg = tmp_path / "fresh" / "config.toml"
     monkeypatch.setattr(cli, "CONFIG_PATH", cfg)
@@ -757,7 +757,7 @@ def test_setup_prompts_journal_on_first_run(fake_env, monkeypatch, tmp_path, cap
 # ---------------------------------------------------------------------------
 
 def _devs():
-    from voxpane.audio import InputDevice
+    from vupai.audio import InputDevice
     return [
         InputDevice("Built-in Microphone", is_default=True),
         InputDevice("AirPods Pro", is_default=False),

@@ -20,7 +20,7 @@ from typing import Callable, Mapping
 
 from .recorder import MIN_WAV_BYTES, Recorder
 
-# External binaries voxpane needs at runtime. `rec` is provided by sox; a missing
+# External binaries vupai needs at runtime. `rec` is provided by sox; a missing
 # `rec` is the usual reason the mic probe fails (it can't even spawn the
 # recorder), so doctor checks this before blaming the Microphone permission.
 REQUIRED_TOOLS: dict[str, str] = {"rec": "sox", "tmux": "tmux"}

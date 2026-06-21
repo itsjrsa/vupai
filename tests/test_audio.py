@@ -1,6 +1,6 @@
 import json
 
-from voxpane import audio
+from vupai import audio
 
 # A trimmed `system_profiler -json SPAudioDataType` payload: two inputs (one the
 # default) plus an output-only device that must be excluded.

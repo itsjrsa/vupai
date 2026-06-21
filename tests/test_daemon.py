@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from voxpane.commands import CommandResult
-from voxpane.config import Config
-from voxpane.daemon import Daemon
-from voxpane.journal import Journal
-from voxpane.recorder import MIN_WAV_BYTES
-from voxpane.registry import Pane, PaneRegistry
-from voxpane.router import Route
+from vupai.commands import CommandResult
+from vupai.config import Config
+from vupai.daemon import Daemon
+from vupai.journal import Journal
+from vupai.recorder import MIN_WAV_BYTES
+from vupai.registry import Pane, PaneRegistry
+from vupai.router import Route
 
 
 @pytest.fixture(autouse=True)
@@ -280,7 +280,7 @@ def test_run_warms_and_starts_hotkey(tmp_path, monkeypatch):
         def stop(self):
             started.append("stop")
 
-    import voxpane.daemon as dmod
+    import vupai.daemon as dmod
     monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
     # Pre-arm shutdown so the consumer loop exits immediately and run() returns.
     daemon.stop()
@@ -523,7 +523,7 @@ def test_run_button_builds_multihotkey(tmp_path, monkeypatch):
         def stop(self):
             built["stopped"] = True
 
-    import voxpane.daemon as dmod
+    import vupai.daemon as dmod
     monkeypatch.setattr(dmod, "MultiHotkey", FakeMulti)
     d.stop()
     d.run()
@@ -554,7 +554,7 @@ def test_run_button_duplicate_keys_falls_back(tmp_path, monkeypatch):
         def stop(self):
             ...
 
-    import voxpane.daemon as dmod
+    import vupai.daemon as dmod
     monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
     d.stop()
     d.run()

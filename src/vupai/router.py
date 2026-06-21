@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from metaphone import doublemetaphone
 from rapidfuzz import fuzz
 
-from voxpane.registry import Pane
+from vupai.registry import Pane
 
 # Spoken number words for 1..9 -> pane index within the focused window.
 _NUMBER_WORDS: dict[str, int] = {
@@ -252,7 +252,7 @@ def name_collides(candidate: str, existing: list[str],
                   *, fuzzy_cutoff: int = 82) -> str | None:
     """Return an existing name confusable with `candidate`, else None.
 
-    Used by `voxpane name` to reject names a router would mis-route. A collision
+    Used by `vupai name` to reject names a router would mis-route. A collision
     is an exact (case-insensitive) match, a rapidfuzz ratio >= cutoff, or an
     equal double-metaphone primary code.
     """

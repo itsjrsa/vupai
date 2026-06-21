@@ -11,15 +11,15 @@ import shlex
 import shutil
 from dataclasses import dataclass
 
-from voxpane import tmuxio
-from voxpane.injector import inject
-from voxpane.router import (
+from vupai import tmuxio
+from vupai.injector import inject
+from vupai.router import (
     _peel_fillers,
     next_callsign,
     resolve_pane_by_name,
     word_to_int,
 )
-from voxpane.tmuxio import TmuxError
+from vupai.tmuxio import TmuxError
 
 _STRIP = ".,!?;:'\"()[]{}"
 _CREATE_VERBS = ("create", "make", "add", "open", "new")

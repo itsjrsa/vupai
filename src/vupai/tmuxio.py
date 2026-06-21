@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import subprocess
 
-# Field 5 is the voice name, stored in the per-pane user option @voxpane_name
+# Field 5 is the voice name, stored in the per-pane user option @vupai_name
 # (NOT pane_title): the target apps - Claude Code in particular - overwrite
 # pane_title with their own string, but never touch @ user options. The option
 # is empty when unset; registry.parse_panes falls back to the pane id there.
@@ -19,7 +19,7 @@ PANE_FORMAT = "\t".join(
         "#{window_id}",
         "#{window_name}",
         "#{pane_index}",
-        "#{@voxpane_name}",
+        "#{@vupai_name}",
         "#{pane_current_command}",
         "#{pane_active}",
     ]
@@ -86,8 +86,8 @@ def send_enter(pane_id: str) -> None:
 
 def set_pane_name(pane_id: str, name: str) -> None:
     # Store the voice name in a per-pane user option the target app can't clobber
-    # (unlike pane_title). Read back via @voxpane_name in PANE_FORMAT.
-    run(["set", "-p", "-t", pane_id, "@voxpane_name", name])
+    # (unlike pane_title). Read back via @vupai_name in PANE_FORMAT.
+    run(["set", "-p", "-t", pane_id, "@vupai_name", name])
 
 
 def enable_pane_titles() -> None:
@@ -96,15 +96,15 @@ def enable_pane_titles() -> None:
     # "✳ Claude Code"), so the border reads "sage · ✳ Claude Code". When no
     # voice name is set, show the app title alone.
     run(["set", "-g", "pane-border-format",
-         "#{?@voxpane_name,"
-         "#[bold]#{@voxpane_name}#[nobold] · #{pane_title},"
+         "#{?@vupai_name,"
+         "#[bold]#{@vupai_name}#[nobold] · #{pane_title},"
          "#{pane_title}}"])
 
 
 def set_pane_autoname_hooks(self_cmd: str) -> None:
     """Auto-assign a callsign to every newly created pane.
 
-    `self_cmd` is how to invoke this CLI (e.g. "/path/python -m voxpane"); tmux
+    `self_cmd` is how to invoke this CLI (e.g. "/path/python -m vupai"); tmux
     expands #{pane_id} to the new pane. Output is discarded so splits stay quiet.
     Hooked on split + new-window so manually created panes get named too.
     """
@@ -118,7 +118,7 @@ def bind_rename_key(self_cmd: str, key: str = "R") -> None:
     """Bind <prefix>+`key` to prompt for a name and apply it to the active pane.
 
     Lets the user override an auto-assigned callsign from inside any pane,
-    without needing a separate shell pane to run `voxpane name`.
+    without needing a separate shell pane to run `vupai name`.
     """
     inner = f"{self_cmd} name '%%' #{{pane_id}}"
     run(["bind-key", key, "command-prompt", "-p", "rename pane:", f'run-shell "{inner}"'])
@@ -136,24 +136,24 @@ def display_message(pane_id: str, message: str) -> None:
 
 
 def set_status(text: str) -> None:
-    """Publish daemon state into the @voxpane_status server option, then nudge a
+    """Publish daemon state into the @vupai_status server option, then nudge a
     redraw so the status line updates immediately rather than at status-interval.
 
-    Mirrors the @voxpane_name idiom: the value lives in a cheap-to-rewrite user
+    Mirrors the @vupai_name idiom: the value lives in a cheap-to-rewrite user
     option, while `install_status_indicator` wires the format once. The redraw is
     best-effort - a detached server has no client (`refresh-client` then fails),
     but the option still updates for whenever a client attaches."""
-    run(["set", "-g", "@voxpane_status", text])
+    run(["set", "-g", "@vupai_status", text])
     try:
         run(["refresh-client", "-S"])
     except TmuxError:
         pass  # no client attached; the option value is still set
 
 
-# Marker proving the voxpane segment is already in status-right. Lets a re-install
+# Marker proving the vupai segment is already in status-right. Lets a re-install
 # detect its own output so it prepends idempotently instead of capturing the
-# voxpane segment as if it were the user's original status-right.
-_STATUS_SEGMENT = "#{@voxpane_status}"
+# vupai segment as if it were the user's original status-right.
+_STATUS_SEGMENT = "#{@vupai_status}"
 
 
 def show_global(option: str) -> str | None:
@@ -169,25 +169,25 @@ def show_global(option: str) -> str | None:
 
 
 def install_status_indicator() -> None:
-    """Render the voxpane state segment in status-right, PREPENDING it to whatever
+    """Render the vupai state segment in status-right, PREPENDING it to whatever
     was already there rather than replacing it.
 
     The user's original status-right is captured exactly once into
-    @voxpane_status_orig (the first install, when our segment isn't already
-    present), then the line is always rebuilt as `<voxpane segment>  <original>`.
+    @vupai_status_orig (the first install, when our segment isn't already
+    present), then the line is always rebuilt as `<vupai segment>  <original>`.
     Rebuilding from the saved copy - never the already-modified live value -
     makes re-install idempotent (the segment never stacks) and reversible (see
     restore_status_right). When no original exists (fresh server, or recovery
     after a pre-preserve install overwrote it), a bare clock stands in."""
-    run(["set", "-g", "@voxpane_status", "#[fg=green]● voxpane#[default]"])
+    run(["set", "-g", "@vupai_status", "#[fg=green]● vupai#[default]"])
 
-    saved = show_global("@voxpane_status_orig")
+    saved = show_global("@vupai_status_orig")
     if saved is None:
         current = show_global("status-right") or ""
         # Don't capture our own segment as the "original" (legacy install / the
         # clobber this very change fixes) - treat that as no original.
         original = "" if _STATUS_SEGMENT in current else current
-        run(["set", "-g", "@voxpane_status_orig", original])
+        run(["set", "-g", "@vupai_status_orig", original])
         saved = original
 
     tail = saved if saved.strip() else "%H:%M "
@@ -205,16 +205,16 @@ def install_status_indicator() -> None:
 
 def restore_status_right() -> None:
     """Reverse install_status_indicator: put the captured original back and drop
-    voxpane's options. Used when status_indicator is disabled or on teardown.
+    vupai's options. Used when status_indicator is disabled or on teardown.
     A no-op-ish safe path when nothing was ever installed."""
-    saved = show_global("@voxpane_status_orig")
+    saved = show_global("@vupai_status_orig")
     if saved is not None:
         if saved:
             run(["set", "-g", "status-right", saved])
         else:
             run(["set", "-gu", "status-right"])  # revert to tmux's default
-        run(["set", "-gu", "@voxpane_status_orig"])
-    run(["set", "-gu", "@voxpane_status"])
+        run(["set", "-gu", "@vupai_status_orig"])
+    run(["set", "-gu", "@vupai_status"])
 
 
 def server_running() -> bool:

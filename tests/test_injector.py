@@ -4,11 +4,11 @@ import uuid
 
 import pytest
 
-from voxpane import injector
+from vupai import injector
 
 
 class FakeIO:
-    """In-memory stand-in for voxpane.tmuxio. capture_pane returns queued frames."""
+    """In-memory stand-in for vupai.tmuxio. capture_pane returns queued frames."""
 
     def __init__(self, capture_frames: list[str]) -> None:
         self._frames = list(capture_frames)
@@ -152,9 +152,9 @@ def test_inject_delivers_line_to_real_cat_pane() -> None:
     if shutil.which("tmux") is None:
         pytest.skip("tmux not installed")
 
-    from voxpane import tmuxio  # real module, no fake io
+    from vupai import tmuxio  # real module, no fake io
 
-    session = f"voxpane-it-{uuid.uuid4().hex[:8]}"
+    session = f"vupai-it-{uuid.uuid4().hex[:8]}"
     # `cat` echoes each submitted line back to the pane, proving the Enter landed.
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", session, "-x", "80", "-y", "24", "cat"],

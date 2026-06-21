@@ -1,6 +1,6 @@
 from pynput import keyboard
 
-from voxpane.hotkey import Hotkey, MultiHotkey
+from vupai.hotkey import Hotkey, MultiHotkey
 
 
 def _counter():

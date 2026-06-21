@@ -157,7 +157,7 @@ class Daemon:
                 return
 
             # Command layer: utterances addressed to the control/broadcast word
-            # are interpreted by voxpane itself, not injected into a pane.
+            # are interpreted by vupai itself, not injected into a pane.
             result = self._command_fn(
                 text, self._registry, self._config, inject_fn=self._inject_fn,
                 addressing="button" if mode == "system" else "keyword")

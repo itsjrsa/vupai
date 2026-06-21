@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from voxpane import permissions
-from voxpane.permissions import (
+from vupai import permissions
+from vupai.permissions import (
     PermissionStatus,
     TerminalApp,
     check_permissions,

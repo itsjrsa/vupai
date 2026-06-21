@@ -1,7 +1,7 @@
 import threading
 
-from voxpane import tmuxio
-from voxpane.router import Route
+from vupai import tmuxio
+from vupai.router import Route
 
 # Per-state style for the tmux status-line indicator: (tmux style, glyph). The
 # `#[fg=...]` codes are interpreted by tmux at draw time (see install_status_
@@ -70,7 +70,7 @@ class Feedback:
 
     def ready(self) -> None:
         print("ready")
-        self.indicator("voxpane", "idle")
+        self.indicator("vupai", "idle")
 
     def listening(self, mode: str = "keyword", seq: int | None = None) -> None:
         # Shown while the push-to-talk key is held and the mic is open. Written

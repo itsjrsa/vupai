@@ -1,4 +1,4 @@
-# voxpane - voice control for tmux agent panes
+# vupai - voice control for tmux agent panes
 
 Push-to-talk voice control over a tmux-based multi-agent workflow on macOS.
 Hold a hotkey, speak, and the transcript is injected into the right tmux pane:
@@ -20,20 +20,20 @@ uv run pytest -m "not integration and not slow" -q   # unit suite (no tmux/mic/m
 uv run pytest -m integration -q                      # needs a real tmux (isolated -L socket)
 uv run pytest -m slow -q                             # needs the real Parakeet model + a wav fixture
 uv run ruff check .                                  # lint
-voxpane doctor                                         # check macOS permissions, print fix steps
-voxpane setup                                          # interactive: probe + deep-link each missing-permission pane
+vupai doctor                                         # check macOS permissions, print fix steps
+vupai setup                                          # interactive: probe + deep-link each missing-permission pane
 ```
 
-`voxpane` CLI (entry point `voxpane.cli:main`):
-- `voxpane [--reload]` - ensure tmux + spawn the voice daemon (detached), then attach (default, no subcommand). `--reload` respawns the daemon first (= `voxpane reload && voxpane` in one invocation) so source edits load before attaching - the dogfooding loop. **Run from inside a tmux pane it skips the attach** (`tmuxio.inside_tmux()` / `$TMUX`): `tmux attach` refuses to nest, so `_cmd_default` respawns the daemon, prints a note, and returns - so `--reload` from within the session degrades to a plain `reload` instead of failing. Use bare `voxpane reload` (no attach) as the in-pane dogfooding loop.
-- `voxpane up` / `voxpane down` - start / stop the daemon (`down` SIGTERMs the recorded pid; the daemon is a detached process, not a tmux window)
-- `voxpane reload` - `down` + `ensure_up` in one step; respawns the daemon so source edits take effect (the daemon loads modules once at spawn, so a live one runs stale code). For dogfooding voxpane on itself (or `voxpane --reload` to also re-attach)
-- `voxpane name <name> [pane]` - label a pane (rejects confusable names; defaults to focused)
-- `voxpane autoname [pane]` - assign the next free callsign from the pool to a pane unless already named; driven by the tmux pane-creation hooks (also usable by hand). `<prefix>+R` renames the active pane via this path's sibling `voxpane name`
-- `voxpane status` - list panes, daemon pid + log path, permission state
-- `voxpane mic [index|name|default]` - no arg lists CoreAudio **input** devices (marks the system default and the current pin); an index/exact-name pins that device into `config.toml` via `config.set_mic_device` (a merge writer that preserves comments/other keys), the literal `default` clears the pin. Selection persists; a running daemon needs `voxpane reload` to apply it. Enumeration is `audio.list_input_devices` (`system_profiler -json SPAudioDataType`, ~1s).
-- `voxpane setup` - interactive permission bootstrap: detects the terminal app from `TERM_PROGRAM`, probes each permission (which triggers the macOS prompts), then `open`s the exact Settings deep-link pane for any that are missing and prints the `tccutil reset` recovery command. **Cannot grant on the user's behalf** - macOS TCC requires a human click; setup removes the navigation, not the consent. Deep-link/app-detect/open helpers live in `permissions.py` (`terminal_app`, `fixes`, `open_settings_pane`), injectable for tests. **First run only** (no `config.toml` yet), it also prompts for journaling consent (`journal_enabled` + `journal_keep_audio`) and writes a starter config via `config.write_journal_config`; once a config file exists the prompt is skipped so re-running to confirm permissions never re-asks. It **always** runs a re-runnable mic-selection step (`_prompt_mic_setup`; bare Enter keeps the current device).
-- `voxpane _daemon` - hidden; the long-running daemon process (spawned detached, logs to `~/.config/voxpane/daemon.log`)
+`vupai` CLI (entry point `vupai.cli:main`):
+- `vupai [--reload]` - ensure tmux + spawn the voice daemon (detached), then attach (default, no subcommand). `--reload` respawns the daemon first (= `vupai reload && vupai` in one invocation) so source edits load before attaching - the dogfooding loop. **Run from inside a tmux pane it skips the attach** (`tmuxio.inside_tmux()` / `$TMUX`): `tmux attach` refuses to nest, so `_cmd_default` respawns the daemon, prints a note, and returns - so `--reload` from within the session degrades to a plain `reload` instead of failing. Use bare `vupai reload` (no attach) as the in-pane dogfooding loop.
+- `vupai up` / `vupai down` - start / stop the daemon (`down` SIGTERMs the recorded pid; the daemon is a detached process, not a tmux window)
+- `vupai reload` - `down` + `ensure_up` in one step; respawns the daemon so source edits take effect (the daemon loads modules once at spawn, so a live one runs stale code). For dogfooding vupai on itself (or `vupai --reload` to also re-attach)
+- `vupai name <name> [pane]` - label a pane (rejects confusable names; defaults to focused)
+- `vupai autoname [pane]` - assign the next free callsign from the pool to a pane unless already named; driven by the tmux pane-creation hooks (also usable by hand). `<prefix>+R` renames the active pane via this path's sibling `vupai name`
+- `vupai status` - list panes, daemon pid + log path, permission state
+- `vupai mic [index|name|default]` - no arg lists CoreAudio **input** devices (marks the system default and the current pin); an index/exact-name pins that device into `config.toml` via `config.set_mic_device` (a merge writer that preserves comments/other keys), the literal `default` clears the pin. Selection persists; a running daemon needs `vupai reload` to apply it. Enumeration is `audio.list_input_devices` (`system_profiler -json SPAudioDataType`, ~1s).
+- `vupai setup` - interactive permission bootstrap: detects the terminal app from `TERM_PROGRAM`, probes each permission (which triggers the macOS prompts), then `open`s the exact Settings deep-link pane for any that are missing and prints the `tccutil reset` recovery command. **Cannot grant on the user's behalf** - macOS TCC requires a human click; setup removes the navigation, not the consent. Deep-link/app-detect/open helpers live in `permissions.py` (`terminal_app`, `fixes`, `open_settings_pane`), injectable for tests. **First run only** (no `config.toml` yet), it also prompts for journaling consent (`journal_enabled` + `journal_keep_audio`) and writes a starter config via `config.write_journal_config`; once a config file exists the prompt is skipped so re-running to confirm permissions never re-asks. It **always** runs a re-runnable mic-selection step (`_prompt_mic_setup`; bare Enter keeps the current device).
+- `vupai _daemon` - hidden; the long-running daemon process (spawned detached, logs to `~/.config/vupai/daemon.log`)
 
 ## Architecture
 
@@ -45,22 +45,22 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 
 | File | Responsibility |
 |---|---|
-| `src/voxpane/cli.py`, `__main__.py` | `voxpane` subcommands; `ensure_up`; spawns the daemon **detached** (`_spawn_daemon`, `start_new_session=True`) |
-| `src/voxpane/daemon.py` | orchestrates press→record→transcribe→route→inject→feedback; listener callbacks enqueue, main-thread consumer processes |
-| `src/voxpane/hotkey.py` | global push-to-talk via `pynput`, debounced (Right-Option) |
-| `src/voxpane/hotkey.py` (`MultiHotkey`) | button mode: one pynput listener over two PTT keys, each independently debounced |
-| `src/voxpane/recorder.py` | `sox rec` → wav, SIGINT to stop; exports `MIN_WAV_BYTES`; optional `device` → `AUDIODEV` env |
-| `src/voxpane/audio.py` | enumerate CoreAudio **input** devices (`system_profiler -json`); `resolve_device` (configured name → present? else fall back to default + warning) |
-| `src/voxpane/asr.py` | `parakeet-mlx` `Transcriber` Protocol, lazy `warm()` + cache |
-| `src/voxpane/router.py` | name cascade exact→rapidfuzz→metaphone, number-in-window, focus fallback, near-tie ambiguity; `CALLSIGNS` pool + `next_callsign` (auto-name picker) |
-| `src/voxpane/registry.py` | `Pane` + `PaneRegistry` parsed from `tmux list-panes` |
-| `src/voxpane/injector.py` | paste → poll `capture-pane` → Enter (the safety core) |
-| `src/voxpane/tmuxio.py` | thin exact-argv wrappers over the `tmux` CLI |
-| `src/voxpane/feedback.py` | status to stdout / `display-message` on the target pane |
-| `src/voxpane/permissions.py` | best-effort macOS permission probes + `hints` |
-| `src/voxpane/config.py` | TOML config at `~/.config/voxpane/config.toml` + defaults; `write_journal_config` writes a fresh starter file (first-run `setup` consent prompt; does NOT merge into an existing file) |
-| `src/voxpane/commands.py` | parse control-word utterances into `Command`s and execute them (create/macro/focus/swap/close/zoom/slash/broadcast); interpretation split from execution |
-| `src/voxpane/journal.py` | append-only JSONL utterance trail (transcript + decision + outcome) at `~/.config/voxpane/journal.jsonl`; opt-in ring-bounded audio retention for offline misfire replay |
+| `src/vupai/cli.py`, `__main__.py` | `vupai` subcommands; `ensure_up`; spawns the daemon **detached** (`_spawn_daemon`, `start_new_session=True`) |
+| `src/vupai/daemon.py` | orchestrates press→record→transcribe→route→inject→feedback; listener callbacks enqueue, main-thread consumer processes |
+| `src/vupai/hotkey.py` | global push-to-talk via `pynput`, debounced (Right-Option) |
+| `src/vupai/hotkey.py` (`MultiHotkey`) | button mode: one pynput listener over two PTT keys, each independently debounced |
+| `src/vupai/recorder.py` | `sox rec` → wav, SIGINT to stop; exports `MIN_WAV_BYTES`; optional `device` → `AUDIODEV` env |
+| `src/vupai/audio.py` | enumerate CoreAudio **input** devices (`system_profiler -json`); `resolve_device` (configured name → present? else fall back to default + warning) |
+| `src/vupai/asr.py` | `parakeet-mlx` `Transcriber` Protocol, lazy `warm()` + cache |
+| `src/vupai/router.py` | name cascade exact→rapidfuzz→metaphone, number-in-window, focus fallback, near-tie ambiguity; `CALLSIGNS` pool + `next_callsign` (auto-name picker) |
+| `src/vupai/registry.py` | `Pane` + `PaneRegistry` parsed from `tmux list-panes` |
+| `src/vupai/injector.py` | paste → poll `capture-pane` → Enter (the safety core) |
+| `src/vupai/tmuxio.py` | thin exact-argv wrappers over the `tmux` CLI |
+| `src/vupai/feedback.py` | status to stdout / `display-message` on the target pane |
+| `src/vupai/permissions.py` | best-effort macOS permission probes + `hints` |
+| `src/vupai/config.py` | TOML config at `~/.config/vupai/config.toml` + defaults; `write_journal_config` writes a fresh starter file (first-run `setup` consent prompt; does NOT merge into an existing file) |
+| `src/vupai/commands.py` | parse control-word utterances into `Command`s and execute them (create/macro/focus/swap/close/zoom/slash/broadcast); interpretation split from execution |
+| `src/vupai/journal.py` | append-only JSONL utterance trail (transcript + decision + outcome) at `~/.config/vupai/journal.jsonl`; opt-in ring-bounded audio retention for offline misfire replay |
 
 The daemon reaches tmux only through `tmuxio` (the `tmux` CLI); the hotkey is
 global, so the daemon never owns the terminal. It runs as a **detached
@@ -76,18 +76,18 @@ Invariants) and talks to tmux purely via the CLI.
 - **`tmuxio.run(args)` prepends `tmux`** - callers pass argv WITHOUT a leading `"tmux"`.
 - **Target the immutable `pane_id` (`%N`)**, never a positional index.
 - **Keep tmux `extended-keys` off** (set in `ensure_up`) so Enter submits in Claude Code.
-- **Voice names live in the `@voxpane_name` per-pane user option, NOT `pane_title`.**
+- **Voice names live in the `@vupai_name` per-pane user option, NOT `pane_title`.**
   The target apps own the pane title: Claude Code overwrites it with `✳ Claude Code`
   on startup, so a name stored via `select-pane -T` is clobbered (and every Claude
-  pane ends up with the *same* title → routing breaks). `voxpane name` writes
-  `set -p @voxpane_name`; `PANE_FORMAT` reads `#{@voxpane_name}`; the pane border
+  pane ends up with the *same* title → routing breaks). `vupai name` writes
+  `set -p @vupai_name`; `PANE_FORMAT` reads `#{@vupai_name}`; the pane border
   shows the voice name when set, else the app title. **Never store the name in
   `pane_title`.**
-- **Unnamed panes:** when `@voxpane_name` is unset the field is empty; `parse_panes`
+- **Unnamed panes:** when `@vupai_name` is unset the field is empty; `parse_panes`
   falls back to the pane id so `name == id`. Router name-matching and the ASR hints
   **skip panes where `name == id`**; number routing still considers them.
 - **Auto-naming:** `ensure_up` sets `after-split-window` + `after-new-window` hooks
-  (and binds `<prefix>+R`) so every newly created pane runs `voxpane autoname` and
+  (and binds `<prefix>+R`) so every newly created pane runs `vupai autoname` and
   gets the next free `CALLSIGNS` entry. The hook targets `#{pane_id}` (the pane
   active *after* the split), so it relies on the new pane being focused (the tmux
   default for an interactive split); a detached `split-window -d` would name the
@@ -97,7 +97,7 @@ Invariants) and talks to tmux purely via the CLI.
   `_autoname_unnamed_panes()`, a one-time idempotent sweep that names the initial
   pane (and any pre-existing unnamed panes when attaching to a running server).
   Hook/binding callbacks run via tmux `run-shell` (`/bin/sh`, no venv on PATH), so
-  `_self_cmd()` invokes them with the absolute `sys.executable -m voxpane`.
+  `_self_cmd()` invokes them with the absolute `sys.executable -m vupai`.
 - **ASR is kept warm** (model loaded once via `warm()`); the first call is otherwise multi-second.
 - **Mic selection resolves once at daemon startup, never per key-press.**
   `sox` records from the system default input unless `AUDIODEV` is set in its
@@ -105,7 +105,7 @@ Invariants) and talks to tmux purely via the CLI.
   `system_profiler` (~1s) - far too slow for the press→record path - so
   `_cmd_daemon` calls `audio.resolve_device(cfg.mic_device)` at spawn: a pinned
   device that's absent falls back to the system default with a logged warning.
-  Reconnecting a device (e.g. AirPods) after the daemon is up needs `voxpane
+  Reconnecting a device (e.g. AirPods) after the daemon is up needs `vupai
   reload`, same as any other config change (config loads once at spawn).
 - **Daemon must run OUTSIDE tmux** (`_spawn_daemon` detaches it under the terminal
   app). A process *inside* a tmux window has the long-lived tmux server as its
@@ -123,7 +123,7 @@ Invariants) and talks to tmux purely via the CLI.
   also prevents macOS from disabling the (slow) event tap. Don't call MLX, tmux,
   or `inject` from the listener thread.
 - **macOS permissions** (Accessibility + Input-Monitoring + Microphone) are granted
-  to the *terminal app*, not the script - they silent-fail otherwise. Use `voxpane doctor`.
+  to the *terminal app*, not the script - they silent-fail otherwise. Use `vupai doctor`.
 - Tests inject collaborators (`io=`, `lister=`, `route_fn=`, `recorder_factory=`…)
   so units run with fakes - no real tmux/mic/model in the unit suite.
 - **Addressing mode (`addressing` config):** `button` (default) uses two keys:
@@ -152,7 +152,7 @@ Invariants) and talks to tmux purely via the CLI.
   one-line edit + a test, like `commands._UNIT_ALIASES`.
 - **Command layer runs before the router.** `daemon._process` calls `handle_command`
   after transcribe; in button mode the system key's utterance is parsed as a command
-  (or broadcast), executed by voxpane and never injected. A non-command falls through
+  (or broadcast), executed by vupai and never injected. A non-command falls through
   to route+inject (never swallowed as `unknown`). Interpretation (`parse_command`) is
   separate from execution (`execute_command`); the `Command` dataclass is the seam for
   a future local-LLM interpreter (rules-first, deferred, not built).

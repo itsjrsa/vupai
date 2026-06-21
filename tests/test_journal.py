@@ -4,7 +4,7 @@ import json
 import wave
 from pathlib import Path
 
-from voxpane.journal import Journal
+from vupai.journal import Journal
 
 
 def _read_lines(path: Path) -> list[dict]:
@@ -77,7 +77,7 @@ def test_audio_ring_prunes_oldest(tmp_path):
 
 
 def test_from_config_reads_knobs(tmp_path):
-    from voxpane.config import Config
+    from vupai.config import Config
 
     cfg = Config(journal_enabled=True, journal_keep_audio=True,
                  journal_audio_retention=7)

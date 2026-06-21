@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Protocol, Sequence, runtime_checkable
 
-# Imported at module top so tests can monkeypatch `voxpane.asr.from_pretrained`.
+# Imported at module top so tests can monkeypatch `vupai.asr.from_pretrained`.
 from parakeet_mlx import from_pretrained
 
 logger = logging.getLogger(__name__)

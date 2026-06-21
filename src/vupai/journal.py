@@ -1,7 +1,7 @@
 """Utterance journal: a structured JSONL trail of what was heard and done.
 
 One JSON object per line is appended for each utterance, capturing the
-transcript, the decision voxpane reached (command/route/dictation/unknown/...)
+transcript, the decision vupai reached (command/route/dictation/unknown/...)
 and the outcome (injected/failed/...). The point is reviewing and diagnosing
 misfires after the fact. Audio retention is opt-in: when enabled, the wav is
 copied next to the journal and the directory is ring-bounded by file count, so
@@ -17,7 +17,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-JOURNAL_PATH = Path.home() / ".config" / "voxpane" / "journal.jsonl"
+JOURNAL_PATH = Path.home() / ".config" / "vupai" / "journal.jsonl"
 
 
 class Journal:

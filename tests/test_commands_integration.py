@@ -3,12 +3,12 @@ import subprocess as sp
 
 import pytest
 
-from voxpane import tmuxio
+from vupai import tmuxio
 
 
 @pytest.mark.integration
 def test_create_focus_close_roundtrip_real_tmux():
-    socket = "voxpane-cmd-itest"
+    socket = "vupai-cmd-itest"
     base = ["tmux", "-L", socket]
 
     def t(args):
@@ -26,7 +26,7 @@ def test_create_focus_close_roundtrip_real_tmux():
         tmuxio.set_pane_name(b, "atlas")
         tmuxio.select_layout(win, "tiled")
         lines = tmuxio.list_panes()
-        names = {ln.split("\t")[4] for ln in lines}  # field 5 = @voxpane_name
+        names = {ln.split("\t")[4] for ln in lines}  # field 5 = @vupai_name
         assert {"nova", "atlas"} <= names
         # Focus, then close one.
         tmuxio.select_pane(a)

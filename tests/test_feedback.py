@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
-from voxpane.feedback import Feedback
-from voxpane.router import Route
+from vupai.feedback import Feedback
+from vupai.router import Route
 
 
 @dataclass
@@ -110,7 +110,7 @@ def test_listening_and_working_and_ready_set_indicator():
     fb.ready()
     assert any("listening" in s and "◉" in s for s in io.status)
     assert any("working" in s for s in io.status)
-    assert any("voxpane" in s and "●" in s for s in io.status)
+    assert any("vupai" in s and "●" in s for s in io.status)
 
 
 def test_indicator_disabled_skips_set_status():
