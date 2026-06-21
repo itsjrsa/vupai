@@ -8,9 +8,10 @@ from voxpane import cli
 class FakeTmux:
     """In-memory stand-in for the tmuxio module."""
 
-    def __init__(self, *, server=True, focused="%1"):
+    def __init__(self, *, server=True, focused="%1", inside_tmux=False):
         self._server = server
         self._focused = focused
+        self._inside_tmux = inside_tmux
         self.calls: list[tuple] = []
         self.daemon_spawns: list = []
 
@@ -28,6 +29,9 @@ class FakeTmux:
 
     def restore_status_right(self) -> None:
         self.calls.append(("restore_status_right",))
+
+    def inside_tmux(self) -> bool:
+        return self._inside_tmux
 
     def attach(self) -> None:
         self.calls.append(("attach",))
@@ -233,6 +237,22 @@ def test_default_reload_respawns_daemon_then_attaches(fake_env, monkeypatch):
     assert not pidfile.exists()  # _cmd_down clears the stale pidfile
     assert ft.daemon_spawns == [True]  # ensure_up respawned the daemon
     assert ("attach",) in ft.calls
+
+
+def test_default_reload_inside_tmux_skips_attach(fake_env, monkeypatch, capsys):
+    # `tmux attach` refuses to nest; from inside a pane the reload must respawn
+    # the daemon but skip the attach instead of failing.
+    ft, pidfile = fake_env
+    ft._inside_tmux = True
+    pidfile.write_text("4321")
+    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: None)
+
+    rc = cli.main(["--reload"])
+
+    assert rc == 0
+    assert ft.daemon_spawns == [True]  # daemon still respawned
+    assert ("attach",) not in ft.calls  # but no nesting attach
+    assert "nesting" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

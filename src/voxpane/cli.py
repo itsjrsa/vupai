@@ -181,6 +181,13 @@ def _cmd_default(args: argparse.Namespace) -> int:
     if getattr(args, "reload", False):
         _cmd_down(args)
     ensure_up()
+    # `tmux attach` refuses to nest, so attaching from inside a pane would fail
+    # (and looks like a broken reload). When already inside tmux, the daemon has
+    # been respawned and there's nowhere new to attach - so just report and stop.
+    if tmuxio.inside_tmux():
+        print("Already inside tmux - daemon reloaded; staying in the current "
+              "session (skipped attach to avoid nesting).")
+        return 0
     tmuxio.attach()
     return 0
 

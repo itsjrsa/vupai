@@ -398,6 +398,13 @@ def test_attach_execs_tmux_attach(monkeypatch):
     assert captured["args"] == ["tmux", "attach"]
 
 
+def test_inside_tmux_reflects_env(monkeypatch):
+    monkeypatch.setenv("TMUX", "/tmp/tmux-501/default,1234,0")
+    assert tmuxio.inside_tmux() is True
+    monkeypatch.delenv("TMUX", raising=False)
+    assert tmuxio.inside_tmux() is False
+
+
 @pytest.mark.integration
 def test_list_panes_roundtrip_real_tmux():
     # Uses a throwaway, isolated tmux server via a private socket name so it

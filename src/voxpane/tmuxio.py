@@ -263,6 +263,15 @@ def toggle_zoom(pane_id: str) -> None:
     run(["resize-pane", "-Z", "-t", pane_id])
 
 
+def inside_tmux() -> bool:
+    """True when running inside a tmux pane (tmux sets ``$TMUX``).
+
+    Used to avoid a nested-session attach: `tmux attach` from within tmux
+    refuses to nest, so callers skip the attach in that case.
+    """
+    return bool(os.environ.get("TMUX"))
+
+
 def attach() -> None:
     """Replace the current process with ``tmux attach``."""
     os.execvp("tmux", ["tmux", "attach"])
