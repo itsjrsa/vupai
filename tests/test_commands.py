@@ -432,6 +432,12 @@ def test_parse_close_misheard_verb_clothes():
     assert _parse_btn("cloze nova").kind == "close"
 
 
+def test_parse_close_misheard_verb_rose():
+    # "close nova" lands as "rose nova" in the wild.
+    c = _parse_btn("rose nova")
+    assert c.kind == "close" and c.name == "nova"
+
+
 def test_parse_close_misheard_verb_all_target():
     assert _parse_btn("clothes all").kind == "close_others"
 

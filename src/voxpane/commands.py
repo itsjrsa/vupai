@@ -31,12 +31,15 @@ _CREATE_VERBS = ("create", "make", "add", "open", "new")
 # falls through to inject - non-destructive. Extend with a one-liner + a test.
 _CREATE_VERB_ALIASES = frozenset({"ate", "hate", "eight", "crate", "creator"})
 _CLOSE_VERBS = ("close", "kill")
-# Curated ASR mishearings of "close" (clothes/cloze). Same pattern as
-# _CREATE_VERB_ALIASES, but close is DESTRUCTIVE so the set is kept tighter: only
-# high-confidence homophones, and the parse still requires a target token after
-# the verb (a bare verb is None, an unknown name -> "no pane named ..."), so a
-# misfire can't silently kill a pane. "kill" has no clean homophone -> omitted.
-_CLOSE_VERB_ALIASES = frozenset({"clothes", "cloze"})
+# Curated ASR mishearings of "close" (clothes/cloze/rose - "close nova" lands as
+# "rose nova" in the wild). close is DESTRUCTIVE so the set stays tighter than the
+# create aliases. "rose" is a real word (the usual precision-guard no), kept here
+# only because the blast radius is contained: the parse still requires a target
+# after the verb (a bare verb is None), and execution resolves that target to a
+# real pane or returns "no pane named ..." - so a misfire can't silently kill a
+# pane, and "rose" is not a CALLSIGN so it never shadows an auto-named pane.
+# "kill" has no clean homophone -> omitted.
+_CLOSE_VERB_ALIASES = frozenset({"clothes", "cloze", "rose"})
 _ZOOM_VERBS = ("zoom", "maximize")
 # Curated ASR mishearing of "zoom" (zoo). View-only action, so low risk; same
 # explicit-set pattern as the other verb aliases.
