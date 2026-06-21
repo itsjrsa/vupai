@@ -1,6 +1,6 @@
 from pynput import keyboard
 
-from vupai.hotkey import Hotkey, MultiHotkey
+from vupai.hotkey import PTT_KEYS, Hotkey, MultiHotkey, capture_key, valid_key
 
 
 def _counter():
@@ -165,3 +165,75 @@ def test_multi_callback_exception_isolated():
     assert hk._held[keyboard.Key.alt_r] is True
     hk._release(keyboard.Key.alt_r)
     assert r["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# valid_key / PTT_KEYS / capture_key (setup helpers)
+# ---------------------------------------------------------------------------
+
+def test_valid_key_accepts_modifiers_and_function_keys():
+    assert valid_key("alt_r")
+    assert valid_key("cmd_l")
+    assert valid_key("f13")
+
+
+def test_valid_key_rejects_junk():
+    assert not valid_key("not_a_key")
+    assert not valid_key("")
+    assert not valid_key("ALT_R")
+
+
+def test_ptt_keys_are_all_valid():
+    # Every curated key must be a real pynput Key name, else the menu offers a
+    # choice that crashes the listener at daemon spawn.
+    assert PTT_KEYS, "curated list must not be empty"
+    for name, label in PTT_KEYS:
+        assert valid_key(name), name
+        assert label
+
+
+class _FakeListener:
+    """Drives capture_key without a real pynput listener: fires preset keys on
+    start(), records stop()."""
+
+    def __init__(self, on_press, keys):
+        self._on_press = on_press
+        self._keys = keys
+        self.stopped = False
+
+    def start(self):
+        for key in self._keys:
+            self._on_press(key)
+
+    def stop(self):
+        self.stopped = True
+
+
+def test_capture_key_returns_name_for_modifier():
+    def factory(on_press):
+        return _FakeListener(on_press, [keyboard.Key.cmd_r])
+
+    assert capture_key(listener_factory=factory, timeout=0.1) == "cmd_r"
+
+
+def test_capture_key_ignores_char_key_then_times_out():
+    # A character KeyCode has no .name; it's skipped and we keep waiting.
+    def factory(on_press):
+        return _FakeListener(on_press, [keyboard.KeyCode(char="a")])
+
+    assert capture_key(listener_factory=factory, timeout=0.05) is None
+
+
+def test_capture_key_skips_char_then_takes_modifier():
+    def factory(on_press):
+        return _FakeListener(
+            on_press, [keyboard.KeyCode(char="a"), keyboard.Key.alt_r])
+
+    assert capture_key(listener_factory=factory, timeout=0.1) == "alt_r"
+
+
+def test_capture_key_timeout_returns_none():
+    def factory(on_press):
+        return _FakeListener(on_press, [])  # nothing pressed
+
+    assert capture_key(listener_factory=factory, timeout=0.05) is None

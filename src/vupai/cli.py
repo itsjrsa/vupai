@@ -18,11 +18,13 @@ from vupai.config import (
     CONFIG_PATH,
     Config,
     load_config,
+    set_hotkey_config,
     set_mic_device,
     write_journal_config,
 )
 from vupai.daemon import Daemon
 from vupai.feedback import Feedback
+from vupai.hotkey import PTT_KEYS, capture_key, valid_key
 from vupai.permissions import (
     check_permissions,
     fixes,
@@ -498,6 +500,128 @@ def _prompt_mic_setup(*, reader=None, runner=None, config_path: Path | None = No
     print(f"  Mic set to: {name if name else 'system default'}.")
 
 
+def _prompt_addressing(current: str, reader) -> str:
+    """Ask for the addressing mode; bare Enter (or anything unrecognized) keeps
+    the current value."""
+    print("\nAddressing mode:")
+    print("  1  button  - two keys: dictation + command layer (recommended)")
+    print("  2  keyword - single key, no command layer (legacy)")
+    try:
+        answer = reader(f"  Choice [keep {current}]: ").strip().lower()
+    except (EOFError, OSError):
+        return current
+    if answer in ("1", "button"):
+        return "button"
+    if answer in ("2", "keyword"):
+        return "keyword"
+    if answer:
+        print(f"  {answer!r} not understood. Keeping {current}.")
+    return current
+
+
+def _select_ptt_key(label: str, current: str, *, reader, capture,
+                    exclude: str | None = None) -> str | None:
+    """Interactive picker for one push-to-talk key.
+
+    Renders the curated PTT_KEYS menu (marking `current`) and accepts a list
+    index, an exact pynput key name, `p` to press a key (live capture), or bare
+    Enter to keep `current` (returns None). Re-prompts on invalid input or a
+    collision with `exclude`.
+    """
+    while True:
+        print(f"\n{label}:")
+        for i, (name, friendly) in enumerate(PTT_KEYS):
+            mark = "*" if name == current else " "
+            print(f"  {mark} {i}  {friendly} ({name})")
+        print("    p  press a key")
+        try:
+            answer = reader(f"  Choice [keep {current}]: ").strip()
+        except (EOFError, OSError):
+            return None
+        if not answer:
+            return None
+
+        if answer.lower() == "p":
+            print("  Press the key you want to hold...")
+            chosen = capture()
+            if not chosen:
+                print("  No key captured. Try again.")
+                continue
+        elif answer.isdigit():
+            idx = int(answer)
+            if not 0 <= idx < len(PTT_KEYS):
+                print(f"  No key at index {idx} (have 0..{len(PTT_KEYS) - 1}).")
+                continue
+            chosen = PTT_KEYS[idx][0]
+        elif valid_key(answer):
+            chosen = answer
+        else:
+            print(f"  {answer!r} is not a known key name. Try again.")
+            continue
+
+        if exclude is not None and chosen == exclude:
+            print(f"  {chosen} is already the dictation key; pick another.")
+            continue
+        return chosen
+
+
+def _prompt_hotkey_setup(*, reader=None, capture=None,
+                         config_path: Path | None = None) -> None:
+    """Setup step: choose the addressing mode and push-to-talk key(s).
+
+    Re-runnable (like `_prompt_mic_setup`): shows the current binding and a bare
+    Enter keeps it. Writes only when the resulting config differs, then nudges
+    `vupai reload` if a daemon is running."""
+    reader = reader if reader is not None else input
+    capture = capture if capture is not None else capture_key
+    cfg = load_config(config_path)
+
+    print("\nTrigger keys (push-to-talk):")
+    mode = _prompt_addressing(cfg.addressing, reader)
+
+    dictation = _select_ptt_key(
+        "Dictation key (hold to talk to the focused pane)", cfg.hotkey,
+        reader=reader, capture=capture)
+    hotkey = dictation if dictation is not None else cfg.hotkey
+
+    command = cfg.command_hotkey
+    if mode == "button":
+        picked = _select_ptt_key(
+            "Command key (commands, broadcast, addressing by name)",
+            cfg.command_hotkey, reader=reader, capture=capture, exclude=hotkey)
+        command = picked if picked is not None else cfg.command_hotkey
+        if command == hotkey:
+            print("  Command key must differ from the dictation key. "
+                  "Keeping current keys.")
+            return
+
+    if (mode, hotkey, command) == (
+            cfg.addressing, cfg.hotkey, cfg.command_hotkey):
+        return  # nothing changed
+
+    set_hotkey_config(
+        addressing=mode, hotkey=hotkey, command_hotkey=command,
+        path=config_path)
+    if mode == "button":
+        print(f"  Keys set: dictation={hotkey}, command={command} "
+              "(button mode).")
+    else:
+        print(f"  Key set: dictation={hotkey} (keyword mode).")
+    if _daemon_running():
+        print("  Run `vupai reload` for the daemon to pick it up.")
+
+
+def _cmd_keys(args: argparse.Namespace) -> int:
+    """Show the current trigger keys, then run the interactive picker."""
+    cfg = load_config()
+    print(f"Addressing: {cfg.addressing}")
+    print(f"  dictation key: {cfg.hotkey}")
+    if cfg.addressing == "button":
+        print(f"  command key:   {cfg.command_hotkey}")
+    _prompt_hotkey_setup()
+    return 0
+
+
 def _cmd_setup(args: argparse.Namespace) -> int:
     """Interactive permission bootstrap: probe, then deep-link the user to each
     failing pane (naming the exact terminal app to enable). Cannot grant on the
@@ -516,6 +640,9 @@ def _cmd_setup(args: argparse.Namespace) -> int:
 
     # Re-runnable: pick the input device (bare Enter keeps the current choice).
     _prompt_mic_setup()
+
+    # Re-runnable: choose the addressing mode and push-to-talk key(s).
+    _prompt_hotkey_setup()
 
     # Download the speech model up front (visible) so the daemon's first run
     # doesn't stall the hotkey on a silent multi-minute fetch.
@@ -670,6 +797,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--force", action="store_true",
         help="pin even if the capture probe fails")
     p_mic.set_defaults(func=_cmd_mic)
+
+    sub.add_parser(
+        "keys", help="show / change the push-to-talk trigger keys (interactive)"
+    ).set_defaults(func=_cmd_keys)
 
     sub.add_parser("doctor").set_defaults(func=_cmd_doctor)
     sub.add_parser(

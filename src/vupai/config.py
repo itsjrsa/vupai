@@ -92,7 +92,51 @@ def write_journal_config(
     return target
 
 
-_MIC_LINE = re.compile(r"^\s*mic_device\s*=")
+_STARTER_HEADER = (
+    "# vupai config - see Config in src/vupai/config.py for every key."
+)
+
+
+def _escape_toml(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _merge_scalar_keys(updates: dict[str, str], *, path: Path | None) -> Path:
+    """Merge `key = "value"` string assignments into config.toml in place.
+
+    Replaces each existing assignment (preserving comments and every other key)
+    or appends it if absent, creating a starter file when none exists. `updates`
+    maps config key name -> raw string value; values are TOML-escaped here.
+    """
+    target = path if path is not None else CONFIG_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    new_lines = {
+        key: f'{key} = "{_escape_toml(val)}"' for key, val in updates.items()
+    }
+    matchers = {
+        key: re.compile(rf"^\s*{re.escape(key)}\s*=") for key in updates
+    }
+
+    if target.exists():
+        lines = target.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = [_STARTER_HEADER]
+
+    out: list[str] = []
+    replaced: set[str] = set()
+    for line in lines:
+        for key, matcher in matchers.items():
+            if key not in replaced and matcher.match(line):
+                out.append(new_lines[key])
+                replaced.add(key)
+                break
+        else:
+            out.append(line)
+    for key in updates:
+        if key not in replaced:
+            out.append(new_lines[key])
+    target.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return target
 
 
 def set_mic_device(name: str, *, path: Path | None = None) -> Path:
@@ -103,27 +147,25 @@ def set_mic_device(name: str, *, path: Path | None = None) -> Path:
     comments and every other key) or appends one if absent, creating a starter
     file when none exists. An empty `name` clears the pin (system default).
     """
-    target = path if path is not None else CONFIG_PATH
-    target.parent.mkdir(parents=True, exist_ok=True)
-    escaped = name.replace("\\", "\\\\").replace('"', '\\"')
-    new_line = f'mic_device = "{escaped}"'
+    return _merge_scalar_keys({"mic_device": name}, path=path)
 
-    if target.exists():
-        lines = target.read_text(encoding="utf-8").splitlines()
-    else:
-        lines = [
-            "# vupai config - see Config in src/vupai/config.py for every key."
-        ]
 
-    out: list[str] = []
-    replaced = False
-    for line in lines:
-        if not replaced and _MIC_LINE.match(line):
-            out.append(new_line)
-            replaced = True
-        else:
-            out.append(line)
-    if not replaced:
-        out.append(new_line)
-    target.write_text("\n".join(out) + "\n", encoding="utf-8")
-    return target
+def set_hotkey_config(
+    *, addressing: str, hotkey: str, command_hotkey: str,
+    path: Path | None = None,
+) -> Path:
+    """Persist the trigger-key selection (addressing mode + PTT keys).
+
+    Merges `addressing`, `hotkey`, and `command_hotkey` into config.toml in
+    place (preserving comments and every other key), creating a starter file
+    when none exists. Mirrors `set_mic_device`; written by `vupai keys` and the
+    `vupai setup` hotkey step.
+    """
+    return _merge_scalar_keys(
+        {
+            "addressing": addressing,
+            "hotkey": hotkey,
+            "command_hotkey": command_hotkey,
+        },
+        path=path,
+    )

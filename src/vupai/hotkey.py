@@ -1,11 +1,81 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable
+import threading
+from typing import Any, Callable
 
 from pynput import keyboard
 
 _log = logging.getLogger(__name__)
+
+# Curated push-to-talk keys offered by the setup menu: (pynput Key name, label).
+# Modifier keys make good held PTT keys; F13-F19 are common dedicated keys.
+# Every entry must be a real keyboard.Key name (see valid_key) or the daemon's
+# listener crashes at spawn. On macOS pynput collapses the left modifiers
+# (alt_l->alt, cmd_l->cmd, ctrl_l->ctrl) so capture_key reports those bare
+# names; the list uses them so the menu, capture, and config all agree.
+PTT_KEYS: list[tuple[str, str]] = [
+    ("alt_r", "Right-Option"),
+    ("alt", "Left-Option"),
+    ("cmd_r", "Right-Command"),
+    ("cmd", "Left-Command"),
+    ("ctrl_r", "Right-Control"),
+    ("ctrl", "Left-Control"),
+    ("f13", "F13"),
+    ("f14", "F14"),
+    ("f15", "F15"),
+    ("f16", "F16"),
+    ("f17", "F17"),
+    ("f18", "F18"),
+    ("f19", "F19"),
+]
+
+
+def valid_key(name: str) -> bool:
+    """True if `name` resolves to a pynput keyboard.Key.
+
+    This is the same lookup Hotkey/MultiHotkey do at construction, so it accepts
+    exactly the names that won't crash the listener.
+    """
+    return getattr(keyboard.Key, name, None) is not None
+
+
+def capture_key(
+    *,
+    listener_factory: Callable[[Callable], Any] | None = None,
+    timeout: float = 5.0,
+) -> str | None:
+    """Block until the user presses one named key, returning its config name.
+
+    Listens for the first keyboard.Key press (a modifier/function key, not a
+    character) and returns its `.name` (e.g. "alt_r"). Character keys are
+    skipped (no `.name`); returns None on timeout. `listener_factory` is
+    injectable for tests so no real pynput listener runs.
+    """
+    def _default_factory(on_press):
+        return keyboard.Listener(on_press=on_press)
+
+    factory = listener_factory if listener_factory is not None else _default_factory
+
+    captured: dict[str, str] = {}
+    done = threading.Event()
+
+    def on_press(key) -> bool | None:
+        name = getattr(key, "name", None)
+        if name is None:
+            return None  # a character KeyCode; keep waiting for a named key
+        captured["name"] = name
+        done.set()
+        return False  # stop the listener
+
+    listener = factory(on_press)
+    listener.start()
+    done.wait(timeout)
+    try:
+        listener.stop()
+    except Exception:
+        _log.debug("listener.stop() raised", exc_info=True)
+    return captured.get("name")
 
 
 class Hotkey:

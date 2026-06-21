@@ -676,7 +676,7 @@ def test_voice_commands_prints(fake_env, monkeypatch, capsys):
 @pytest.mark.parametrize("argv", [
     [], ["up"], ["down"], ["reload"], ["status"], ["doctor"], ["voice-commands"],
     ["name", "x"], ["name", "x", "%3"], ["autoname"], ["autoname", "%3"],
-    ["_daemon"],
+    ["keys"], ["_daemon"],
 ])
 def test_parser_accepts_all_subcommands(argv):
     parser = cli.build_parser()
@@ -747,7 +747,8 @@ def test_setup_prompts_journal_on_first_run(fake_env, monkeypatch, tmp_path, cap
     monkeypatch.setattr(cli, "terminal_app", lambda: TerminalApp("Terminal", "com.apple.Terminal"))
     monkeypatch.setattr(cli, "open_settings_pane", lambda url: None)
     answers = iter(["y", "n"])  # journal yes, audio no
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    # Extra prompts (the hotkey step) get "" -> keep current.
+    monkeypatch.setattr("builtins.input", lambda _: next(answers, ""))
     rc = cli.main(["setup"])
     assert rc == 0
     written = cli.load_config(cfg)
@@ -901,3 +902,105 @@ def test_setup_mic_prompt_bare_enter_keeps_current(fake_env, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: "")
     cli._prompt_mic_setup()
     assert wrote == []  # no change on empty input
+
+
+# ---------------------------------------------------------------------------
+# Hotkey / trigger-key setup
+# ---------------------------------------------------------------------------
+
+def _reader(values):
+    """A reader callable that returns queued answers, ignoring the prompt."""
+    it = iter(values)
+    return lambda _prompt="": next(it)
+
+
+def _capture_writes(monkeypatch):
+    """Capture set_hotkey_config kwargs. With config_path pointed at a missing
+    file the current config is all defaults (button/alt_r/cmd_r)."""
+    saved = {}
+    monkeypatch.setattr(
+        cli, "set_hotkey_config",
+        lambda *, path=None, **kw: saved.update(kw))
+    return saved
+
+
+def test_keys_prompt_menu_index_button(fake_env, monkeypatch, tmp_path):
+    saved = _capture_writes(monkeypatch)
+    cfgpath = tmp_path / "missing.toml"
+    # addressing: keep (button); dictation idx 4 -> ctrl_r; command idx 2 -> cmd_r
+    cli._prompt_hotkey_setup(reader=_reader(["", "4", "2"]), config_path=cfgpath)
+    assert saved == {
+        "addressing": "button", "hotkey": "ctrl_r", "command_hotkey": "cmd_r"}
+
+
+def test_keys_prompt_exact_name(fake_env, monkeypatch, tmp_path):
+    saved = _capture_writes(monkeypatch)
+    cfgpath = tmp_path / "missing.toml"
+    cli._prompt_hotkey_setup(
+        reader=_reader(["", "f13", "f14"]), config_path=cfgpath)
+    assert saved["hotkey"] == "f13"
+    assert saved["command_hotkey"] == "f14"
+
+
+def test_keys_prompt_capture_press_a_key(fake_env, monkeypatch, tmp_path):
+    saved = _capture_writes(monkeypatch)
+    cfgpath = tmp_path / "missing.toml"
+    captures = iter(["ctrl_r", "cmd_r"])
+    cli._prompt_hotkey_setup(
+        reader=_reader(["", "p", "p"]),
+        capture=lambda *a, **k: next(captures),
+        config_path=cfgpath)
+    assert saved["hotkey"] == "ctrl_r"
+    assert saved["command_hotkey"] == "cmd_r"
+
+
+def test_keys_prompt_bare_enter_keeps_current(fake_env, monkeypatch, tmp_path):
+    wrote = []
+    monkeypatch.setattr(
+        cli, "set_hotkey_config", lambda *, path=None, **kw: wrote.append(kw))
+    cfgpath = tmp_path / "missing.toml"  # defaults: button/alt_r/cmd_r
+    cli._prompt_hotkey_setup(
+        reader=_reader(["", "", ""]), config_path=cfgpath)
+    assert wrote == []  # nothing changed -> no write
+
+
+def test_keys_prompt_invalid_then_valid(fake_env, monkeypatch, tmp_path):
+    saved = _capture_writes(monkeypatch)
+    cfgpath = tmp_path / "missing.toml"
+    # dictation: junk then idx 4 (ctrl_r); command: idx 2 (cmd_r)
+    cli._prompt_hotkey_setup(
+        reader=_reader(["", "nope", "4", "2"]), config_path=cfgpath)
+    assert saved["hotkey"] == "ctrl_r"
+    assert saved["command_hotkey"] == "cmd_r"
+
+
+def test_keys_prompt_collision_reasks_command(fake_env, monkeypatch, tmp_path):
+    saved = _capture_writes(monkeypatch)
+    cfgpath = tmp_path / "missing.toml"
+    # dictation idx 4 (ctrl_r); command idx 4 (ctrl_r, collides) then idx 2 (cmd_r)
+    cli._prompt_hotkey_setup(
+        reader=_reader(["", "4", "4", "2"]), config_path=cfgpath)
+    assert saved["hotkey"] == "ctrl_r"
+    assert saved["command_hotkey"] == "cmd_r"
+
+
+def test_keys_prompt_keyword_mode(fake_env, monkeypatch, tmp_path):
+    saved = _capture_writes(monkeypatch)
+    cfgpath = tmp_path / "missing.toml"
+    # addressing 2 -> keyword; dictation idx 4 -> ctrl_r; no command prompt
+    cli._prompt_hotkey_setup(
+        reader=_reader(["2", "4"]), config_path=cfgpath)
+    assert saved["addressing"] == "keyword"
+    assert saved["hotkey"] == "ctrl_r"
+    # command key preserved from current config (default cmd_r)
+    assert saved["command_hotkey"] == "cmd_r"
+
+
+def test_cmd_keys_prints_current_then_prompts(fake_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_prompt_hotkey_setup", lambda: None)
+    ns = cli.build_parser().parse_args(["keys"])
+    rc = cli._cmd_keys(ns)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "button" in out
+    assert "alt_r" in out

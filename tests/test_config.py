@@ -3,6 +3,7 @@ from pathlib import Path
 from vupai.config import (
     Config,
     load_config,
+    set_hotkey_config,
     set_mic_device,
     write_journal_config,
 )
@@ -195,3 +196,41 @@ def test_loads_addressing_config(tmp_path: Path) -> None:
     c = load_config(p)
     assert c.addressing == "button"
     assert c.command_hotkey == "ctrl_r"
+
+
+def test_set_hotkey_config_creates_file(tmp_path: Path) -> None:
+    p = tmp_path / "nested" / "config.toml"
+    out = set_hotkey_config(
+        addressing="button", hotkey="alt_r", command_hotkey="cmd", path=p)
+    assert out == p
+    c = load_config(p)
+    assert c.addressing == "button"
+    assert c.hotkey == "alt_r"
+    assert c.command_hotkey == "cmd"
+
+
+def test_set_hotkey_config_merges_preserving_other_keys(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    set_mic_device("USB Mic", path=p)
+    set_hotkey_config(
+        addressing="button", hotkey="f13", command_hotkey="cmd_r", path=p)
+    c = load_config(p)
+    assert c.hotkey == "f13"
+    assert c.command_hotkey == "cmd_r"
+    # mic pin written earlier survives the merge
+    assert c.mic_device == "USB Mic"
+    assert "# vupai config" in p.read_text()
+
+
+def test_set_hotkey_config_replaces_existing_values(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    set_hotkey_config(
+        addressing="button", hotkey="alt_r", command_hotkey="cmd_r", path=p)
+    set_hotkey_config(
+        addressing="keyword", hotkey="ctrl_r", command_hotkey="cmd_r", path=p)
+    c = load_config(p)
+    assert c.addressing == "keyword"
+    assert c.hotkey == "ctrl_r"
+    text = p.read_text()
+    assert text.count("hotkey =") == 2  # hotkey + command_hotkey, no dupes
+    assert text.count("addressing =") == 1
