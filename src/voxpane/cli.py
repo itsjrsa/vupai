@@ -11,10 +11,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-from voxpane import tmuxio
+from voxpane import audio, tmuxio
 from voxpane.asr import ParakeetTranscriber, model_cached
 from voxpane.commands import _CLOSE_VERBS, _CREATE_VERBS, wrap_agent_command
-from voxpane.config import CONFIG_PATH, Config, load_config, write_journal_config
+from voxpane.config import (
+    CONFIG_PATH,
+    Config,
+    load_config,
+    set_mic_device,
+    write_journal_config,
+)
 from voxpane.daemon import Daemon
 from voxpane.feedback import Feedback
 from voxpane.permissions import (
@@ -377,6 +383,105 @@ def _prompt_journal_setup(*, reader=None, config_path: Path | None = None) -> No
           f"(journal_enabled={enabled}, journal_keep_audio={keep_audio}).")
 
 
+def _format_device_line(index, device, *, selected: str, prefix: bool) -> str:
+    """Render one input-device row for `voxpane mic` / the setup prompt."""
+    marks = []
+    if device.is_default:
+        marks.append("default")
+    is_selected = bool(selected) and device.name == selected
+    if is_selected:
+        marks.append("selected")
+    suffix = f"   ({', '.join(marks)})" if marks else ""
+    mark = ("*" if is_selected else " ") + " " if prefix else ""
+    return f"{mark}{index}  {device.name}{suffix}"
+
+
+def _resolve_mic_selection(selection: str, devices) -> tuple[str | None, str | None]:
+    """Map a user token (index, name, or 'default') to the name to store.
+
+    Returns ``(name_to_store, error)``. ``'default'`` -> ``("", None)`` clears
+    the pin. On a bad index/name, ``name`` is None and ``error`` is set.
+    """
+    if selection == "default":
+        return "", None
+    if selection.isdigit():
+        idx = int(selection)
+        if 0 <= idx < len(devices):
+            return devices[idx].name, None
+        upper = len(devices) - 1
+        return None, f"No device at index {idx} (have 0..{upper})."
+    for device in devices:
+        if device.name.lower() == selection.lower():
+            return device.name, None
+    return None, f"No input device matches {selection!r}."
+
+
+def _cmd_mic(args: argparse.Namespace) -> int:
+    """List input devices, or pin one for the recorder.
+
+    No argument lists devices (marking the system default and current pin). An
+    index, exact name, or the literal `default` (to unpin) persists the choice;
+    a running daemon must `voxpane reload` to pick it up.
+    """
+    devices = audio.list_input_devices()
+    cfg = load_config()
+    if not devices:
+        print("No input devices found (is `system_profiler` available?).")
+        return 1
+
+    if args.selection is None:
+        for i, device in enumerate(devices):
+            print(_format_device_line(
+                i, device, selected=cfg.mic_device, prefix=True))
+        if cfg.mic_device:
+            print(f"\nPinned: {cfg.mic_device}. "
+                  "`voxpane mic default` to use the system default.")
+        else:
+            print("\nUsing the system default. "
+                  "`voxpane mic <index|name>` to pin one.")
+        return 0
+
+    name, error = _resolve_mic_selection(args.selection, devices)
+    if error:
+        print(error)
+        return 1
+    set_mic_device(name)
+    label = name if name else "system default"
+    print(f"Mic set to: {label}")
+    if _daemon_running():
+        print("Run `voxpane reload` for the daemon to pick it up.")
+    return 0
+
+
+def _prompt_mic_setup(*, reader=None, runner=None, config_path: Path | None = None) -> None:
+    """Setup step: list input devices and let the user pin one.
+
+    Re-runnable (unlike the first-run journal prompt): shows the current pin and
+    a bare Enter keeps it. Silently no-ops when no devices are enumerable."""
+    reader = reader if reader is not None else input
+    devices = audio.list_input_devices(runner=runner)
+    if not devices:
+        return
+    cfg = load_config(config_path)
+    print("\nMicrophone (input device for speech):")
+    for i, device in enumerate(devices):
+        print("  " + _format_device_line(
+            i, device, selected=cfg.mic_device, prefix=False))
+    current = cfg.mic_device or "system default"
+    try:
+        answer = reader(f"  Choice [keep {current}]: ").strip()
+    except EOFError:
+        return
+    if not answer:
+        return
+    name, error = _resolve_mic_selection(answer, devices)
+    if error:
+        print(f"  {error} Keeping {current}.")
+        return
+    set_mic_device(name, path=config_path)
+    print(f"  Mic set to: {name if name else 'system default'}.")
+
+
 def _cmd_setup(args: argparse.Namespace) -> int:
     """Interactive permission bootstrap: probe, then deep-link the user to each
     failing pane (naming the exact terminal app to enable). Cannot grant on the
@@ -392,6 +497,9 @@ def _cmd_setup(args: argparse.Namespace) -> int:
 
     # First-run only: capture journaling consent before anything is recorded.
     _prompt_journal_setup()
+
+    # Re-runnable: pick the input device (bare Enter keeps the current choice).
+    _prompt_mic_setup()
 
     # Download the speech model up front (visible) so the daemon's first run
     # doesn't stall the hotkey on a silent multi-minute fetch.
@@ -498,7 +606,10 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
     PIDFILE.write_text(str(os.getpid()))
     cfg = load_config()
-    recorder = Recorder(sample_rate=cfg.sample_rate)
+    device, warning = audio.resolve_device(cfg.mic_device)
+    if warning:
+        logging.getLogger("voxpane.recorder").warning(warning)
+    recorder = Recorder(sample_rate=cfg.sample_rate, device=device)
     transcriber = ParakeetTranscriber(cfg.model_id)
     registry = PaneRegistry()
     feedback = Feedback(indicator_enabled=cfg.status_indicator)
@@ -535,6 +646,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_autoname = sub.add_parser("autoname")
     p_autoname.add_argument("pane", nargs="?", default=None)
     p_autoname.set_defaults(func=_cmd_autoname)
+
+    p_mic = sub.add_parser(
+        "mic", help="list input devices, or pin one (index|name|default)")
+    p_mic.add_argument("selection", nargs="?", default=None)
+    p_mic.set_defaults(func=_cmd_mic)
 
     sub.add_parser("doctor").set_defaults(func=_cmd_doctor)
     sub.add_parser(

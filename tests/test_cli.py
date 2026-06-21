@@ -64,6 +64,9 @@ def fake_env(monkeypatch, tmp_path):
     cfg = tmp_path / "config.toml"
     cfg.write_text("")
     monkeypatch.setattr(cli, "CONFIG_PATH", cfg)
+    # `setup` lists mic devices; keep it from shelling out to system_profiler /
+    # blocking on stdin. Tests that exercise the mic flow override this.
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: [])
     # Don't launch a real background process or probe a real pid in unit tests.
     monkeypatch.setattr(cli, "_daemon_running", lambda: False)
     monkeypatch.setattr(cli, "_spawn_daemon", lambda: ft.daemon_spawns.append(True))
@@ -747,3 +750,109 @@ def test_setup_prompts_journal_on_first_run(fake_env, monkeypatch, tmp_path, cap
     written = cli.load_config(cfg)
     assert written.journal_enabled is True
     assert written.journal_keep_audio is False
+
+
+# ---------------------------------------------------------------------------
+# mic command + setup mic step
+# ---------------------------------------------------------------------------
+
+def _devs():
+    from voxpane.audio import InputDevice
+    return [
+        InputDevice("Built-in Microphone", is_default=True),
+        InputDevice("AirPods Pro", is_default=False),
+    ]
+
+
+def test_mic_lists_devices_and_marks_default(fake_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: _devs())
+    monkeypatch.setattr(cli, "load_config", lambda: cli.Config(mic_device=""))
+    rc = cli.main(["mic"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Built-in Microphone" in out
+    assert "default" in out
+    assert "system default" in out  # hint when nothing pinned
+
+
+def test_mic_marks_current_selection(fake_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: _devs())
+    monkeypatch.setattr(
+        cli, "load_config", lambda: cli.Config(mic_device="AirPods Pro"))
+    rc = cli.main(["mic"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "selected" in out
+    assert "Pinned: AirPods Pro" in out
+
+
+def test_mic_select_by_index_persists(fake_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: _devs())
+    saved = {}
+    monkeypatch.setattr(
+        cli, "set_mic_device", lambda name: saved.setdefault("name", name))
+    rc = cli.main(["mic", "1"])
+    assert rc == 0
+    assert saved["name"] == "AirPods Pro"
+    assert "Mic set to: AirPods Pro" in capsys.readouterr().out
+
+
+def test_mic_select_by_name_persists(fake_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: _devs())
+    saved = {}
+    monkeypatch.setattr(
+        cli, "set_mic_device", lambda name: saved.setdefault("name", name))
+    rc = cli.main(["mic", "airpods pro"])  # case-insensitive
+    assert rc == 0
+    assert saved["name"] == "AirPods Pro"
+
+
+def test_mic_default_clears_pin(fake_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: _devs())
+    saved = {}
+    monkeypatch.setattr(
+        cli, "set_mic_device", lambda name: saved.setdefault("name", name))
+    rc = cli.main(["mic", "default"])
+    assert rc == 0
+    assert saved["name"] == ""
+    assert "system default" in capsys.readouterr().out
+
+
+def test_mic_bad_index_errors_without_writing(fake_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: _devs())
+    wrote = []
+    monkeypatch.setattr(cli, "set_mic_device", lambda name: wrote.append(name))
+    rc = cli.main(["mic", "9"])
+    assert rc == 1
+    assert wrote == []
+    assert "No device at index 9" in capsys.readouterr().out
+
+
+def test_mic_no_devices_reports_and_fails(fake_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: [])
+    rc = cli.main(["mic"])
+    assert rc == 1
+    assert "No input devices" in capsys.readouterr().out
+
+
+def test_setup_mic_prompt_persists_choice(fake_env, monkeypatch, tmp_path):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: _devs())
+    cfgpath = tmp_path / "config.toml"
+    cfgpath.write_text("")
+    saved = {}
+    monkeypatch.setattr(
+        cli, "set_mic_device",
+        lambda name, path=None: saved.setdefault("name", name))
+    monkeypatch.setattr("builtins.input", lambda _: "1")
+    cli._prompt_mic_setup(config_path=cfgpath)
+    assert saved["name"] == "AirPods Pro"
+
+
+def test_setup_mic_prompt_bare_enter_keeps_current(fake_env, monkeypatch):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: _devs())
+    wrote = []
+    monkeypatch.setattr(
+        cli, "set_mic_device", lambda name, path=None: wrote.append(name))
+    monkeypatch.setattr("builtins.input", lambda _: "")
+    cli._prompt_mic_setup()
+    assert wrote == []  # no change on empty input

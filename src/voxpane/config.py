@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -15,6 +16,10 @@ class Config:
     # English-only; v3 multilingual drifts to Russian on short audio.
     model_id: str = "mlx-community/parakeet-tdt-0.6b-v2"
     sample_rate: int = 16000
+    # CoreAudio input device name (sox AUDIODEV). "" = macOS system default.
+    # Set via `voxpane mic`; resolved at daemon startup with fallback to default
+    # if the device is absent (see audio.resolve_device).
+    mic_device: str = ""
     fuzzy_cutoff: int = 82                 # rapidfuzz score 0..100
     poll_interval: float = 0.5             # registry refresh cadence (s)
     inject_confirm_timeout: float = 2.0    # s to wait for pasted text to appear
@@ -84,4 +89,41 @@ def write_journal_config(
         f"journal_keep_audio = {str(keep_audio).lower()}\n"
     )
     target.write_text(body, encoding="utf-8")
+    return target
+
+
+_MIC_LINE = re.compile(r"^\s*mic_device\s*=")
+
+
+def set_mic_device(name: str, *, path: Path | None = None) -> Path:
+    """Persist the input-device selection into config.toml.
+
+    Unlike `write_journal_config`, this MERGES into an existing file: it
+    replaces an existing `mic_device = ...` assignment in place (preserving
+    comments and every other key) or appends one if absent, creating a starter
+    file when none exists. An empty `name` clears the pin (system default).
+    """
+    target = path if path is not None else CONFIG_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+    new_line = f'mic_device = "{escaped}"'
+
+    if target.exists():
+        lines = target.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = [
+            "# voxpane config - see Config in src/voxpane/config.py for every key."
+        ]
+
+    out: list[str] = []
+    replaced = False
+    for line in lines:
+        if not replaced and _MIC_LINE.match(line):
+            out.append(new_line)
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        out.append(new_line)
+    target.write_text("\n".join(out) + "\n", encoding="utf-8")
     return target

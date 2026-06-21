@@ -58,6 +58,23 @@ def test_default_sample_rate_is_16000(fake_popen):
     assert argv[argv.index("-r") + 1] == "16000"
 
 
+def test_default_device_passes_no_env(fake_popen):
+    # No device pinned -> inherit the parent env (system default input).
+    rec = Recorder()
+    rec.start()
+    assert fake_popen.instances[0].kwargs.get("env") is None
+
+
+def test_device_sets_audiodev_env(fake_popen):
+    rec = Recorder(device="AirPods Pro")
+    rec.start()
+    env = fake_popen.instances[0].kwargs.get("env")
+    assert env is not None
+    assert env["AUDIODEV"] == "AirPods Pro"
+    # argv is unchanged; the device is selected purely via the environment.
+    assert "AirPods Pro" not in fake_popen.instances[0].argv
+
+
 def test_start_silences_sox_output(fake_popen):
     # sox's device warnings must not leak to the terminal / doctor output.
     rec = Recorder()

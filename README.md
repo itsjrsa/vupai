@@ -119,6 +119,7 @@ control word. Run `voxpane voice-commands` for a cheat sheet tailored to your co
 | `voxpane name <name> [pane]` | Label a pane (defaults to focused; rejects confusable names) |
 | `voxpane autoname [pane]` | Assign the next free callsign to a pane (idempotent; used by the auto-name hooks) |
 | `voxpane status` | Show panes, daemon status, and permission state |
+| `voxpane mic [index\|name]` | List input devices, or pin one for speech (`voxpane mic default` to unpin); `reload` to apply |
 | `voxpane voice-commands` | Print the spoken-command cheat sheet for your config |
 | `voxpane doctor` | Check permissions and print fix steps |
 
@@ -137,6 +138,7 @@ command_hotkey = "ctrl_l"                         # button mode: the "system" ke
 broadcast_word = "everyone"                       # leading word that injects to all named agents
 model_id = "mlx-community/parakeet-tdt-0.6b-v2"   # English-only (v3 is multilingual and drifts to Russian on short clips)
 sample_rate = 16000
+mic_device = ""                                   # CoreAudio input name; "" = system default. Set via `voxpane mic`
 fuzzy_cutoff = 82                                 # name-match strictness (0-100)
 poll_interval = 0.5                               # pane-registry refresh (s)
 inject_confirm_timeout = 2.0                      # wait for pasted text before Enter (s)

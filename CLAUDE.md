@@ -31,7 +31,8 @@ voxpane setup                                          # interactive: probe + de
 - `voxpane name <name> [pane]` - label a pane (rejects confusable names; defaults to focused)
 - `voxpane autoname [pane]` - assign the next free callsign from the pool to a pane unless already named; driven by the tmux pane-creation hooks (also usable by hand). `<prefix>+R` renames the active pane via this path's sibling `voxpane name`
 - `voxpane status` - list panes, daemon pid + log path, permission state
-- `voxpane setup` - interactive permission bootstrap: detects the terminal app from `TERM_PROGRAM`, probes each permission (which triggers the macOS prompts), then `open`s the exact Settings deep-link pane for any that are missing and prints the `tccutil reset` recovery command. **Cannot grant on the user's behalf** - macOS TCC requires a human click; setup removes the navigation, not the consent. Deep-link/app-detect/open helpers live in `permissions.py` (`terminal_app`, `fixes`, `open_settings_pane`), injectable for tests. **First run only** (no `config.toml` yet), it also prompts for journaling consent (`journal_enabled` + `journal_keep_audio`) and writes a starter config via `config.write_journal_config`; once a config file exists the prompt is skipped so re-running to confirm permissions never re-asks.
+- `voxpane mic [index|name|default]` - no arg lists CoreAudio **input** devices (marks the system default and the current pin); an index/exact-name pins that device into `config.toml` via `config.set_mic_device` (a merge writer that preserves comments/other keys), the literal `default` clears the pin. Selection persists; a running daemon needs `voxpane reload` to apply it. Enumeration is `audio.list_input_devices` (`system_profiler -json SPAudioDataType`, ~1s).
+- `voxpane setup` - interactive permission bootstrap: detects the terminal app from `TERM_PROGRAM`, probes each permission (which triggers the macOS prompts), then `open`s the exact Settings deep-link pane for any that are missing and prints the `tccutil reset` recovery command. **Cannot grant on the user's behalf** - macOS TCC requires a human click; setup removes the navigation, not the consent. Deep-link/app-detect/open helpers live in `permissions.py` (`terminal_app`, `fixes`, `open_settings_pane`), injectable for tests. **First run only** (no `config.toml` yet), it also prompts for journaling consent (`journal_enabled` + `journal_keep_audio`) and writes a starter config via `config.write_journal_config`; once a config file exists the prompt is skipped so re-running to confirm permissions never re-asks. It **always** runs a re-runnable mic-selection step (`_prompt_mic_setup`; bare Enter keeps the current device).
 - `voxpane _daemon` - hidden; the long-running daemon process (spawned detached, logs to `~/.config/voxpane/daemon.log`)
 
 ## Architecture
@@ -48,7 +49,8 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 | `src/voxpane/daemon.py` | orchestrates press→record→transcribe→route→inject→feedback; listener callbacks enqueue, main-thread consumer processes |
 | `src/voxpane/hotkey.py` | global push-to-talk via `pynput`, debounced (Right-Option) |
 | `src/voxpane/hotkey.py` (`MultiHotkey`) | button mode: one pynput listener over two PTT keys, each independently debounced |
-| `src/voxpane/recorder.py` | `sox rec` → wav, SIGINT to stop; exports `MIN_WAV_BYTES` |
+| `src/voxpane/recorder.py` | `sox rec` → wav, SIGINT to stop; exports `MIN_WAV_BYTES`; optional `device` → `AUDIODEV` env |
+| `src/voxpane/audio.py` | enumerate CoreAudio **input** devices (`system_profiler -json`); `resolve_device` (configured name → present? else fall back to default + warning) |
 | `src/voxpane/asr.py` | `parakeet-mlx` `Transcriber` Protocol, lazy `warm()` + cache |
 | `src/voxpane/router.py` | name cascade exact→rapidfuzz→metaphone, number-in-window, focus fallback, near-tie ambiguity; `CALLSIGNS` pool + `next_callsign` (auto-name picker) |
 | `src/voxpane/registry.py` | `Pane` + `PaneRegistry` parsed from `tmux list-panes` |
@@ -97,6 +99,14 @@ Invariants) and talks to tmux purely via the CLI.
   Hook/binding callbacks run via tmux `run-shell` (`/bin/sh`, no venv on PATH), so
   `_self_cmd()` invokes them with the absolute `sys.executable -m voxpane`.
 - **ASR is kept warm** (model loaded once via `warm()`); the first call is otherwise multi-second.
+- **Mic selection resolves once at daemon startup, never per key-press.**
+  `sox` records from the system default input unless `AUDIODEV` is set in its
+  env (the `device` arg threads to that). Enumeration shells out to
+  `system_profiler` (~1s) - far too slow for the press→record path - so
+  `_cmd_daemon` calls `audio.resolve_device(cfg.mic_device)` at spawn: a pinned
+  device that's absent falls back to the system default with a logged warning.
+  Reconnecting a device (e.g. AirPods) after the daemon is up needs `voxpane
+  reload`, same as any other config change (config loads once at spawn).
 - **Daemon must run OUTSIDE tmux** (`_spawn_daemon` detaches it under the terminal
   app). A process *inside* a tmux window has the long-lived tmux server as its
   macOS "responsible process", which lacks Input Monitoring - so the global

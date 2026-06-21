@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from voxpane.config import Config, load_config, write_journal_config
+from voxpane.config import (
+    Config,
+    load_config,
+    set_mic_device,
+    write_journal_config,
+)
 
 
 def test_defaults_when_no_file(tmp_path: Path) -> None:
@@ -136,6 +141,46 @@ def test_write_journal_config_disabled(tmp_path: Path) -> None:
     c = load_config(p)
     assert c.journal_enabled is False
     assert c.journal_keep_audio is False
+
+
+def test_mic_device_default() -> None:
+    assert Config().mic_device == ""
+
+
+def test_set_mic_device_creates_file(tmp_path: Path) -> None:
+    p = tmp_path / "nested" / "config.toml"
+    out = set_mic_device("AirPods Pro", path=p)
+    assert out == p
+    assert load_config(p).mic_device == "AirPods Pro"
+
+
+def test_set_mic_device_merges_preserving_other_keys(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    write_journal_config(enabled=False, keep_audio=True, path=p)
+    set_mic_device("USB Mic", path=p)
+    c = load_config(p)
+    assert c.mic_device == "USB Mic"
+    # journal keys written earlier survive the merge
+    assert c.journal_enabled is False
+    assert c.journal_keep_audio is True
+    # comments preserved
+    assert "# voxpane config" in p.read_text()
+
+
+def test_set_mic_device_replaces_existing_value(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    set_mic_device("First", path=p)
+    set_mic_device("Second", path=p)
+    assert load_config(p).mic_device == "Second"
+    # no duplicate assignment lines left behind
+    assert p.read_text().count("mic_device =") == 1
+
+
+def test_set_mic_device_empty_clears_pin(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    set_mic_device("Pinned", path=p)
+    set_mic_device("", path=p)
+    assert load_config(p).mic_device == ""
 
 
 def test_addressing_defaults() -> None:

@@ -7,6 +7,7 @@ file stays valid.
 
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
 import tempfile
@@ -19,8 +20,11 @@ MIN_WAV_BYTES = 2_000
 
 
 class Recorder:
-    def __init__(self, sample_rate: int = 16000) -> None:
+    def __init__(self, sample_rate: int = 16000, device: str = "") -> None:
         self._sample_rate = sample_rate
+        # CoreAudio device name passed to sox via AUDIODEV; "" = system default.
+        # Resolved once by the caller (see audio.resolve_device) - never here.
+        self._device = device
         self._proc: subprocess.Popen | None = None
         self._wav_path: Path | None = None
 
@@ -47,11 +51,16 @@ class Recorder:
             "16",
             str(self._wav_path),
         ]
+        # Pick a non-default input by setting AUDIODEV in sox's environment;
+        # sox honours it for the auto-detected (coreaudio) driver.
+        env = None
+        if self._device:
+            env = {**os.environ, "AUDIODEV": self._device}
         # Silence sox's own stdout/stderr (e.g. the harmless "can't set sample
         # rate 16000; using 24000" device warning) so it never leaks into the
         # doctor output or the daemon pane.
         self._proc = subprocess.Popen(
-            argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
 
     def stop(self) -> Path:
         if self._proc is None or self._wav_path is None:
