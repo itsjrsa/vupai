@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -113,11 +114,13 @@ class Daemon:
         the `entry`/`finally` below, so misfires can be reviewed after the fact.
         """
         entry: dict = {
-            "ts": datetime.now().isoformat(timespec="seconds"),
+            "v": 1,
+            "ts": datetime.now().isoformat(timespec="milliseconds"),
             "mode": mode,
             "transcript": "",
             "decision": None,
             "outcome": None,
+            "model_id": self._config.model_id,
         }
         keep_wav = False
         try:
@@ -142,7 +145,9 @@ class Daemon:
             self._feedback.working()  # transcribe+route can take a couple seconds
             self._registry.refresh()
             hints = [p.name for p in self._registry.panes if p.name != p.id]
+            _t0 = time.monotonic()
             text = self._transcriber.transcribe(wav, hints=hints)
+            entry["transcribe_ms"] = round((time.monotonic() - _t0) * 1000)
             entry["transcript"] = text
             if not text or not text.strip():
                 entry["decision"] = "empty"
@@ -174,6 +179,9 @@ class Daemon:
             route_obj = self._route_fn(
                 text, self._registry.panes, focused_id,
                 fuzzy_cutoff=self._config.fuzzy_cutoff)
+            entry["confidence"] = route_obj.confidence
+            entry["match_method"] = route_obj.match_method
+            entry["available_names"] = list(hints)
 
             if route_obj.candidates:
                 # Ambiguous near-tie: don't guess. Surface candidates and bail.
@@ -192,10 +200,12 @@ class Daemon:
             entry["target_pane"] = route_obj.pane_id
             entry["target_name"] = route_obj.matched_name
             entry["fallback"] = route_obj.fallback
+            _i0 = time.monotonic()
             ok = self._inject_fn(
                 route_obj.pane_id, route_obj.text,
                 confirm_timeout=self._config.inject_confirm_timeout,
                 poll_interval=self._config.inject_poll_interval)
+            entry["inject_ms"] = round((time.monotonic() - _i0) * 1000)
             if ok:
                 entry["outcome"] = "injected"
                 self._feedback.announce(route_obj)
@@ -208,10 +218,12 @@ class Daemon:
             if focused is not None and focused.id != route_obj.pane_id:
                 retry = Route(pane_id=focused.id, text=route_obj.text,
                               matched_name=None, confidence=0.0, fallback=True)
+                _i1 = time.monotonic()
                 if self._inject_fn(
                         retry.pane_id, retry.text,
                         confirm_timeout=self._config.inject_confirm_timeout,
                         poll_interval=self._config.inject_poll_interval):
+                    entry["inject_ms"] = round((time.monotonic() - _i1) * 1000)
                     entry["outcome"] = "injected_fallback"
                     entry["target_pane"] = retry.pane_id
                     self._feedback.announce(retry)

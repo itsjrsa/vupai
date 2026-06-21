@@ -69,6 +69,7 @@ class Route:
     confidence: float     # 0..100; 100 exact, rapidfuzz score for fuzzy, 0 for focus fallback
     fallback: bool        # True when routed to focused pane (no confident name match)
     candidates: tuple[str, ...] = ()  # non-empty only on an ambiguous near-tie name match
+    match_method: str | None = None  # exact|fuzzy|metaphone|number|focus_fallback
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ class NameMatch:
     matched_name: str | None
     confidence: float
     candidates: tuple[str, ...] = ()
+    method: str | None = None  # exact|fuzzy|metaphone; None on miss/ambiguity
 
 
 def _first_token(transcript: str) -> tuple[str, str]:
@@ -157,15 +159,15 @@ def resolve_pane_by_name(
         return NameMatch(None, None, 0.0)
     hit = _exact(token, panes)
     if hit is not None:
-        return NameMatch(hit.id, hit.name, 100.0)
+        return NameMatch(hit.id, hit.name, 100.0, method="exact")
     hit, score, candidates = _fuzzy_match(token, panes, fuzzy_cutoff, ambiguity_margin)
     if candidates:
         return NameMatch(None, None, score, candidates)
     if hit is not None:
-        return NameMatch(hit.id, hit.name, score)
+        return NameMatch(hit.id, hit.name, score, method="fuzzy")
     hit = _phonetic(token, panes)
     if hit is not None:
-        return NameMatch(hit.id, hit.name, 70.0)
+        return NameMatch(hit.id, hit.name, 70.0, method="metaphone")
     return NameMatch(None, None, 0.0)
 
 
@@ -181,7 +183,7 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
     def fallback() -> Route:
         # Route to the focused pane (if any) without consuming the token.
         return Route(pane_id=focused_id, text=transcript, matched_name=None,
-                     confidence=0.0, fallback=True)
+                     confidence=0.0, fallback=True, match_method="focus_fallback")
 
     if not token:
         return fallback()
@@ -194,7 +196,7 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
                      confidence=m.confidence, fallback=False, candidates=m.candidates)
     if m.pane_id is not None:
         return Route(pane_id=m.pane_id, text=remainder, matched_name=m.matched_name,
-                     confidence=m.confidence, fallback=False)
+                     confidence=m.confidence, fallback=False, match_method=m.method)
 
     # 4. Number (digit or word 1..9) -> pane_index within the FOCUSED window.
     n = _number(token)
@@ -205,7 +207,7 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
                            if p.window_id == focused.window_id and p.index == n), None)
             if target is not None:
                 return Route(pane_id=target.id, text=remainder, matched_name=None,
-                             confidence=100.0, fallback=False)
+                             confidence=100.0, fallback=False, match_method="number")
 
     # 5. Vocative filler peel. No confident match on the raw leading token; if it
     # is a filler ("okay Atlas ..."), peel up to two fillers and retry an EXACT
@@ -220,7 +222,8 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
             hit = _exact(ptoken, panes)
             if hit is not None:
                 return Route(pane_id=hit.id, text=premainder,
-                             matched_name=hit.name, confidence=100.0, fallback=False)
+                             matched_name=hit.name, confidence=100.0, fallback=False,
+                             match_method="exact")
 
     # else: focus fallback (text unchanged).
     return fallback()

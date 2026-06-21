@@ -606,3 +606,84 @@ def test_journals_no_audio_without_wav(tmp_path):
     entry, kept_wav = journal.entries[0]
     assert entry["outcome"] == "no_audio"
     assert kept_wav is None        # empty capture is never retained
+
+
+# ---------------------------------------------------------------------------
+# Task 2: journal entry enrichment
+# ---------------------------------------------------------------------------
+
+class CapturingJournal:
+    """Stand-in Journal that records entries for assertions."""
+    def __init__(self):
+        self.entries = []
+
+    def record(self, entry, wav=None):
+        self.entries.append(dict(entry))
+
+
+def _make_capturing_daemon(tmp_path, *, transcript, lines, focused, inject_ok=True):
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    recorder = FakeRecorder(wav)
+    transcriber = FakeTranscriber(transcript)
+    registry = make_registry(lines, focused)
+    feedback = FakeFeedback()
+    journal = CapturingJournal()
+
+    def route_fn(text, panes, focused_id, *, fuzzy_cutoff=82):
+        if text.lower().startswith("alpha "):
+            return Route(pane_id="%1", text=text.split(" ", 1)[1],
+                         matched_name="alpha", confidence=100.0, fallback=False,
+                         match_method="exact")
+        return Route(pane_id=focused_id, text=text, matched_name=None,
+                     confidence=0.0, fallback=True, match_method="focus_fallback")
+
+    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05, io=None):
+        return inject_ok
+
+    daemon = Daemon(Config(addressing="keyword"), recorder, transcriber, registry,
+                    feedback, route_fn=route_fn, inject_fn=inject_fn, journal=journal,
+                    async_fn=lambda fn, *a: fn(*a))
+    return daemon, journal
+
+
+def test_journal_entry_carries_common_fields(tmp_path):
+    daemon, journal = _make_capturing_daemon(
+        tmp_path, transcript="alpha run the tests", lines=[PANE_LINE], focused="%1")
+    daemon.on_press()
+    _release_and_process(daemon)
+
+    assert len(journal.entries) == 1
+    e = journal.entries[0]
+    assert e["v"] == 1
+    # millisecond-precision timestamp: an ISO string with a fractional second.
+    assert "." in e["ts"]
+    assert e["model_id"] == Config().model_id
+    assert isinstance(e["transcribe_ms"], int)
+
+
+def test_journal_route_entry_carries_routing_fields(tmp_path):
+    daemon, journal = _make_capturing_daemon(
+        tmp_path, transcript="alpha run the tests", lines=[PANE_LINE], focused="%1")
+    daemon.on_press()
+    _release_and_process(daemon)
+
+    e = journal.entries[0]
+    assert e["decision"] == "route"
+    assert e["confidence"] == 100.0
+    assert e["match_method"] == "exact"
+    assert e["available_names"] == ["alpha"]
+    assert isinstance(e["inject_ms"], int)
+
+
+def test_journal_no_audio_entry_has_version_but_no_timing(tmp_path):
+    daemon, journal = _make_capturing_daemon(
+        tmp_path, transcript="alpha run it", lines=[PANE_LINE], focused="%1")
+    daemon._recorder._wav.write_bytes(b"\x00" * 10)  # below MIN_WAV_BYTES
+    daemon.on_press()
+    _release_and_process(daemon)
+
+    e = journal.entries[0]
+    assert e["decision"] == "no_audio"
+    assert e["v"] == 1
+    assert "transcribe_ms" not in e  # transcription never ran

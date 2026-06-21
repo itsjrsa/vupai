@@ -338,3 +338,50 @@ def test_no_filler_unmatched_is_unchanged():
     r = route("so deploy the staging build", p, focused_id="%1")
     assert r.fallback is True
     assert r.text == "so deploy the staging build"
+
+
+# ---------------------------------------------------------------------------
+# Task 1: match_method exposes the cascade stage that matched
+# ---------------------------------------------------------------------------
+
+
+def _pane(pid, name, *, index=0, window_id="@1", focused=False):
+    return Pane(id=pid, window_id=window_id, window="main", index=index,
+                name=name, command="node", active=focused)
+
+
+def test_route_match_method_exact():
+    panes = [_pane("%1", "nova", focused=True)]
+    r = route("nova run it", panes, "%1")
+    assert r.matched_name == "nova"
+    assert r.match_method == "exact"
+
+
+def test_route_match_method_fuzzy():
+    # "novva" is close enough to fuzzy-match "nova" (>= default cutoff 82).
+    panes = [_pane("%1", "nova", focused=True)]
+    r = route("novva run it", panes, "%1")
+    assert r.matched_name == "nova"
+    assert r.match_method == "fuzzy"
+
+
+def test_route_match_method_number():
+    panes = [_pane("%1", "nova", index=1, focused=True),
+             _pane("%2", "ember", index=2)]
+    r = route("two run it", panes, "%1")
+    assert r.pane_id == "%2"
+    assert r.match_method == "number"
+
+
+def test_route_match_method_focus_fallback():
+    panes = [_pane("%1", "nova", focused=True)]
+    r = route("just dictate this", panes, "%1")
+    assert r.fallback is True
+    assert r.match_method == "focus_fallback"
+
+
+def test_resolve_pane_by_name_reports_method():
+    panes = [_pane("%1", "nova")]
+    assert resolve_pane_by_name("nova", panes).method == "exact"
+    assert resolve_pane_by_name("novva", panes).method == "fuzzy"
+    assert resolve_pane_by_name("zzzznope", panes).method is None
