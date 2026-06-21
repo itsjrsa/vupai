@@ -42,8 +42,26 @@ PIDFILE: Path = Path.home() / ".config" / "vupai" / "daemon.pid"
 DAEMON_LOG: Path = Path.home() / ".config" / "vupai" / "daemon.log"
 
 
+def _pid_is_vupai(pid: int) -> bool:
+    """True if `pid` is actually a vupai daemon, guarding against PID reuse.
+
+    A pidfile left by a crash/reboot can name a PID the OS later reassigned to an
+    unrelated process; trusting it (skip-spawn) or signalling it (`down`) blindly
+    is the hazard. We confirm the process's command line is our daemon
+    (`-m vupai _daemon`) before treating the PID as ours. Best-effort: if `ps` is
+    unavailable we report False (treat as not-our-daemon) rather than crash."""
+    try:
+        out = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True, text=True,
+        ).stdout
+    except Exception:
+        return False
+    return "vupai" in out and "_daemon" in out
+
+
 def _daemon_running() -> bool:
-    """True if a daemon pid is recorded and that process is still alive."""
+    """True if a recorded daemon pid is alive AND is really our daemon."""
     if not PIDFILE.exists():
         return False
     try:
@@ -56,7 +74,7 @@ def _daemon_running() -> bool:
         return False
     except PermissionError:
         return True  # alive but owned by someone else (shouldn't happen)
-    return True
+    return _pid_is_vupai(pid)  # alive, but is it actually vupai? (PID reuse guard)
 
 
 def _spawn_daemon() -> None:
@@ -151,6 +169,7 @@ def ensure_up() -> None:
                   "instead. Install it or set pane_command in the config.")
         tmuxio.run(argv)
     tmuxio.enable_pane_titles()
+    tmuxio.set_base_index()  # 1-based windows/panes so "focus two" matches the display
     tmuxio.set_extended_keys_off()
     if cfg.status_indicator:
         tmuxio.install_status_indicator()  # ambient daemon-state in status-right
@@ -203,13 +222,19 @@ def _cmd_default(args: argparse.Namespace) -> int:
 def _cmd_down(args: argparse.Namespace) -> int:
     # Terminate the daemon process if we recorded its pid. The daemon is a
     # detached background process (not a tmux window), so SIGTERM is all it takes.
+    # Only signal a PID we can confirm is our daemon: a stale pidfile may name a
+    # reused PID now owned by an unrelated process - SIGTERMing it would be a bug.
     if PIDFILE.exists():
         try:
-            pid = int(PIDFILE.read_text().strip())
-            os.kill(pid, signal.SIGTERM)
-        except (ValueError, ProcessLookupError):
-            pass
-        PIDFILE.unlink(missing_ok=True)
+            pid: int | None = int(PIDFILE.read_text().strip())
+        except ValueError:
+            pid = None
+        if pid is not None and _pid_is_vupai(pid):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+        PIDFILE.unlink(missing_ok=True)  # always clear the (possibly stale) file
     return 0
 
 
@@ -756,7 +781,21 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     transcriber = ParakeetTranscriber(cfg.model_id)
     registry = PaneRegistry()
     feedback = Feedback(indicator_enabled=cfg.status_indicator)
-    Daemon(cfg, recorder, transcriber, registry, feedback).run()
+    daemon = Daemon(cfg, recorder, transcriber, registry, feedback)
+    # `vupai down` sends SIGTERM; the default disposition kills the process
+    # outright, so run()'s teardown (which reaps the sox child) never executes.
+    # Translate SIGTERM/SIGINT into a clean stop(), then restore the prior
+    # handlers so the unit suite's global signal state stays untouched.
+    def _shutdown(signum, frame):
+        daemon.stop()
+    previous: dict = {}
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            previous[sig] = signal.signal(sig, _shutdown)
+        daemon.run()
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
     return 0
 
 

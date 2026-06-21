@@ -85,6 +85,15 @@ class Daemon:
             wav: Path = self._recorder.stop()
         except RuntimeError:
             return  # release without a matching start (debounce edge); ignore
+        except Exception:
+            # Any other stop() failure (a wedged sox kill, OS error): the wav is
+            # unusable. Never let it escape into pynput's wrapper - that would
+            # swallow it AND leave the 'listening' indicator (painted at press)
+            # stuck on. Log it and repaint an error so the state clears.
+            logger.exception("recorder stop failed on release")
+            self._async(self._feedback.error, "recording failed - try again",
+                        self._feedback.reserve())
+            return
         try:
             self._jobs.put_nowait((wav, mode))
         except queue.Full:
@@ -232,6 +241,14 @@ class Daemon:
             self._feedback.error("injection failed - text not confirmed in pane")
         finally:
             self._journal.record(entry, wav if keep_wav else None)
+            # The recorder owns the temp wav's creation; the daemon owns its
+            # deletion. Journal.record has already COPIED it if retention is on,
+            # so unlink the source unconditionally - otherwise every utterance
+            # leaks a wav into $TMPDIR for the daemon's whole lifetime.
+            try:
+                wav.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _inject_dictation(self, text: str) -> bool:
         """Verbatim injection into the focused pane: no command parse, no name
@@ -303,6 +320,14 @@ class Daemon:
                         pass
         finally:
             self._hotkey.stop()
+            # A clean shutdown (SIGTERM via `vupai down`) can land while PTT is
+            # held. Reap the in-flight recorder so the sox child isn't orphaned
+            # holding the mic for the next daemon.
+            if self._recorder.is_recording:
+                try:
+                    self._recorder.stop()
+                except Exception:
+                    logger.exception("recorder cleanup on shutdown failed")
 
     def stop(self) -> None:
         """Request a clean shutdown of the consumer loop (e.g. from a signal)."""

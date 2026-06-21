@@ -35,22 +35,26 @@ def _needle(text: str) -> str:
     return last[-_NEEDLE_MAX:]
 
 
-def _paste_and_poll(
+def _present(pane_id: str, needle_n: str, io) -> bool:
+    """Whether the (normalized) needle currently shows in the pane capture."""
+    return needle_n in _norm(io.capture_pane(pane_id))
+
+
+def _poll(
     pane_id: str,
-    text: str,
-    needle: str,
+    needle_n: str,
     *,
     confirm_timeout: float,
     poll_interval: float,
     io,
 ) -> bool:
-    """Load+paste once, then poll capture-pane until `needle` shows or timeout."""
-    io.load_buffer(text)
-    io.paste_buffer(pane_id)
-    needle_n = _norm(needle)
+    """Poll capture-pane until `needle_n` shows or `confirm_timeout` elapses.
+
+    Does NOT paste - the caller owns pasting so a retry can avoid double-pasting.
+    """
     deadline = time.monotonic() + confirm_timeout
     while True:
-        if needle_n in _norm(io.capture_pane(pane_id)):
+        if _present(pane_id, needle_n, io):
             return True
         if time.monotonic() >= deadline:
             return False
@@ -70,12 +74,20 @@ def inject(
     Returns True on confirmed submit, False if the pasted text never appeared
     after one retry (Enter is NOT sent in that case).
     """
-    needle = _needle(text)
-    for _attempt in range(2):  # initial try + exactly one retry
-        if _paste_and_poll(
+    needle_n = _norm(_needle(text))
+    if not needle_n:
+        return False  # nothing to confirm -> never send a blind Enter
+    for attempt in range(2):  # initial paste + exactly one retry
+        if attempt > 0 and _present(pane_id, needle_n, io):
+            # The first paste landed late (after the timeout). Re-pasting now
+            # would duplicate the text and submit it twice; just confirm + Enter.
+            io.send_enter(pane_id)
+            return True
+        io.load_buffer(text)
+        io.paste_buffer(pane_id)
+        if _poll(
             pane_id,
-            text,
-            needle,
+            needle_n,
             confirm_timeout=confirm_timeout,
             poll_interval=poll_interval,
             io=io,

@@ -4,6 +4,95 @@ Loose, unprioritized backlog of potential directions. Not commitments. Items
 marked _(deferred)_ are already called out in `CLAUDE.md` under "Known
 limitations / deferred".
 
+## High priority (global review, 2026-06-21)
+
+Findings from a multi-agent audit (bugs adversarially verified). The confirmed
+**bugs** below were FIXED in code; the two **verify-on-hardware** items and the
+**MVP gaps / improvements** are open work, ordered by leverage.
+
+### Bugs fixed (this pass)
+
+- Number routing was off-by-one vs tmux's default `pane-base-index` 0 ("two" hit
+  the 3rd pane, a silent wrong-pane inject). Routing is now positional within the
+  focused window; `ensure_up` also pins `base-index`/`pane-base-index` to 1.
+- Recorded WAVs leaked into `$TMPDIR` forever (one per utterance). `_process` now
+  unlinks the source wav after journaling.
+- Stale pidfile + PID reuse could SIGTERM an unrelated process or silently skip
+  spawn. `_daemon_running`/`down` now verify the PID is really a vupai daemon.
+- `vupai down` killed the daemon with no SIGTERM handler, orphaning the `sox`
+  child and leaving `stop()`/`_SHUTDOWN` dead. Handler added; `run()` reaps the
+  recorder on exit; `recorder.stop()` force-kills `sox` if SIGINT doesn't take.
+- Inside tmux, `setup` named the app to grant as "tmux" (TCC attaches to the real
+  terminal). `terminal_app` now ignores `TERM_PROGRAM=tmux/screen`.
+- `focus`/`swap`/`zoom` didn't strip a leading "the" (unlike `close`/slash);
+  "focus the nova" misrouted. Now consistent.
+- Injector retry could double-paste a late-landing first paste, then submit it
+  twice. Retry now skips the re-paste when the text already landed.
+- `audio.list_input_devices` could crash on valid-but-non-object JSON; now guarded.
+
+### Verify on real hardware, then fix
+
+- **Spawn guard for in-pane `vupai reload`.** `_spawn_daemon` relies on
+  `start_new_session` (setsid), which does NOT change the macOS TCC
+  responsible-process. Running the documented in-pane `vupai reload` may parent
+  the daemon under the tmux server, silently killing the global hotkey (the exact
+  failure CLAUDE.md's "daemon must run OUTSIDE tmux" invariant warns about). NOT
+  changed yet because it conflicts with the documented dogfooding loop and can't
+  be verified in a unit-only env. Confirm responsible-process inheritance on a
+  real Mac; if it reproduces, refuse to spawn from inside tmux (or re-exec under a
+  non-tmux parent) instead of spawning a dead-hotkey daemon.
+- **Injector confirm-poll false-positive on pre-existing text.** `_paste_and_poll`
+  matches the needle anywhere on screen with no pre-paste baseline, so an utterance
+  whose tail already appears on screen confirms instantly (the "poll until it
+  lands" guarantee degrades to "is it somewhere on screen"). Disputed on impact
+  (tmux may serialize paste-before-capture). Fix needs a pre-paste baseline +
+  count-increase check and a full rewrite of the injector test fakes; defer until
+  validated against a real Claude pane (where the `/`-autocomplete overlay also
+  needs checking).
+
+### MVP gaps (open, highest impact first)
+
+- **Agent-state feedback / close the loop.** vupai is input-only; nothing pings
+  back when an agent finishes, blocks on a permission prompt, or awaits input.
+  Poll `capture-pane` per named pane, detect the idle/awaiting transition, fire a
+  macOS notification + chime. (Overlaps the "Idle / done detection" item below.)
+- **Confirmation/undo for destructive voice commands.** `close` / `close others`
+  / broadcast fire on one ASR transcript with no confirm or undo, despite the
+  project distrusting Parakeet's verbs (alias tables incl. real words like "rose").
+  Config-gated confirm step for destructive kinds.
+- **"Warming" indicator.** `run()` calls `warm()` (multi-second, or a multi-minute
+  first-run download) BEFORE starting the listener/painting idle, so the daemon
+  looks dead with no feedback. Paint a "warming" state before `Daemon.run()`.
+- **Status distinguishes warming / ready / crashed.** A crashed daemon leaves the
+  last-painted (often green) status frozen; `vupai status` prints "running"
+  identically for warming and ready. Write a readiness marker after `warm()` and a
+  stopped marker on exit.
+- **Mic disconnect gives a clear, repeatable message.** A device lost mid-session
+  hits the empty-capture path, which blames Microphone permission (wrong) and
+  shows the hint only once. Reword to cover both causes and repeat it.
+- **Command discoverability / live transcript HUD.** Show what was heard before/at
+  inject; surface rejections on the focused pane, not just the truncated status
+  segment. (Overlaps "Live transcript HUD" below.)
+
+### Improvements (open)
+
+- **Codify the convention-only invariants as tests.** warm()+transcribe() same
+  thread (MLX), no inject/tmux/MLX on the listener thread, recorder timeout
+  behavior. A refactor could reintroduce the `no Stream(gpu,0)` crash with all
+  tests green. Drive on_press/on_release through real threads and assert thread
+  identity + that the listener never touches inject/tmux.
+- **Chatty `down`/`up`/`reload`.** They return 0 silently; the constant reload
+  loop gives no signal. Print stopped/started/reloaded with pid.
+- **Split `cli.py` (826 lines).** Extract the interactive `setup`/`_prompt_*`
+  cluster (and optionally pidfile+lifecycle) into their own modules; they already
+  take injectable collaborators.
+- **Richer injection-failure feedback.** Name the target pane, point at the
+  journal, log the last `capture-pane` snapshot so a transient miss is
+  distinguishable from a systematic TUI incompatibility.
+- **Honest mic-probe caveat.** doctor prints a confident `microphone=True` even
+  though the probe can't tell "granted" from "denied-but-silent"; add a caveat
+  line on all-passed.
+
 ## Closing the loop (vupai is input-only today)
 
 - **Audio / TTS feedback.** Confirmation chime on successful inject, a distinct

@@ -122,32 +122,44 @@ def test_cannot_start_twice(fake_popen):
 
 
 # ---------------------------------------------------------------------------
-# Fix 4: stop() must clear state even if proc.wait() raises TimeoutExpired
+# stop() must force-kill and reap sox if SIGINT doesn't take within the timeout,
+# never orphan the child, and clear state without raising.
 # ---------------------------------------------------------------------------
 
-def test_stop_clears_state_on_timeout_expired(monkeypatch):
-    """After stop() raises/returns despite TimeoutExpired, recorder is reusable."""
+def test_stop_kills_and_reaps_when_sigint_times_out(monkeypatch):
+    """If sox ignores SIGINT (wait(timeout) raises), stop() escalates to kill()
+    then reaps the child so no `rec` is orphaned, and returns without raising."""
     import subprocess as _subprocess
+
+    created: list = []
 
     class TimeoutPopen:
         def __init__(self, argv, *a, **kw):
             self.argv = argv
             self.signals: list[int] = []
+            self.killed = False
+            created.append(self)
 
         def send_signal(self, sig: int) -> None:
             self.signals.append(sig)
 
+        def kill(self) -> None:
+            self.killed = True
+
         def wait(self, timeout=None):
-            raise _subprocess.TimeoutExpired(cmd="rec", timeout=timeout)
+            if timeout is not None:        # the SIGINT wait(timeout=5)
+                raise _subprocess.TimeoutExpired(cmd="rec", timeout=timeout)
+            return 0                        # the post-kill reap
 
     monkeypatch.setattr(_subprocess, "Popen", TimeoutPopen)
     rec = Recorder()
     rec.start()
     assert rec.is_recording is True
-    # stop() should propagate or absorb the TimeoutExpired but must reset state.
-    try:
-        rec.stop()
-    except _subprocess.TimeoutExpired:
-        pass
-    # State must be cleared regardless.
-    assert rec.is_recording is False
+
+    path = rec.stop()                       # must NOT raise
+
+    proc = created[0]
+    assert proc.signals == [signal.SIGINT]  # tried the graceful stop first
+    assert proc.killed is True              # then escalated to a force-kill
+    assert rec.is_recording is False        # state cleared
+    assert isinstance(path, Path)

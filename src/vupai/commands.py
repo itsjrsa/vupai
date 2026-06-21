@@ -180,16 +180,22 @@ def _parse_close(toks: list[str]) -> Command | None:
 
 
 def _parse_focus(toks: list[str]) -> Command | None:
-    if len(toks) >= 2 and toks[0] == "focus":
-        return Command(kind="focus", name=toks[1])
+    # Drop a leading "the" from the target ("focus the nova"), matching close/slash.
+    if toks and toks[0] == "focus":
+        rest = [t for t in toks[1:] if t != "the"]
+        if rest:
+            return Command(kind="focus", name=rest[0])
+        return None
     if len(toks) >= 3 and toks[0] in ("switch", "go") and toks[1] == "to":
-        return Command(kind="focus", name=toks[2])
+        rest = [t for t in toks[2:] if t != "the"]
+        if rest:
+            return Command(kind="focus", name=rest[0])
     return None
 
 
 def _parse_swap(toks: list[str]) -> Command | None:
     if toks and (toks[0] in _SWAP_VERBS or toks[0] in _SWAP_VERB_ALIASES):
-        names = [t for t in toks[1:] if t != "and"]
+        names = [t for t in toks[1:] if t not in ("and", "the")]
         if len(names) >= 2:
             return Command(kind="swap", name=names[0], name_b=names[1])
     return None
@@ -206,6 +212,7 @@ def _parse_zoom(toks: list[str]) -> Command | None:
         rest = toks[2:]
     else:
         return None
+    rest = [t for t in rest if t != "the"]  # "zoom the nova" -> nova
     return Command(kind="zoom", name=rest[0] if rest else "")
 
 

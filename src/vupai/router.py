@@ -198,14 +198,22 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
         return Route(pane_id=m.pane_id, text=remainder, matched_name=m.matched_name,
                      confidence=m.confidence, fallback=False, match_method=m.method)
 
-    # 4. Number (digit or word 1..9) -> pane_index within the FOCUSED window.
+    # 4. Number (digit or word 1..9) -> the n-th pane (1-based) in the FOCUSED
+    # window, ordered by pane index. Position-based, NOT pane_index == n: tmux's
+    # default pane-base-index is 0, so matching the raw index would be off by one
+    # ("two" -> the 3rd pane). Ranking by sorted position is correct whether tmux
+    # is 0- or 1-based (ensure_up pins it to 1 for display, but routing must not
+    # depend on that). Indices within a window are contiguous, so this also lines
+    # up with the displayed numbers.
     n = _number(token)
     if n is not None and focused_id is not None:
         focused = next((p for p in panes if p.id == focused_id), None)
         if focused is not None:
-            target = next((p for p in panes
-                           if p.window_id == focused.window_id and p.index == n), None)
-            if target is not None:
+            siblings = sorted(
+                (p for p in panes if p.window_id == focused.window_id),
+                key=lambda p: p.index)
+            if 1 <= n <= len(siblings):
+                target = siblings[n - 1]
                 return Route(pane_id=target.id, text=remainder, matched_name=None,
                              confidence=100.0, fallback=False, match_method="number")
 

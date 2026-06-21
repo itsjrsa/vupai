@@ -169,6 +169,47 @@ def test_release_routes_and_injects_stripped_text(tmp_path):
     assert not feedback.errors
 
 
+def test_on_release_recorder_failure_repaints_and_drops(tmp_path, monkeypatch):
+    # If recorder.stop() fails for a non-debounce reason, the listener callback
+    # must not let the exception escape (it would be swallowed by pynput and the
+    # 'listening' indicator painted at press would wedge on). It must repaint an
+    # error and enqueue nothing.
+    daemon, recorder, _, feedback, _, _ = make_daemon(
+        tmp_path, transcript="hi", lines=[PANE_LINE], focused="%1")
+    daemon.on_press()
+
+    def boom() -> None:
+        raise OSError("wedged recorder")
+
+    monkeypatch.setattr(recorder, "stop", boom)
+    daemon.on_release()                  # must NOT raise
+    assert daemon._jobs.empty()          # nothing enqueued for processing
+    assert feedback.errors               # the stuck listening state was cleared
+
+
+def test_process_unlinks_source_wav(tmp_path):
+    # The recorder writes a temp wav per utterance; the daemon must delete it
+    # after journaling, or every push-to-talk leaks a file into $TMPDIR.
+    daemon, recorder, _, _, _, _ = make_daemon(
+        tmp_path, transcript="alpha run the tests", lines=[PANE_LINE], focused="%1")
+    wav = recorder._wav
+    assert wav.exists()
+    daemon.on_press()
+    _release_and_process(daemon)
+    assert not wav.exists()
+
+
+def test_process_unlinks_wav_even_on_no_audio(tmp_path):
+    # The tiny/empty-capture path must clean up the source wav too.
+    daemon, recorder, _, _, _, _ = make_daemon(
+        tmp_path, transcript="ignored", lines=[PANE_LINE], focused="%1")
+    recorder._wav.write_bytes(b"\x00" * 10)  # below MIN_WAV_BYTES
+    wav = recorder._wav
+    daemon.on_press()
+    _release_and_process(daemon)
+    assert not wav.exists()
+
+
 def test_blank_transcript_injects_nothing(tmp_path):
     daemon, _, _, feedback, route_calls, inject_calls = make_daemon(
         tmp_path, transcript="   ", lines=[PANE_LINE], focused="%1")
@@ -258,6 +299,33 @@ def test_empty_wav_reports_permission_hint(tmp_path):
     assert "no audio captured" in second_error
     assert "microphone" not in second_error
     assert "permission" not in second_error
+
+
+def test_run_stops_recorder_still_recording_on_shutdown(tmp_path, monkeypatch):
+    # `vupai down` mid-capture: the consumer loop exits while a recording is in
+    # flight. run()'s teardown must reap the recorder so the sox child isn't
+    # orphaned holding the mic.
+    daemon, recorder, _, _, _, _ = make_daemon(
+        tmp_path, transcript="hi", lines=[PANE_LINE], focused="%1")
+    recorder.start()                      # simulate PTT held at shutdown
+    assert recorder.is_recording is True
+
+    class FakeHotkey:
+        def __init__(self, *a):
+            ...
+
+        def start(self):
+            ...
+
+        def stop(self):
+            ...
+
+    import vupai.daemon as dmod
+    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    daemon.stop()                         # pre-arm a clean shutdown
+    daemon.run()
+    assert recorder.is_recording is False
+    assert recorder.stopped >= 1
 
 
 def test_run_warms_and_starts_hotkey(tmp_path, monkeypatch):

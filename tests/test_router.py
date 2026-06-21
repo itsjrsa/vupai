@@ -129,6 +129,27 @@ def test_number_digit_routes_within_focused_window(panes):
     assert r.fallback is False
 
 
+def test_number_routes_positionally_with_base0_indices():
+    # tmux's default pane-base-index is 0: a stock window has panes 0,1,2...
+    # Spoken numbers are 1-based, so "one" must hit the FIRST pane (index 0),
+    # "two" the SECOND (index 1). Routing is positional, not index==n.
+    p = [mk("%1", "@1", "main", 0, "frontend", active=True),
+         mk("%2", "@1", "main", 1, "backend")]
+    r1 = route("one run it", p, focused_id="%1")
+    assert r1.pane_id == "%1" and r1.match_method == "number" and r1.text == "run it"
+    r2 = route("two run it", p, focused_id="%1")
+    assert r2.pane_id == "%2" and r2.match_method == "number" and r2.text == "run it"
+
+
+def test_number_beyond_pane_count_falls_back():
+    # "three" in a two-pane window has no target -> verbatim focus fallback.
+    p = [mk("%1", "@1", "main", 0, "frontend", active=True),
+         mk("%2", "@1", "main", 1, "backend")]
+    r = route("three do the thing", p, focused_id="%1")
+    assert r.fallback is True
+    assert r.text == "three do the thing"
+
+
 def test_number_with_no_focus_is_not_a_match(panes):
     # No focused window to resolve the index against -> fall through to fallback.
     r = route("two run the migration", panes, focused_id=None)

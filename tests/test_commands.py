@@ -385,6 +385,21 @@ def test_execute_focus_unknown_name():
     assert res.ok is False
 
 
+def test_parse_focus_strips_leading_the():
+    # "focus the nova" / "switch to the nova" must address nova, not "the".
+    assert _parse_btn("focus the nova") == Command(kind="focus", name="nova")
+    assert _parse_btn("switch to the nova") == Command(kind="focus", name="nova")
+
+
+def test_parse_swap_strips_the():
+    assert _parse_btn("swap the nova and the atlas") == Command(
+        kind="swap", name="nova", name_b="atlas")
+
+
+def test_parse_zoom_strips_the():
+    assert _parse_btn("zoom the nova") == Command(kind="zoom", name="nova")
+
+
 def test_parse_swap_misheard_verb():
     # "swap nova atlas" -> "swab/swamp nova atlas"; verb alias resolves to swap.
     assert _parse_btn("swab nova atlas") == Command(kind="swap", name="nova", name_b="atlas")

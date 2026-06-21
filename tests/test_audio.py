@@ -47,6 +47,14 @@ def test_list_input_devices_bad_json_returns_empty():
     assert audio.list_input_devices(runner=lambda: "not json") == []
 
 
+def test_list_input_devices_non_object_json_returns_empty():
+    # Valid JSON that isn't an object (array/null/scalar) must degrade to [] per
+    # the best-effort contract, not raise AttributeError on data.get(...).
+    assert audio.list_input_devices(runner=lambda: "[]") == []
+    assert audio.list_input_devices(runner=lambda: "null") == []
+    assert audio.list_input_devices(runner=lambda: "42") == []
+
+
 def test_resolve_device_empty_means_default_without_enumeration():
     called = False
 
