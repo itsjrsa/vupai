@@ -31,12 +31,33 @@ hold Right-Option → record (sox) → transcribe (Parakeet) → route → paste
 
 ## Requirements
 
+vupai is **macOS Apple-Silicon only** — it depends on Apple MLX for on-device
+speech, plus two Homebrew binaries. It will not run on Linux or Intel Macs.
+
 - macOS on **Apple Silicon** (M-series), macOS 13.5+ (developed on macOS 26).
 - [`tmux`](https://github.com/tmux/tmux) and [`sox`](https://sox.sourceforge.net/):
-  `brew install tmux sox`
-- Python ≥ 3.11 and [`uv`](https://docs.astral.sh/uv/) (recommended).
+  ```bash
+  brew install tmux sox
+  ```
+- Python ≥ 3.11 and [`uv`](https://docs.astral.sh/uv/).
 
 ## Install
+
+After the Homebrew step above, install the `vupai` CLI in its own isolated
+environment with [`uv`](https://docs.astral.sh/uv/):
+
+```bash
+uv tool install vupai                              # from PyPI
+# or, to track the latest commit:
+uv tool install git+https://github.com/itsjrsa/vupai
+```
+
+This puts `vupai` on your `PATH`. (`pipx install vupai` works the same way.)
+The Parakeet model (~0.6B, ~2 GB) downloads automatically on first transcription.
+
+To upgrade later: `uv tool upgrade vupai`.
+
+### From source (development / dogfooding)
 
 ```bash
 git clone git@github.com:itsjrsa/vupai.git
@@ -44,7 +65,8 @@ cd vupai
 uv sync            # creates .venv and installs everything (incl. the MLX runtime)
 ```
 
-The Parakeet model (~0.6B, ~2 GB) downloads automatically on first transcription.
+Run the CLI with `uv run vupai …` from the repo, or see the dogfooding loop
+(`vupai reload` / `vupai --reload`) in [CLAUDE.md](CLAUDE.md).
 
 ## Grant macOS permissions (once)
 
@@ -205,6 +227,5 @@ Architecture, module map, and the invariants to preserve are documented in
 
 ## License
 
-Not yet licensed — the code is currently "all rights reserved" by default until
-a license is chosen. (Note: `pynput` is LGPL-3.0 and the Parakeet model weights
-are CC-BY-4.0; both are runtime dependencies, not part of this repo's code.)
+[MIT](LICENSE). (Note: `pynput` is LGPL-3.0 and the Parakeet model weights are
+CC-BY-4.0; both are runtime dependencies, not part of this repo's code.)

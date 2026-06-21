@@ -5,12 +5,32 @@ build-backend = "hatchling.build"
 [project]
 name = "vupai"
 version = "0.1.0"
-description = "Voice UI for AI panes — push-to-talk voice control over tmux agent panes"
+description = "Voice UI for AI panes - push-to-talk voice control over tmux agent panes"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "José Andrade", email = "jrsa2012@gmail.com" }]
 requires-python = ">=3.11"
+keywords = ["voice", "speech-to-text", "tmux", "macos", "mlx", "parakeet", "push-to-talk", "ai-agents"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Terminals",
+    "Topic :: Utilities",
+]
 dependencies = [
-    "parakeet-mlx",
+    # MLX (and thus the Parakeet runtime) is Apple-Silicon only; the marker keeps
+    # `pip install vupai` from pulling an unusable wheel on Linux / Intel macOS.
+    # The CLI still guards at runtime for a clear message on an unsupported host.
+    "parakeet-mlx; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "pynput",
     "rapidfuzz",
     "Metaphone",
@@ -27,6 +47,8 @@ vupai = "vupai.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/itsjrsa/vupai"
+Repository = "https://github.com/itsjrsa/vupai"
+Issues = "https://github.com/itsjrsa/vupai/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vupai"]
