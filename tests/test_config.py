@@ -79,7 +79,9 @@ def test_command_defaults() -> None:
     c = Config()
     assert c.broadcast_word == "everyone"
     assert c.pane_command == "claude"
-    assert c.programs == {"claude": "claude", "codex": "codex", "shell": ""}
+    assert c.programs == {
+        "claude": "claude", "codex": "codex", "shell": "",
+        "opencode": "opencode", "pi": "pi"}
     assert c.macros == {}
 
 

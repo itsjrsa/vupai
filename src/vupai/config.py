@@ -28,7 +28,9 @@ class Config:
     broadcast_word: str = "everyone"      # leading word = inject to all agents
     pane_command: str = "claude"          # default program for created panes
     programs: dict[str, str] = field(     # spoken token -> argv ("" = default shell)
-        default_factory=lambda: {"claude": "claude", "codex": "codex", "shell": ""})
+        default_factory=lambda: {
+            "claude": "claude", "codex": "codex", "shell": "",
+            "opencode": "opencode", "pi": "pi"})
     macros: dict[str, list[str]] = field(default_factory=dict)  # phrase -> actions
     # Spoken verb -> literal string injected into the target pane(s). Defaults are
     # fire-and-forget Claude Code slash commands; menu-opening ones (/model,
