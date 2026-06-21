@@ -186,7 +186,7 @@ def test_set_mic_device_empty_clears_pin(tmp_path: Path) -> None:
 def test_addressing_defaults() -> None:
     c = Config()
     assert c.addressing == "button"
-    assert c.command_hotkey == "alt_l"
+    assert c.command_hotkey == "cmd_r"
 
 
 def test_loads_addressing_config(tmp_path: Path) -> None:

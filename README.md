@@ -39,8 +39,8 @@ hold Right-Option → record (sox) → transcribe (Parakeet) → route → paste
 ## Install
 
 ```bash
-git clone git@github.com:itsjrsa/tmux-agents.git
-cd tmux-agents
+git clone git@github.com:itsjrsa/vupai.git
+cd vupai
 uv sync            # creates .venv and installs everything (incl. the MLX runtime)
 ```
 
@@ -92,7 +92,7 @@ candidates so you can re-say.
 ### Voice commands
 
 Beyond dictation, vupai has a small command layer. Hold the **system key** (the
-`command_hotkey`, Left-Control by default) and speak; vupai executes the command
+`command_hotkey`, Right-Command by default) and speak; vupai executes the command
 instead of typing it into a pane. The key is the signal, so there is no spoken
 control word. Run `vupai voice-commands` for a cheat sheet tailored to your config.
 
@@ -138,7 +138,7 @@ Optional TOML at `~/.config/vupai/config.toml` (every field has a default):
 ```toml
 hotkey = "alt_r"                                  # pynput key name; alt_r = Right-Option (dictation key in button mode)
 addressing = "button"                             # "button" (two keys, default) | "keyword" (one key, no command layer)
-command_hotkey = "ctrl_l"                         # button mode: the "system" key (Left-Control)
+command_hotkey = "cmd_r"                          # button mode: the "system" key (Right-Command)
 broadcast_word = "everyone"                       # leading word that injects to all named agents
 model_id = "mlx-community/parakeet-tdt-0.6b-v2"   # English-only (v3 is multilingual and drifts to Russian on short clips)
 sample_rate = 16000

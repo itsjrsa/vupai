@@ -26,7 +26,7 @@ dev = [
 vupai = "vupai.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/itsjrsa/tmux-agents"
+Homepage = "https://github.com/itsjrsa/vupai"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vupai"]
