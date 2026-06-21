@@ -66,7 +66,12 @@ uv sync            # creates .venv and installs everything (incl. the MLX runtim
 ```
 
 Run the CLI with `uv run vupai …` from the repo, or see the dogfooding loop
-(`vupai reload` / `vupai --reload`) in [CLAUDE.md](CLAUDE.md).
+(`vupai reload` / `vupai --reload`) in [AGENTS.md](AGENTS.md).
+
+Working on vupai with an AI coding agent (Claude Code, Codex, opencode, Cursor,
+Aider, …)? [AGENTS.md](AGENTS.md) is the single source of truth for repo
+conventions, architecture, and invariants; [CLAUDE.md](CLAUDE.md) just points to
+it.
 
 ## Grant macOS permissions (once)
 
