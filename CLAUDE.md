@@ -25,7 +25,7 @@ voxpane setup                                          # interactive: probe + de
 ```
 
 `voxpane` CLI (entry point `voxpane.cli:main`):
-- `voxpane [--reload]` - ensure tmux + spawn the voice daemon (detached), then attach (default, no subcommand). `--reload` respawns the daemon first (= `voxpane reload && voxpane` in one invocation) so source edits load before attaching - the dogfooding loop
+- `voxpane [--reload]` - ensure tmux + spawn the voice daemon (detached), then attach (default, no subcommand). `--reload` respawns the daemon first (= `voxpane reload && voxpane` in one invocation) so source edits load before attaching - the dogfooding loop. **Run from inside a tmux pane it skips the attach** (`tmuxio.inside_tmux()` / `$TMUX`): `tmux attach` refuses to nest, so `_cmd_default` respawns the daemon, prints a note, and returns - so `--reload` from within the session degrades to a plain `reload` instead of failing. Use bare `voxpane reload` (no attach) as the in-pane dogfooding loop.
 - `voxpane up` / `voxpane down` - start / stop the daemon (`down` SIGTERMs the recorded pid; the daemon is a detached process, not a tmux window)
 - `voxpane reload` - `down` + `ensure_up` in one step; respawns the daemon so source edits take effect (the daemon loads modules once at spawn, so a live one runs stale code). For dogfooding voxpane on itself (or `voxpane --reload` to also re-attach)
 - `voxpane name <name> [pane]` - label a pane (rejects confusable names; defaults to focused)
