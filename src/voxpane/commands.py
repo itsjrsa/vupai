@@ -320,6 +320,10 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
         io.set_pane_name(new_id, name)
         used.append(name)
         assigned.append(name)
+        # Re-tile after every split: splitting always shrinks the active pane,
+        # so without redistributing space tmux runs out ("no space for new pane")
+        # around the 6th-7th split. Tiling each round keeps room for the next.
+        io.select_layout(target, "tiled")
     io.select_layout(target, "tiled")
     return CommandResult(True, f"created {cmd.count} panes: {' '.join(assigned)}{note}")
 
