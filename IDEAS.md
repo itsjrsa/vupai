@@ -73,3 +73,20 @@ limitations / deferred".
   self-skipping.
 - **Recognition-accuracy metrics / logging** to tune routing thresholds against
   real usage.
+- **Journal-driven refinement loop.** The journal is the data source for
+  continuously improving STT/routing/feature coverage. **Settled design
+  decision: there is NO built-in analyzer** (no `vupai journal --analyze`, no
+  LLM in the tool). You point whatever agent you want (Claude, OpenCode,
+  self-hosted) at the raw `~/.config/vupai/journal.jsonl` per run and reason
+  about improvements in that session. This sidesteps the "where does analysis
+  run / who sees my voice data" question: you pick the tool each time. The build
+  work is only to keep the journal maximally analyzable. **Shipped:** passive
+  per-entry enrichment (`v`, ms `ts`, `model_id`, route `confidence` /
+  `match_method` / `available_names`, `transcribe_ms` / `inject_ms`) so an
+  external agent can spot fragile matches, STT mishears, and friction outcomes,
+  and cluster rapid re-utterances (the misfire proxy) itself from ms timestamps
+  + transcripts. **Possible next passes (all deferred):** `runner_up` + score on
+  fuzzy matches; token-level STT confidence (needs a different `Transcriber`);
+  `inject_ms` on the both-injects-fail path; a metaphone-path test assertion.
+  Resist rebuilding this as an in-tool analyzer; the external-agent workflow is
+  intentional.
