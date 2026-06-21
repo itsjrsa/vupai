@@ -1,14 +1,21 @@
-# vupai
+<h1 align="center">vupai</h1>
 
-> **Voice UI for AI panes** — push-to-talk voice control for your tmux agent
-> panes, on macOS, fully local.
+<p align="center">
+  <strong>Voice UI for AI panes</strong>: push-to-talk voice control for your tmux agent panes, on macOS, fully local.
+</p>
 
-*vupai* (say "voo-pie") is a **V**oice **U**I for your AI **pa**nes — hold a key,
+<p align="center">
+  <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
+  <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/python-%3E%3D3.11-brightgreen.svg"></a>
+  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-black.svg">
+</p>
+
+*vupai* (say "voo-pie") is a **V**oice **U**I for your AI **pa**nes: hold a key,
 speak, and what you say lands in the right one.
 
 Hold a key, speak, and what you say is typed into the right tmux pane: the one
 you're looking at, or an agent you call by name (*"nova, run the tests"*).
-Speech-to-text runs on-device with NVIDIA Parakeet (via Apple MLX) — no cloud,
+Speech-to-text runs on-device with NVIDIA Parakeet (via Apple MLX): no cloud,
 no API keys.
 
 Built for a tmux-centric workflow where you keep several coding agents (Claude
@@ -31,8 +38,9 @@ hold Right-Option → record (sox) → transcribe (Parakeet) → route → paste
 
 ## Requirements
 
-vupai is **macOS Apple-Silicon only** — it depends on Apple MLX for on-device
-speech, plus two Homebrew binaries. It will not run on Linux or Intel Macs.
+> [!IMPORTANT]
+> vupai is **macOS Apple-Silicon only**: it depends on Apple MLX for on-device
+> speech, plus two Homebrew binaries. It will not run on Linux or Intel Macs.
 
 - macOS on **Apple Silicon** (M-series), macOS 13.5+ (developed on macOS 26).
 - [`tmux`](https://github.com/tmux/tmux) and [`sox`](https://sox.sourceforge.net/):
@@ -84,8 +92,12 @@ uv run vupai doctor
 ```
 
 It probes each one and prints the exact System-Settings path for anything
-missing. (macOS grants these to the terminal binary, not the script — so they
-silently fail until granted.)
+missing.
+
+> [!WARNING]
+> macOS grants these to the terminal binary, not the script, so the hotkey and
+> mic silently fail until you grant them. If voice seems dead, this is the first
+> thing to check (`uv run vupai doctor`).
 
 ## Usage
 
@@ -113,8 +125,9 @@ Examples (Right-Option held while speaking):
 - *"nova, deploy to staging"* → the pane named **nova**, wherever it is.
 - *"two, git status"* → pane **2** in the current window.
 
-If two names are too close to tell apart, vupai won't guess — it shows the
-candidates so you can re-say.
+> [!NOTE]
+> If two names are too close to tell apart, vupai won't guess: it shows the
+> candidates so you can re-say.
 
 ### Voice commands
 
@@ -218,17 +231,19 @@ uv run pytest -m slow                             # needs the real model + tests
 uv run ruff check .                               # lint
 ```
 
-**Dogfooding tip:** the daemon loads vupai's modules once at spawn, so a live
-one runs stale code after you edit the source. `uv run vupai --reload`
-respawns it and re-attaches in one step. Install it as an editable tool to drop
-the `uv run` prefix entirely:
+> [!TIP]
+> The daemon loads vupai's modules once at spawn, so a live one runs stale code
+> after you edit the source. `uv run vupai --reload` respawns it and re-attaches
+> in one step.
+
+Install it as an editable tool to drop the `uv run` prefix entirely:
 
 ```bash
 uv tool install --editable .   # then just: vupai --reload
 ```
 
 Architecture, module map, and the invariants to preserve are documented in
-[`CLAUDE.md`](CLAUDE.md).
+[`AGENTS.md`](AGENTS.md).
 
 ## License
 
