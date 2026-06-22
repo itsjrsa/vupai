@@ -55,6 +55,36 @@ _UNZOOM_PHRASES = (["and", "zoom"], ["un", "zoom"])
 # name tokens after the verb, so a bare misfire resolves to nothing.
 _SWAP_VERBS = ("swap",)
 _SWAP_VERB_ALIASES = frozenset({"swab", "swamp"})
+_LAYOUT_VERBS = ("layout",)
+# Curated mishearing of the lead verb. Kept tight: "layout" transcribes cleanly;
+# the two-token split "lay out" is handled separately in _parse_layout. Extend
+# with a one-liner + a test when a real mishearing shows up.
+_LAYOUT_VERB_ALIASES = frozenset({"layouts"})
+# Name-phrase (after the mandatory lead verb) -> (tmux layout, focus-aware main).
+# The aliases are real English words; they are SAFE ONLY as the name token(s)
+# after the verb, never as a toks[0] verb-alias. NEVER move a key here into a
+# toks[0]-matched set. View-only action, so a miss is harmless (falls through to
+# dictation). "even" alone is intentionally absent (it would tie-break columns
+# vs rows); say the axis. Extend with a one-liner + a test.
+_LAYOUTS: dict[str, tuple[str, bool]] = {
+    "grid": ("tiled", False),
+    "tile": ("tiled", False),
+    "tiled": ("tiled", False),
+    "tiles": ("tiled", False),
+    "bento": ("tiled", False),
+    "left": ("main-vertical", True),
+    "focus left": ("main-vertical", True),
+    "main left": ("main-vertical", True),
+    "stack right": ("main-vertical", True),
+    "top": ("main-horizontal", True),
+    "focus top": ("main-horizontal", True),
+    "main top": ("main-horizontal", True),
+    "stack bottom": ("main-horizontal", True),
+    "columns": ("even-horizontal", False),
+    "even columns": ("even-horizontal", False),
+    "rows": ("even-vertical", False),
+    "even rows": ("even-vertical", False),
+}
 # Unit nouns for `create`. "pane" is canonical; "agent"/"split" are homophone-free
 # synonyms ("pane" mishears as "pain"/"panel") that map to the same thing - say
 # whichever is natural. "window" stays distinct (real tmux concept, reserved for
@@ -159,7 +189,7 @@ MAX_CREATE_COUNT = 30
 
 @dataclass(frozen=True)
 class Command:
-    # create|macro|close|close_others|focus|swap|zoom|unzoom|slash|broadcast|unknown
+    # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|slash|broadcast|unknown
     kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
@@ -170,6 +200,8 @@ class Command:
     raw: str = ""                          # unknown body (for feedback)
     unit: str = "pane"                     # pane|window
     to_all: bool = False                   # slash: target all named panes
+    layout: str = ""                       # tmux layout name (kind == "layout")
+    main_focus: bool = False               # layout: swap focused pane into main slot
 
 
 def _tokens(s: str) -> list[str]:
@@ -263,6 +295,29 @@ def _parse_zoom(toks: list[str]) -> Command | None:
     return Command(kind="zoom", name=rest[0] if rest else "")
 
 
+def _parse_layout(toks: list[str]) -> Command | None:
+    """`layout <name>` (or `lay out <name>`) -> a layout Command, else None.
+
+    The lead verb is mandatory; the trailing name-phrase is looked up in
+    _LAYOUTS. An unknown name (or a bare verb) returns None so the utterance
+    falls through to dictation - never destructive.
+    """
+    if toks and (toks[0] in _LAYOUT_VERBS or toks[0] in _LAYOUT_VERB_ALIASES):
+        rest = toks[1:]
+    elif toks[:2] == ["lay", "out"]:
+        rest = toks[2:]
+    else:
+        return None
+    rest = [t for t in rest if t != "the"]
+    if not rest:
+        return None
+    hit = _LAYOUTS.get(" ".join(rest))
+    if hit is None:
+        return None
+    layout, main_focus = hit
+    return Command(kind="layout", layout=layout, main_focus=main_focus)
+
+
 def _parse_slash(toks: list[str], slash_commands: dict[str, str]) -> Command | None:
     """`<verb> [target]` where verb is a configured slash command.
 
@@ -292,6 +347,7 @@ def _parse_body(body: str, macros: dict[str, list[str]],
     toks = _tokens(body)
     return (_parse_create(toks, programs) or _parse_close(toks)
             or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks)
+            or _parse_layout(toks)
             or _parse_slash(toks, slash_commands))
 
 

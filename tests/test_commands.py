@@ -974,3 +974,60 @@ def test_button_filler_before_broadcast_is_not_peeled():
     # Broadcast must stay raw-led; "um everyone ..." is not broadcast (no peel),
     # it falls through to None and the router/inject handles it verbatim.
     assert _parse_btn("um everyone deploy") is None
+
+
+# --- layout commands ----------------------------------------------------------
+
+def test_parse_layout_grid_and_aliases():
+    for word in ("grid", "tile", "tiled", "tiles", "bento"):
+        c = _parse_btn(f"layout {word}")
+        assert c is not None and c.kind == "layout"
+        assert c.layout == "tiled" and c.main_focus is False
+
+
+def test_parse_layout_focus_left_variants():
+    for phrase in ("left", "focus left", "main left", "stack right"):
+        c = _parse_btn(f"layout {phrase}")
+        assert c.kind == "layout" and c.layout == "main-vertical" and c.main_focus is True
+
+
+def test_parse_layout_focus_top_variants():
+    for phrase in ("top", "focus top", "main top", "stack bottom"):
+        c = _parse_btn(f"layout {phrase}")
+        assert c.kind == "layout" and c.layout == "main-horizontal" and c.main_focus is True
+
+
+def test_parse_layout_even_splits():
+    for phrase in ("columns", "even columns"):
+        c = _parse_btn(f"layout {phrase}")
+        assert c.kind == "layout" and c.layout == "even-horizontal" and c.main_focus is False
+    for phrase in ("rows", "even rows"):
+        c = _parse_btn(f"layout {phrase}")
+        assert c.kind == "layout" and c.layout == "even-vertical" and c.main_focus is False
+
+
+def test_parse_layout_two_token_verb_and_filler():
+    assert _parse_btn("lay out grid").layout == "tiled"
+    assert _parse_btn("okay lay out grid").layout == "tiled"
+    assert _parse_btn("okay layout grid").layout == "tiled"
+    assert _parse_btn("layout the grid").layout == "tiled"
+
+
+def test_parse_layout_unknown_or_bare_verb_falls_through():
+    assert _parse_btn("layout") is None
+    assert _parse_btn("layout wobble") is None
+    # Bare "lay" is not the verb (requires the full ["lay","out"]).
+    assert _parse_btn("lay down") is None
+    assert _parse_btn("lay off the gas") is None
+
+
+def test_parse_layout_names_need_the_lead_verb():
+    # Structural invariant: a layout name with no "layout" lead is dictation,
+    # never a layout command (and must not be hijacked by another verb).
+    for word in ("grid", "bento", "left", "top", "even", "stack", "columns", "rows"):
+        assert _parse_btn(word) is None
+
+
+def test_parse_layout_is_button_mode_only():
+    # keyword mode has no command layer.
+    assert _parse("layout grid") is None
