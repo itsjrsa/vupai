@@ -1,8 +1,13 @@
+import re
+import tomllib
+from dataclasses import fields
 from pathlib import Path
 
 from vupai.config import (
+    ANNOTATED_TEMPLATE,
     Config,
     load_config,
+    render_config,
     set_hotkey_config,
     set_mic_device,
     write_journal_config,
@@ -310,3 +315,40 @@ def test_status_tips_loads_from_toml(tmp_path):
     cfg = load_config(p)
     assert cfg.status_tips is False
     assert cfg.status_tips_interval == 30
+
+
+def test_template_is_valid_toml_and_all_defaults_when_commented(tmp_path):
+    # Every line is commented, so parsing yields an empty doc and load_config
+    # falls back to a pristine Config().
+    p = tmp_path / "config.toml"
+    p.write_text(ANNOTATED_TEMPLATE, encoding="utf-8")
+    assert tomllib.loads(ANNOTATED_TEMPLATE) == {}
+    assert load_config(p) == Config()
+
+
+def test_template_covers_every_config_field():
+    # Drift guard: a new Config field with no doc block + default fails here.
+    for f in fields(Config):
+        scalar = re.compile(rf"^#?\s*{re.escape(f.name)}\s*=", re.MULTILINE)
+        table = re.compile(rf"^#?\s*\[{re.escape(f.name)}\]", re.MULTILINE)
+        assert scalar.search(ANNOTATED_TEMPLATE) or table.search(
+            ANNOTATED_TEMPLATE
+        ), f"{f.name} missing from ANNOTATED_TEMPLATE"
+
+
+def test_render_config_uncomments_named_scalar_keys(tmp_path):
+    out = render_config(
+        {"journal_enabled": "false", "mic_device": '"USB Mic"'}
+    )
+    p = tmp_path / "config.toml"
+    p.write_text(out, encoding="utf-8")
+    c = load_config(p)
+    assert c.journal_enabled is False
+    assert c.mic_device == "USB Mic"
+    # untouched keys stay at defaults (still commented)
+    assert c.journal_keep_audio is False
+    assert c.hotkey == "alt_r"
+
+
+def test_render_config_empty_active_equals_template():
+    assert render_config({}) == ANNOTATED_TEMPLATE

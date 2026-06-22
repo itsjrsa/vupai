@@ -149,6 +149,122 @@ _STARTER_HEADER = (
 )
 
 
+ANNOTATED_TEMPLATE = '''\
+# vupai config - every available key, defaulted and commented out.
+# Uncomment a line (drop the leading "# ") and edit its value to override.
+# See Config in src/vupai/config.py for the authoritative defaults.
+# A running daemon loads config once at spawn: `vupai reload` to apply changes.
+
+# pynput Key name for the push-to-talk dictation key. alt_r = Right-Option.
+# hotkey = "alt_r"
+# Addressing mode: "button" (two-key default) or "keyword" (legacy single key,
+# no command layer).
+# addressing = "button"
+# button mode only: the system/command key that runs the command layer.
+# command_hotkey = "cmd_r"
+# ASR model id. English-only; the v3 multilingual model drifts to Russian on
+# short audio.
+# model_id = "mlx-community/parakeet-tdt-0.6b-v2"
+# Capture sample rate (Hz).
+# sample_rate = 16000
+# CoreAudio input device name (sox AUDIODEV). "" = macOS system default.
+# Set via `vupai mic`; resolved at daemon startup with fallback to default.
+# mic_device = ""
+# rapidfuzz name-match score, 0..100. Higher = stricter.
+# fuzzy_cutoff = 82
+# tmux pane-registry refresh cadence (seconds).
+# poll_interval = 0.5
+# Seconds to wait for pasted text to appear in the pane before giving up.
+# inject_confirm_timeout = 2.0
+# Poll cadence (seconds) while waiting for the paste to confirm.
+# inject_poll_interval = 0.05
+# Pause (seconds) between confirmed paste and the Enter that submits it, so a
+# mishearing can be cancelled. Applies to dictation/name-routed text only.
+# Set 0.0 to submit immediately.
+# inject_submit_delay = 1.5
+# Spoken alias -> pane name overrides for routing.
+# [aliases]
+# "nova" = "atlas"
+# Leading spoken word that injects to all named agents.
+# broadcast_word = "everyone"
+# Default program launched in a newly created pane ("" = plain shell).
+# pane_command = "claude"
+# Spoken token -> argv for `create` ("" = default shell).
+# [programs]
+# claude = "claude"
+# codex = "codex"
+# shell = ""
+# opencode = "opencode"
+# pi = "pi"
+# Spoken phrase -> ordered list of actions (macro).
+# [macros]
+# "set up" = ["create two panes", "tile"]
+# Spoken verb -> literal slash string injected into the target pane(s).
+# [slash_commands]
+# clear = "/clear"
+# compact = "/compact"
+# Utterance journal: a JSONL trail (transcript + decision + outcome) at
+# ~/.config/vupai/journal.jsonl, for diagnosing misfires.
+# journal_enabled = true
+# Opt-in: also retain each wav (your voice) for offline misfire replay.
+# journal_keep_audio = false
+# Ring bound: how many wavs to keep when journal_keep_audio is on.
+# journal_audio_retention = 500
+# Render an ambient daemon-state segment in tmux status-right.
+# status_indicator = true
+# Rotating example-command tips in tmux status-left (voice-grammar
+# discoverability aid). Set false to leave status-left untouched.
+# status_tips = true
+# Seconds between status-left tip rotations.
+# status_tips_interval = 15.0
+# Require y/n confirmation before a destructive command (close / broadcast).
+# confirm_destructive = true
+# Seconds before the confirm popup auto-cancels (fail-safe).
+# confirm_timeout_s = 8.0
+# Confirm before a create opens at least this many panes at once.
+# confirm_create_threshold = 8
+# Live transcript HUD: echo what was heard on the target pane.
+# hud_enabled = true
+# Agent-state poller: notify when an agent goes busy -> idle. Off by default
+# (background thread; busy/idle heuristic unvalidated on a live Claude TUI).
+# notify_enabled = false
+# Poller tick cadence (seconds).
+# notify_poll_interval = 2.0
+# How many lines of each pane's tail to classify busy/idle.
+# notify_capture_lines = 12
+# Strip non-lexical filler tokens before commands/routing/dictation.
+# filler_filter = true
+# The filler set (non-lexical only by default; add soft fillers at your risk).
+# filler_words = ["um", "uh", "er", "ah", "eh", "hmm", "mm"]
+'''
+
+
+def render_config(active: dict[str, str]) -> str:
+    """Return ANNOTATED_TEMPLATE with the named scalar keys uncommented.
+
+    `active` maps a scalar config key to its already-TOML-formatted RHS string
+    (e.g. "true", '"alt_r"'). Each matching `# key = ...` line becomes
+    `key = <value>`; keys absent from `active` stay commented. Commented
+    `[table]` blocks and array fields are never altered.
+    """
+    if not active:
+        return ANNOTATED_TEMPLATE
+    matchers = {
+        key: re.compile(rf"^#\s*{re.escape(key)}\s*=") for key in active
+    }
+    out: list[str] = []
+    done: set[str] = set()
+    for line in ANNOTATED_TEMPLATE.splitlines():
+        for key, matcher in matchers.items():
+            if key not in done and matcher.match(line):
+                out.append(f"{key} = {active[key]}")
+                done.add(key)
+                break
+        else:
+            out.append(line)
+    return "\n".join(out) + "\n"
+
+
 def _escape_toml(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
