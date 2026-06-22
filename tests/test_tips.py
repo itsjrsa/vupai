@@ -43,3 +43,35 @@ def test_every_tip_is_prefixed_and_truncated():
 def test_order_is_deterministic():
     cfg = _cfg(addressing="button")
     assert tips.build_tips(cfg) == tips.build_tips(cfg)
+
+
+class _FakeIO:
+    def __init__(self, fail=False):
+        self.sent = []
+        self.fail = fail
+
+    def set_tip(self, text):
+        if self.fail:
+            raise RuntimeError("boom")
+        self.sent.append(text)
+
+
+def test_rotator_tick_cycles_and_wraps():
+    io = _FakeIO()
+    rot = tips.TipRotator(["a", "b"], io=io)
+    rot.tick(); rot.tick(); rot.tick()
+    assert io.sent == ["a", "b", "a"]
+
+
+def test_rotator_tick_swallows_io_errors():
+    rot = tips.TipRotator(["a"], io=_FakeIO(fail=True))
+    rot.tick()  # must not raise
+
+
+def test_rotator_empty_pool_is_noop():
+    io = _FakeIO()
+    rot = tips.TipRotator([], io=io)
+    rot.tick()
+    rot.start()  # must not start a thread on an empty pool
+    assert io.sent == []
+    rot.stop()

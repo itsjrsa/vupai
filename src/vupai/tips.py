@@ -68,3 +68,51 @@ def build_tips(cfg) -> list[str]:
     # Broadcast exists in both addressing modes.
     commands.append(f"{cfg.broadcast_word} ship it")
     return [_render(t) for t in _interleave(commands, hints)]
+
+
+class TipRotator:
+    """Cycle a tip pool into tmux status-left on a fixed interval.
+
+    Mirrors watcher.PaneWatcher: a daemon background thread with an interruptible
+    wait. ISOLATION: touches ONLY tmuxio.set_tip - never the recorder, ASR, the
+    injector, or the daemon jobs queue. Best-effort: a tmux failure on a tick is
+    swallowed so the rotator can never break the voice pipeline.
+    """
+
+    def __init__(self, tips: list[str], *, interval: float = 15.0, io=tmuxio) -> None:
+        self._tips = list(tips)
+        self._interval = interval
+        self._io = io
+        self._i = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def tick(self) -> None:
+        if not self._tips:
+            return
+        tip = self._tips[self._i % len(self._tips)]
+        self._i += 1
+        try:
+            self._io.set_tip(tip)
+        except Exception:
+            logger.debug("tip rotator set_tip failed", exc_info=True)
+
+    def start(self) -> None:
+        if self._thread is not None or not self._tips:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            self.tick()
+            # Interruptible sleep: stop() wakes it at once, so teardown is prompt.
+            if self._stop.wait(self._interval):
+                break
+
+    def stop(self) -> None:
+        self._stop.set()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=2.0)
