@@ -34,7 +34,10 @@ hold Right-Option → record (sox) → transcribe (Parakeet) → route → paste
   current window.
 - **Injection is safe.** vupai pastes your text and waits until it actually
   appears in the pane before pressing Enter — it never blindly submits.
-- **Local & private.** The model runs on your Mac; nothing leaves the machine.
+- **Fully local, fully private.** Speech-to-text runs entirely on-device via
+  Apple MLX (NVIDIA Parakeet). There is no cloud service, no API key, and no
+  account: your voice and transcripts never leave your Mac. The only network
+  access is a one-time model download (~2 GB) on first use.
 
 ## Requirements
 
@@ -52,18 +55,18 @@ hold Right-Option → record (sox) → transcribe (Parakeet) → route → paste
 ## Install
 
 After the Homebrew step above, install the `vupai` CLI in its own isolated
-environment with [`uv`](https://docs.astral.sh/uv/):
+environment straight from the repo with [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install vupai                              # from PyPI
-# or, to track the latest commit:
 uv tool install git+https://github.com/itsjrsa/vupai
 ```
 
-This puts `vupai` on your `PATH`. (`pipx install vupai` works the same way.)
-The Parakeet model (~0.6B, ~2 GB) downloads automatically on first transcription.
+This puts `vupai` on your `PATH`. (`pipx install git+https://github.com/itsjrsa/vupai`
+works the same way.) The Parakeet model (~0.6B, ~2 GB) downloads automatically on
+first transcription.
 
-To upgrade later: `uv tool upgrade vupai`.
+To upgrade later: `uv tool upgrade vupai`. Not on PyPI yet; install from git or
+[from source](#from-source-development--dogfooding).
 
 ### From source (development / dogfooding)
 
