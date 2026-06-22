@@ -10,12 +10,14 @@ _INDICATOR_STYLES = {
     "idle": ("#[fg=green]", "●"),
     "listening": ("#[fg=red]", "◉"),
     "busy": ("#[fg=cyan]", "…"),
+    "warming": ("#[fg=yellow]", "◌"),
     "ok": ("#[fg=green]", "▸"),
     "info": ("#[default]", "·"),
     "warn": ("#[fg=yellow]", "·"),
     "error": ("#[fg=red]", "⚠"),
 }
 _INDICATOR_MAX = 36  # truncate labels so the status segment stays compact
+_HUD_MAX = 60        # truncate the heard-transcript pane overlay
 
 
 class Feedback:
@@ -28,9 +30,11 @@ class Feedback:
     - stdout, which lands in the daemon log for after-the-fact diagnosis.
     """
 
-    def __init__(self, io=tmuxio, *, indicator_enabled: bool = True) -> None:
+    def __init__(self, io=tmuxio, *, indicator_enabled: bool = True,
+                 hud_enabled: bool = True) -> None:
         self._io = io
         self._indicator_enabled = indicator_enabled
+        self._hud_enabled = hud_enabled
         # Monotonic ordering for indicator writes. The "listening" write happens
         # on a background thread (off the pynput listener), so a quick tap can let
         # it land *after* the main thread already wrote working/result and clobber
@@ -68,6 +72,17 @@ class Feedback:
         except Exception:
             pass
 
+    def warming(self, downloading: bool = False) -> None:
+        # Painted before the (blocking) model load so a cold start doesn't look
+        # dead. `downloading` marks the multi-minute first-run fetch vs a quick
+        # in-cache load. Printed too, so a headless start is visible in the log.
+        if downloading:
+            label, line = "downloading model", "warming (downloading model ~600MB)..."
+        else:
+            label, line = "warming", "warming (loading model)..."
+        print(line)
+        self.indicator(label, "warming")
+
     def ready(self) -> None:
         print("ready")
         self.indicator("vupai", "idle")
@@ -91,6 +106,25 @@ class Feedback:
         print(text)
         self.indicator(text, "info")
 
+    def _pane_msg(self, pane_id: str | None, label: str) -> None:
+        """Best-effort transient overlay on a pane (tmux display-message).
+
+        Gated by hud_enabled and a present pane_id; every failure is swallowed so
+        the HUD can never break the voice pipeline. Shared by announce/heard/reject.
+        """
+        if not self._hud_enabled or not pane_id:
+            return
+        try:
+            self._io.display_message(pane_id, label)
+        except Exception:
+            pass
+
+    def heard(self, transcript: str, pane_id: str | None,
+              *, mode: str = "keyword") -> None:
+        # Echo what was heard on the target pane so a mishearing/misroute is
+        # visible where the user is looking. Informational: no error indicator.
+        self._pane_msg(pane_id, f"heard: {transcript[:_HUD_MAX]}")
+
     def announce(self, route: Route) -> None:
         # Only announce when we actually routed somewhere.
         if route.pane_id is None:
@@ -100,8 +134,19 @@ class Feedback:
             label = f"◀ {route.matched_name}: {snippet}"
         else:
             label = f"◀ (focus): {snippet}"
-        self._io.display_message(route.pane_id, label)
+        self._pane_msg(route.pane_id, label)
         self.indicator(route.matched_name or "focus", "ok")
+
+    def reject(self, reason: str, pane_id: str | None,
+               *, candidates: tuple[str, ...] = ()) -> None:
+        # A rejected utterance: surface the reason on BOTH the status indicator
+        # (always) and the target pane (HUD). candidates list the near-ties.
+        label = reason
+        if candidates:
+            label = f"{reason}: " + " / ".join(candidates)
+        print(f"reject: {label}")
+        self.indicator(reason, "error")
+        self._pane_msg(pane_id, f"⚠ {label}")
 
     def error(self, text: str, seq: int | None = None) -> None:
         # Error lines are prefixed so they stand out in the daemon log. `seq` is

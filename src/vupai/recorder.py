@@ -70,7 +70,14 @@ class Recorder:
         # SIGINT lets sox flush the WAV header (SIGKILL would corrupt it).
         try:
             proc.send_signal(signal.SIGINT)
-            proc.wait(timeout=5)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                # sox ignored SIGINT (wedged driver / heavy load). Force-kill and
+                # reap so we never orphan a `rec` child holding the mic; the wav
+                # may be truncated, which the caller's size check already handles.
+                proc.kill()
+                proc.wait()
         finally:
             self._proc = None
             self._wav_path = None

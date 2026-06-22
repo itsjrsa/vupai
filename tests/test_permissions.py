@@ -178,6 +178,25 @@ def test_terminal_app_empty_env_is_generic_placeholder():
     assert app.bundle_id is None
 
 
+def test_terminal_app_inside_tmux_resolves_real_terminal_not_tmux():
+    # tmux sets TERM_PROGRAM=tmux inside a pane, but TCC attaches to the real
+    # terminal app. Resolve the name from __CFBundleIdentifier instead of naming
+    # "tmux" (which never appears in the Settings pane the user must toggle).
+    app = terminal_app({"TERM_PROGRAM": "tmux",
+                        "__CFBundleIdentifier": "com.mitchellh.ghostty"})
+    assert app.name == "Ghostty"               # friendly name, not "tmux"
+    assert app.bundle_id == "com.mitchellh.ghostty"
+
+
+def test_terminal_app_inside_screen_falls_back_to_bundle_id():
+    # Unknown bundle inside screen: still must not name "screen"; bundle id at
+    # least points the user at the right app + a correct tccutil command.
+    app = terminal_app({"TERM_PROGRAM": "screen",
+                        "__CFBundleIdentifier": "com.example.term"})
+    assert app.name != "screen"
+    assert app.bundle_id == "com.example.term"
+
+
 # --- fixes ------------------------------------------------------------------
 
 def test_fixes_only_for_failing_permissions():

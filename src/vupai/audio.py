@@ -51,6 +51,8 @@ def list_input_devices(*, runner=None) -> list[InputDevice]:
         data = json.loads(raw)
     except (ValueError, TypeError):
         return []
+    if not isinstance(data, dict):
+        return []  # valid JSON but not the expected object -> best-effort empty
 
     devices: list[InputDevice] = []
     for group in data.get("SPAudioDataType", []):

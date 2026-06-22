@@ -18,6 +18,10 @@ def test_word_to_int_digits_and_words():
     assert word_to_int("zero") is None
     assert word_to_int("frontend") is None
     assert word_to_int("12") == 12  # raw digits not capped here
+    assert word_to_int("ten") == 10
+    assert word_to_int("twelve") == 12
+    assert word_to_int("twenty") == 20
+    assert word_to_int("thirty") == 30
 
 
 def mk(id: str, window_id: str, window: str, index: int, name: str,
@@ -129,6 +133,27 @@ def test_number_digit_routes_within_focused_window(panes):
     assert r.fallback is False
 
 
+def test_number_routes_positionally_with_base0_indices():
+    # tmux's default pane-base-index is 0: a stock window has panes 0,1,2...
+    # Spoken numbers are 1-based, so "one" must hit the FIRST pane (index 0),
+    # "two" the SECOND (index 1). Routing is positional, not index==n.
+    p = [mk("%1", "@1", "main", 0, "frontend", active=True),
+         mk("%2", "@1", "main", 1, "backend")]
+    r1 = route("one run it", p, focused_id="%1")
+    assert r1.pane_id == "%1" and r1.match_method == "number" and r1.text == "run it"
+    r2 = route("two run it", p, focused_id="%1")
+    assert r2.pane_id == "%2" and r2.match_method == "number" and r2.text == "run it"
+
+
+def test_number_beyond_pane_count_falls_back():
+    # "three" in a two-pane window has no target -> verbatim focus fallback.
+    p = [mk("%1", "@1", "main", 0, "frontend", active=True),
+         mk("%2", "@1", "main", 1, "backend")]
+    r = route("three do the thing", p, focused_id="%1")
+    assert r.fallback is True
+    assert r.text == "three do the thing"
+
+
 def test_number_with_no_focus_is_not_a_match(panes):
     # No focused window to resolve the index against -> fall through to fallback.
     r = route("two run the migration", panes, focused_id=None)
@@ -233,6 +258,21 @@ def test_next_callsign_ignores_unnamed_pseudo_titles():
 
 def test_next_callsign_returns_none_when_pool_exhausted():
     assert next_callsign(list(CALLSIGNS)) is None
+
+
+def test_callsign_pool_yields_30_distinct_from_empty():
+    # A max-count create (commands.MAX_CREATE_COUNT == 30) from a fresh window
+    # must be able to name every pane. Simulate _exec_create's assignment loop:
+    # any two confusable entries collapse (the second is skipped), so this guards
+    # that the curated list has >= 30 mutually non-confusable callsigns.
+    from vupai.commands import MAX_CREATE_COUNT
+
+    used: list[str] = []
+    for _ in range(MAX_CREATE_COUNT):
+        name = next_callsign(used)
+        assert name is not None, f"pool exhausted after {len(used)} of {MAX_CREATE_COUNT}"
+        used.append(name)
+    assert len(set(used)) == MAX_CREATE_COUNT
 
 
 # ---------------------------------------------------------------------------

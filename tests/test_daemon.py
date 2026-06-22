@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from vupai.commands import CommandResult
+from vupai.commands import Command, CommandResult
 from vupai.config import Config
 from vupai.daemon import Daemon
 from vupai.journal import Journal
@@ -75,9 +75,25 @@ class FakeFeedback:
         self.statuses: list[str] = []
         self.errors: list[str] = []
         self.announced: list[Route] = []
+        self.confirms: list[str] = []
+        self.heards: list[tuple] = []
+        self.rejects: list[tuple] = []
 
     def reserve(self) -> int:
         return 0
+
+    def confirm_prompt(self, summary: str, confirm_word: str = "confirm") -> None:
+        self.confirms.append(summary)
+
+    def heard(self, transcript: str, pane_id, *, mode: str = "keyword") -> None:
+        self.heards.append((transcript, pane_id, mode))
+
+    def reject(self, reason: str, pane_id, *, candidates: tuple = ()) -> None:
+        # A rejection also lands on the error indicator, so record it in errors
+        # too (keeps existing error-surface assertions valid) plus the precise
+        # reject tuple for pane-targeting assertions.
+        self.errors.append(reason)
+        self.rejects.append((reason, pane_id, tuple(candidates)))
 
     def status(self, text: str) -> None:
         self.statuses.append(text)
@@ -97,6 +113,9 @@ class FakeFeedback:
     def working(self) -> None:
         self.statuses.append("working")
 
+    def warming(self, downloading: bool = False) -> None:
+        self.statuses.append(f"warming:{downloading}")
+
 
 PANE_LINE = "\t".join(["%1", "@1", "main", "0", "alpha", "node", "1"])
 
@@ -108,7 +127,7 @@ def make_registry(lines: list[str], focused: str | None) -> PaneRegistry:
 
 
 def make_daemon(tmp_path, *, transcript: str, lines: list[str], focused: str | None,
-                inject_ok: bool = True):
+                inject_ok: bool = True, filler_filter: bool = True, journal=None):
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)  # non-trivial size
     recorder = FakeRecorder(wav)
@@ -134,8 +153,11 @@ def make_daemon(tmp_path, *, transcript: str, lines: list[str], focused: str | N
 
     # These helper-based tests drive the single-key (keyword) path directly via
     # on_press/on_release and the keyword Hotkey; button mode has its own tests.
-    daemon = Daemon(Config(addressing="keyword"), recorder, transcriber, registry,
+    daemon = Daemon(Config(addressing="keyword", inject_submit_delay=0.0,
+                           filler_filter=filler_filter),
+                    recorder, transcriber, registry,
                     feedback, route_fn=route_fn, inject_fn=inject_fn,
+                    journal=journal,
                     async_fn=lambda fn, *a: fn(*a))  # run feedback inline for determinism
     return daemon, recorder, transcriber, feedback, route_calls, inject_calls
 
@@ -156,8 +178,10 @@ def test_release_routes_and_injects_stripped_text(tmp_path):
     _release_and_process(daemon)
 
     assert recorder.stopped == 1
-    # hints are the live pane names
-    assert transcriber.last_hints == ["alpha"]
+    # hints are the live pane names plus program tokens (biases ASR so "codex"
+    # is not heard as "codecs", "opencode" not as "open code")
+    assert transcriber.last_hints[0] == "alpha"
+    assert {"codex", "opencode"} <= set(transcriber.last_hints)
     # route received the full transcript and the focused id
     assert route_calls[0][0] == "alpha run the tests"
     assert route_calls[0][2] == "%1"
@@ -167,6 +191,47 @@ def test_release_routes_and_injects_stripped_text(tmp_path):
     assert len(feedback.announced) == 1
     assert feedback.announced[0].pane_id == "%1"
     assert not feedback.errors
+
+
+def test_on_release_recorder_failure_repaints_and_drops(tmp_path, monkeypatch):
+    # If recorder.stop() fails for a non-debounce reason, the listener callback
+    # must not let the exception escape (it would be swallowed by pynput and the
+    # 'listening' indicator painted at press would wedge on). It must repaint an
+    # error and enqueue nothing.
+    daemon, recorder, _, feedback, _, _ = make_daemon(
+        tmp_path, transcript="hi", lines=[PANE_LINE], focused="%1")
+    daemon.on_press()
+
+    def boom() -> None:
+        raise OSError("wedged recorder")
+
+    monkeypatch.setattr(recorder, "stop", boom)
+    daemon.on_release()                  # must NOT raise
+    assert daemon._jobs.empty()          # nothing enqueued for processing
+    assert feedback.errors               # the stuck listening state was cleared
+
+
+def test_process_unlinks_source_wav(tmp_path):
+    # The recorder writes a temp wav per utterance; the daemon must delete it
+    # after journaling, or every push-to-talk leaks a file into $TMPDIR.
+    daemon, recorder, _, _, _, _ = make_daemon(
+        tmp_path, transcript="alpha run the tests", lines=[PANE_LINE], focused="%1")
+    wav = recorder._wav
+    assert wav.exists()
+    daemon.on_press()
+    _release_and_process(daemon)
+    assert not wav.exists()
+
+
+def test_process_unlinks_wav_even_on_no_audio(tmp_path):
+    # The tiny/empty-capture path must clean up the source wav too.
+    daemon, recorder, _, _, _, _ = make_daemon(
+        tmp_path, transcript="ignored", lines=[PANE_LINE], focused="%1")
+    recorder._wav.write_bytes(b"\x00" * 10)  # below MIN_WAV_BYTES
+    wav = recorder._wav
+    daemon.on_press()
+    _release_and_process(daemon)
+    assert not wav.exists()
 
 
 def test_blank_transcript_injects_nothing(tmp_path):
@@ -219,7 +284,8 @@ def test_inject_failure_falls_back_to_focused(tmp_path):
         return Route(pane_id="%9", text="run it", matched_name="nova",
                      confidence=100.0, fallback=False)
 
-    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05, io=None):
+    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05,
+                  submit_delay=0.0, io=None):
         attempts.append(pane_id)
         return pane_id == "%1"  # only the focused pane accepts
 
@@ -233,31 +299,65 @@ def test_inject_failure_falls_back_to_focused(tmp_path):
     assert not feedback.errors
 
 
-def test_empty_wav_reports_permission_hint(tmp_path):
+def test_empty_wav_reports_repeatable_dual_cause(tmp_path):
+    # A lost/muted device and a denied permission both hit the empty-capture
+    # path. The message must name BOTH causes and repeat every time (not blame
+    # permission once and go quiet) - a mid-session disconnect is the common case.
     daemon, recorder, _, feedback, route_calls, inject_calls = make_daemon(
         tmp_path, transcript="alpha run the tests", lines=[PANE_LINE], focused="%1")
-    # shrink the wav to a suspiciously empty size
-    recorder._wav.write_bytes(b"\x00" * 10)
+    recorder._wav.write_bytes(b"\x00" * 10)  # below MIN_WAV_BYTES
 
-    # First cycle: must mention microphone/permission (one-time hint).
-    daemon.on_press()
-    _release_and_process(daemon)
-    assert inject_calls == []
-    assert route_calls == []
-    assert len(feedback.errors) == 1
-    first_error = feedback.errors[0].lower()
-    assert "microphone" in first_error or "permission" in first_error
+    for _ in range(2):
+        daemon.on_press()
+        _release_and_process(daemon)
 
-    # Second cycle: wav is still tiny; must emit the GENERIC message only.
-    daemon.on_press()
-    _release_and_process(daemon)
     assert inject_calls == []
     assert route_calls == []
     assert len(feedback.errors) == 2
-    second_error = feedback.errors[1].lower()
-    assert "no audio captured" in second_error
-    assert "microphone" not in second_error
-    assert "permission" not in second_error
+    assert feedback.errors[0] == feedback.errors[1]  # repeatable, never degraded
+    for err in feedback.errors:
+        low = err.lower()
+        assert "microphone" in low or "permission" in low      # permission cause
+        assert any(t in low for t in ("connect", "mute", "device"))  # device cause
+
+
+def test_empty_wav_message_is_constant(tmp_path):
+    # Lock the wording to the module constant so future edits change one place.
+    import vupai.daemon as dmod
+
+    daemon, recorder, _, feedback, _, _ = make_daemon(
+        tmp_path, transcript="ignored", lines=[PANE_LINE], focused="%1")
+    recorder._wav.write_bytes(b"\x00" * 10)
+    daemon.on_press()
+    _release_and_process(daemon)
+    assert feedback.errors == [dmod._NO_AUDIO_MSG]
+
+
+def test_run_stops_recorder_still_recording_on_shutdown(tmp_path, monkeypatch):
+    # `vupai down` mid-capture: the consumer loop exits while a recording is in
+    # flight. run()'s teardown must reap the recorder so the sox child isn't
+    # orphaned holding the mic.
+    daemon, recorder, _, _, _, _ = make_daemon(
+        tmp_path, transcript="hi", lines=[PANE_LINE], focused="%1")
+    recorder.start()                      # simulate PTT held at shutdown
+    assert recorder.is_recording is True
+
+    class FakeHotkey:
+        def __init__(self, *a):
+            ...
+
+        def start(self):
+            ...
+
+        def stop(self):
+            ...
+
+    import vupai.daemon as dmod
+    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    daemon.stop()                         # pre-arm a clean shutdown
+    daemon.run()
+    assert recorder.is_recording is False
+    assert recorder.stopped >= 1
 
 
 def test_run_warms_and_starts_hotkey(tmp_path, monkeypatch):
@@ -292,6 +392,231 @@ def test_run_warms_and_starts_hotkey(tmp_path, monkeypatch):
     # the listener received the daemon's real bound callbacks (wiring proof)
     assert instances[0].on_press == daemon.on_press
     assert instances[0].on_release == daemon.on_release
+
+
+# ---------------------------------------------------------------------------
+# Gap 3: warming indicator painted before the (blocking) warm()
+# ---------------------------------------------------------------------------
+
+class _SnapshotTranscriber:
+    """Records the feedback.statuses snapshot at the moment warm() is called, so
+    a test can prove 'warming' was already painted before the blocking load."""
+
+    def __init__(self, feedback) -> None:
+        self._feedback = feedback
+        self.warmed = 0
+        self.snapshot: list[str] | None = None
+
+    def warm(self) -> None:
+        self.warmed += 1
+        self.snapshot = list(self._feedback.statuses)
+
+    def transcribe(self, wav, hints=()) -> str:
+        return ""
+
+
+def _run_once_with_fake_hotkey(daemon, monkeypatch) -> None:
+    class FakeHotkey:
+        def __init__(self, *a):
+            ...
+
+        def start(self):
+            ...
+
+        def stop(self):
+            ...
+
+    import vupai.daemon as dmod
+    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    daemon.stop()
+    daemon.run()
+
+
+def test_run_paints_warming_before_ready(tmp_path, monkeypatch):
+    feedback = FakeFeedback()
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav),
+               FakeTranscriber("hi"), make_registry([PANE_LINE], "%1"), feedback)
+    _run_once_with_fake_hotkey(d, monkeypatch)
+    warming = [i for i, s in enumerate(feedback.statuses) if s.startswith("warming")]
+    ready = [i for i, s in enumerate(feedback.statuses) if s == "ready"]
+    assert warming and ready and warming[0] < ready[0]
+
+
+def test_run_warming_painted_before_warm_runs(tmp_path, monkeypatch):
+    feedback = FakeFeedback()
+    tx = _SnapshotTranscriber(feedback)
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav), tx,
+               make_registry([PANE_LINE], "%1"), feedback)
+    _run_once_with_fake_hotkey(d, monkeypatch)
+    assert tx.warmed == 1
+    assert any(s.startswith("warming") for s in (tx.snapshot or []))
+
+
+def test_run_warming_downloading_flag_when_model_absent(tmp_path, monkeypatch):
+    import vupai.daemon as dmod
+    monkeypatch.setattr(dmod, "model_cached", lambda mid: False)
+    feedback = FakeFeedback()
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav),
+               FakeTranscriber("hi"), make_registry([PANE_LINE], "%1"), feedback)
+    _run_once_with_fake_hotkey(d, monkeypatch)
+    assert "warming:True" in feedback.statuses
+
+
+def test_run_warming_not_downloading_when_model_cached(tmp_path, monkeypatch):
+    import vupai.daemon as dmod
+    monkeypatch.setattr(dmod, "model_cached", lambda mid: True)
+    feedback = FakeFeedback()
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav),
+               FakeTranscriber("hi"), make_registry([PANE_LINE], "%1"), feedback)
+    _run_once_with_fake_hotkey(d, monkeypatch)
+    assert "warming:False" in feedback.statuses
+
+
+# ---------------------------------------------------------------------------
+# Gap 4: daemon lifecycle state markers (state_writer)
+# ---------------------------------------------------------------------------
+
+def test_run_writes_ready_after_warm_and_stopped_on_exit(tmp_path, monkeypatch):
+    # The state marker brackets the model load: 'ready' is written only after
+    # warm() returns (the hotkey is about to go live), and 'stopped' on a clean
+    # exit (its absence after a dead pid is how `status` detects a crash).
+    order: list[str] = []
+
+    class Tx:
+        def __init__(self) -> None:
+            self.warmed = 0
+
+        def warm(self) -> None:
+            self.warmed += 1
+            order.append("warm")
+
+        def transcribe(self, wav, hints=()) -> str:
+            return ""
+
+    class FakeHotkey:
+        def __init__(self, *a):
+            ...
+
+        def start(self):
+            ...
+
+        def stop(self):
+            ...
+
+    phases: list[str] = []
+
+    def state_writer(phase: str) -> None:
+        phases.append(phase)
+        order.append(f"state:{phase}")
+
+    import vupai.daemon as dmod
+    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav), Tx(),
+               make_registry([PANE_LINE], "%1"), FakeFeedback(),
+               state_writer=state_writer)
+    d.stop()
+    d.run()
+    assert phases == ["ready", "stopped"]
+    assert order.index("warm") < order.index("state:ready")
+
+
+def test_run_starts_and_stops_watcher(tmp_path, monkeypatch):
+    class FakeWatcher:
+        def __init__(self) -> None:
+            self.started = 0
+            self.stopped = 0
+
+        def start(self) -> None:
+            self.started += 1
+
+        def stop(self) -> None:
+            self.stopped += 1
+
+    class FakeHotkey:
+        def __init__(self, *a):
+            ...
+
+        def start(self):
+            ...
+
+        def stop(self):
+            ...
+
+    import vupai.daemon as dmod
+    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    fw = FakeWatcher()
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav),
+               FakeTranscriber("hi"), make_registry([PANE_LINE], "%1"),
+               FakeFeedback(), watcher=fw)
+    d.stop()
+    d.run()
+    assert fw.started == 1 and fw.stopped == 1
+
+
+def test_run_without_state_writer_does_not_crash(tmp_path, monkeypatch):
+    # The default daemon (no state_writer) must run unchanged.
+    class FakeHotkey:
+        def __init__(self, *a):
+            ...
+
+        def start(self):
+            ...
+
+        def stop(self):
+            ...
+
+    import vupai.daemon as dmod
+    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    daemon, _, _, _, _, _ = make_daemon(
+        tmp_path, transcript="hi", lines=[PANE_LINE], focused="%1")
+    daemon.stop()
+    daemon.run()  # must not raise
+
+
+def test_per_utterance_error_writes_no_lifecycle_marker(tmp_path, monkeypatch):
+    # state_writer is driven only by run()'s warm/finally, never by a failing
+    # _process - so a bad utterance can't emit a spurious lifecycle phase.
+    class Tx:
+        def warm(self) -> None:
+            ...
+
+        def transcribe(self, wav, hints=()) -> str:
+            raise RuntimeError("boom")
+
+    class FakeHotkey:
+        def __init__(self, *a):
+            ...
+
+        def start(self):
+            ...
+
+        def stop(self):
+            ...
+
+    phases: list[str] = []
+    import vupai.daemon as dmod
+    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav), Tx(),
+               make_registry([PANE_LINE], "%1"), FakeFeedback(),
+               state_writer=lambda phase: phases.append(phase))
+    d._jobs.put_nowait((wav, "keyword"))  # one utterance that will raise in _process
+    d.stop()                               # then the shutdown sentinel
+    d.run()
+    assert phases == ["ready", "stopped"]  # no extra marker from the failed utterance
 
 
 # ---------------------------------------------------------------------------
@@ -339,9 +664,9 @@ def test_ambiguous_route_surfaces_candidates_without_inject(tmp_path):
 
     assert inject_calls == []          # ambiguous -> never injected
     assert not feedback.announced
-    assert feedback.errors
-    msg = feedback.errors[0].lower()
-    assert "nova" in msg and "novo" in msg
+    assert feedback.rejects            # surfaced as a rejection (HUD + indicator)
+    reason, pane_id, candidates = feedback.rejects[0]
+    assert "nova" in candidates and "novo" in candidates
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +702,16 @@ class _Fb:
     def ready(self): self.msgs.append(("ready",))
     def listening(self, mode="keyword", seq=None): self.msgs.append(("listening", mode))
     def working(self): self.msgs.append(("working",))
+    def warming(self, downloading=False): self.msgs.append(("warming", downloading))
+
+    def confirm_prompt(self, summary, confirm_word="confirm"):
+        self.msgs.append(("confirm", summary))
+
+    def heard(self, transcript, pane_id, *, mode="keyword"):
+        self.msgs.append(("heard", transcript))
+
+    def reject(self, reason, pane_id, *, candidates=()):
+        self.msgs.append(("reject", reason))
 
 
 def _wav(tmp_path):
@@ -402,11 +737,15 @@ def test_command_path_skips_route_and_inject(tmp_path):
         calls["inject"] += 1
         return True
 
-    def command_fn(text, registry, config, *, inject_fn, addressing="keyword"):
-        return CommandResult(True, "created") if text.startswith("computer") else None
+    def parse_fn(text, **kw):
+        return Command(kind="create", count=2) if text.startswith("computer") else None
+
+    def execute_fn(cmd, registry, config, *, inject_fn):
+        return CommandResult(True, "created")
 
     d = Daemon(Config(), _Rec(), _Tx("computer create two panes"), _Reg(_panes()),
-               _Fb(), route_fn=route_fn, inject_fn=inject_fn, command_fn=command_fn)
+               _Fb(), route_fn=route_fn, inject_fn=inject_fn,
+               parse_fn=parse_fn, execute_fn=execute_fn)
     d._process(_wav(tmp_path))
     assert calls == {"route": 0, "inject": 0}
 
@@ -429,17 +768,298 @@ def test_normal_text_still_routes(tmp_path):
         return Route(pane_id="%1", text=text, matched_name="nova",
                      confidence=100.0, fallback=False)
 
-    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05):
+    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05,
+                  submit_delay=0.0):
         calls["inject"] += 1
         return True
 
-    def command_fn(text, registry, config, *, inject_fn, addressing="keyword"):
+    def parse_fn(text, **kw):
         return None
 
     d = Daemon(Config(), _Rec(), _Tx("nova run the tests"), _Reg(_panes()),
-               _Fb(), route_fn=route_fn, inject_fn=inject_fn, command_fn=command_fn)
+               _Fb(), route_fn=route_fn, inject_fn=inject_fn, parse_fn=parse_fn)
     d._process(_wav(tmp_path))
     assert calls == {"route": 1, "inject": 1}
+
+
+# ---------------------------------------------------------------------------
+# Submit review delay (inject_submit_delay): clear-to-cancel before Enter
+# ---------------------------------------------------------------------------
+
+def test_route_cancelled_when_inject_returns_none(tmp_path):
+    # inject returns None (user cleared the input during the review window):
+    # no announce, no error/retry, outcome 'cancelled', delay threaded through.
+    cfg = Config(addressing="keyword", inject_submit_delay=0.5)
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    feedback = FakeFeedback()
+    seen: list = []
+
+    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05,
+                  submit_delay=0.0, io=None):
+        seen.append((pane_id, submit_delay))
+        return None
+
+    d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber("alpha run the tests"),
+               make_registry([PANE_LINE], "%1"), feedback,
+               route_fn=lambda text, panes, focused_id, *, fuzzy_cutoff=82: Route(
+                   pane_id="%1", text="run the tests", matched_name="alpha",
+                   confidence=100.0, fallback=False),
+               inject_fn=inject_fn)
+    d._process(wav, "keyword")
+
+    assert feedback.announced == []
+    assert feedback.rejects == []                       # cancel is not an error
+    assert seen and seen[0][1] == 0.5                   # configured delay threaded
+    assert any("cancel" in s.lower() for s in feedback.statuses)
+
+
+def test_dictation_cancelled_when_inject_returns_none(tmp_path):
+    cfg = Config(inject_submit_delay=0.5)
+    wav = tmp_path / "d.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    feedback = FakeFeedback()
+
+    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05,
+                  submit_delay=0.0, io=None):
+        return None
+
+    d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber("some literal text"),
+               make_registry([PANE_LINE], "%1"), feedback, inject_fn=inject_fn)
+    d._process(wav, "dictation")
+
+    assert feedback.announced == []
+    assert any("cancel" in s.lower() for s in feedback.statuses)
+
+
+def test_submit_delay_not_passed_to_inject_when_zero(tmp_path):
+    # With the delay set to 0, the daemon must NOT pass submit_delay - an
+    # inject_fn without that kwarg must still work (no-churn contract).
+    called = {"n": 0}
+
+    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05, io=None):
+        called["n"] += 1
+        return True
+
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    d = Daemon(Config(addressing="keyword", inject_submit_delay=0.0), FakeRecorder(wav),
+               FakeTranscriber("alpha hi"), make_registry([PANE_LINE], "%1"),
+               FakeFeedback(),
+               route_fn=lambda text, panes, focused_id, *, fuzzy_cutoff=82: Route(
+                   pane_id="%1", text="hi", matched_name="alpha",
+                   confidence=100.0, fallback=False),
+               inject_fn=inject_fn)
+    d._process(wav, "keyword")  # must not raise on the missing submit_delay kwarg
+    assert called["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Gap 6: live transcript HUD + rejection surfacing
+# ---------------------------------------------------------------------------
+
+def test_process_emits_heard_once_on_success(tmp_path):
+    daemon, _, _, feedback, _, _ = make_daemon(
+        tmp_path, transcript="alpha run the tests", lines=[PANE_LINE], focused="%1")
+    daemon.on_press()
+    _release_and_process(daemon)
+    assert len(feedback.heards) == 1
+    transcript, pane_id, mode = feedback.heards[0]
+    assert transcript == "alpha run the tests"
+    assert pane_id == "%1"                 # shown on the focused pane
+    assert len(feedback.announced) == 1    # announce still fires on success
+
+
+def test_process_no_heard_on_dictation(tmp_path):
+    # Dictation lands in the pane verbatim, so heard would be redundant noise.
+    daemon, _, _, feedback, _, _ = make_daemon(
+        tmp_path, transcript="some literal text", lines=[PANE_LINE], focused="%1")
+    w = tmp_path / "d.wav"
+    w.write_bytes(b"\x00" * 5000)
+    daemon._process(w, "dictation")
+    assert feedback.heards == []
+
+
+def test_process_no_heard_on_no_audio_or_blank(tmp_path):
+    daemon, recorder, _, feedback, _, _ = make_daemon(
+        tmp_path, transcript="ignored", lines=[PANE_LINE], focused="%1")
+    recorder._wav.write_bytes(b"\x00" * 10)  # below MIN_WAV_BYTES
+    daemon.on_press()
+    _release_and_process(daemon)
+    assert feedback.heards == []             # nothing heard -> no echo
+
+    blank, _, _, feedback2, _, _ = make_daemon(
+        tmp_path, transcript="   ", lines=[PANE_LINE], focused="%1")
+    blank.on_press()
+    _release_and_process(blank)
+    assert feedback2.heards == []
+
+
+def test_process_reject_targets_route_pane_on_inject_failure(tmp_path):
+    daemon, _, _, feedback, _, _ = make_daemon(
+        tmp_path, transcript="alpha run the tests", lines=[PANE_LINE],
+        focused="%1", inject_ok=False)
+    daemon.on_press()
+    _release_and_process(daemon)
+    assert feedback.rejects
+    reason, pane_id, _ = feedback.rejects[-1]
+    assert "injection failed" in reason.lower()
+    assert pane_id == "%1"                    # the routed pane, not None
+    assert not feedback.announced
+
+
+def test_command_unknown_rejects_on_pane(tmp_path):
+    # A command that executes but reports failure surfaces as a reject (not a
+    # silent status), so the user sees what went wrong.
+    def parse_fn(text, **kw):
+        return Command(kind="focus", name="ghost")
+
+    def execute_fn(cmd, registry, config, *, inject_fn):
+        return CommandResult(False, "no pane named ghost")
+
+    fb = FakeFeedback()
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    d = Daemon(Config(), FakeRecorder(wav), FakeTranscriber("focus ghost"),
+               make_registry([PANE_LINE], "%1"), fb,
+               route_fn=lambda *a, **k: Route(pane_id="%1", text="x",
+                   matched_name=None, confidence=0.0, fallback=True),
+               inject_fn=lambda *a, **k: True, parse_fn=parse_fn,
+               execute_fn=execute_fn)
+    d._process(wav, "system")
+    assert any("ghost" in r[0] for r in fb.rejects)
+
+
+# ---------------------------------------------------------------------------
+# Gap 2: confirmation for destructive commands
+# ---------------------------------------------------------------------------
+
+def _close_lines():
+    return [
+        "\t".join(["%1", "@1", "main", "0", "alpha", "claude", "1"]),
+        "\t".join(["%9", "@1", "main", "1", "nova", "claude", "0"]),
+    ]
+
+
+def _confirm_daemon(tmp_path, *, confirm_destructive=True, answer=True,
+                    focused="%1"):
+    """Daemon wired with a fake execute_fn (records executed commands), the REAL
+    parse_command, and a fake confirm_fn (records (summary, timeout) calls and
+    returns `answer`), so the confirm gate is exercised end to end."""
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    cfg = Config(confirm_destructive=confirm_destructive)
+    registry = make_registry(_close_lines(), focused)
+    feedback = FakeFeedback()
+    journal = CapturingJournal()
+    executed: list = []
+    confirms: list = []
+
+    def execute_fn(cmd, reg, config, *, inject_fn):
+        executed.append(cmd)
+        return CommandResult(True, f"did {cmd.kind} {cmd.name}".strip())
+
+    def confirm_fn(summary, *, timeout, disable_hint=None):
+        confirms.append((summary, timeout, disable_hint))
+        return answer
+
+    d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber(""), registry, feedback,
+               route_fn=lambda *a, **k: Route(
+                   pane_id=focused, text="x", matched_name=None,
+                   confidence=0.0, fallback=True),
+               inject_fn=lambda *a, **k: True, execute_fn=execute_fn,
+               confirm_fn=confirm_fn, journal=journal,
+               async_fn=lambda fn, *a: fn(*a))
+    return d, feedback, journal, executed, confirms, wav
+
+
+def _say(daemon, wav, text, mode="system"):
+    # _process unlinks the source wav after each utterance, so re-create it for
+    # the next one (the daemon owns deletion; the recorder would re-create it).
+    wav.write_bytes(b"\x00" * 5000)
+    daemon._transcriber.transcript = text
+    daemon._process(wav, mode)
+
+
+def test_confirm_disabled_executes_destructive_immediately(tmp_path):
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(
+        tmp_path, confirm_destructive=False)
+    _say(d, wav, "close nova")
+    assert [c.kind for c in executed] == ["close"]
+    assert confirms == []                       # never prompted
+
+
+def test_destructive_prompts_and_executes_on_confirm(tmp_path):
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=True)
+    _say(d, wav, "close nova")
+    assert len(confirms) == 1
+    summary, timeout, hint = confirms[0]
+    assert "close" in summary.lower() and "nova" in summary.lower()
+    assert timeout == 8.0                        # confirm_timeout_s threaded through
+    assert hint == "confirm_destructive = false in config.toml"
+    assert [c.kind for c in executed] == ["close"]
+    assert journal.entries[-1].get("confirmed") is True
+    assert journal.entries[-1]["outcome"] == "ok"
+
+
+def test_destructive_declined_does_not_execute(tmp_path):
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=False)
+    _say(d, wav, "close nova")
+    assert len(confirms) == 1                    # was prompted
+    assert executed == []                        # but not executed
+    assert journal.entries[-1]["outcome"] == "cancelled"
+    assert any("cancel" in s.lower() for s in fb.statuses)
+
+
+def test_non_destructive_command_not_prompted(tmp_path):
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path)
+    _say(d, wav, "focus nova")
+    assert confirms == []
+    assert [c.kind for c in executed] == ["focus"]
+
+
+def test_dictation_never_prompts(tmp_path):
+    # Dictation injects verbatim and never parses a command, so destructive-
+    # sounding dictation can't trigger a confirmation.
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path)
+    _say(d, wav, "close nova", mode="dictation")
+    assert confirms == []
+    assert executed == []
+
+
+def test_broadcast_is_gated_by_confirm(tmp_path):
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=True)
+    _say(d, wav, "everyone deploy the build")
+    assert len(confirms) == 1
+    assert "broadcast" in confirms[0][0].lower()
+    assert [c.kind for c in executed] == ["broadcast"]
+
+
+def test_large_create_is_gated_by_confirm(tmp_path):
+    # count >= confirm_create_threshold (default 8) prompts with an "open N panes"
+    # summary and executes once confirmed.
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=True)
+    _say(d, wav, "create ten panes")
+    assert len(confirms) == 1
+    assert confirms[0][0] == "open 10 panes"
+    assert confirms[0][2] == "raise confirm_create_threshold in config.toml"
+    assert [c.kind for c in executed] == ["create"]
+
+
+def test_large_create_declined_does_not_execute(tmp_path):
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=False)
+    _say(d, wav, "create ten panes")
+    assert len(confirms) == 1
+    assert executed == []
+    assert journal.entries[-1]["outcome"] == "cancelled"
+
+
+def test_small_create_not_prompted(tmp_path):
+    # Below the threshold a create runs straight through, no popup.
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=True)
+    _say(d, wav, "create two panes")
+    assert confirms == []
+    assert [c.kind for c in executed] == ["create"]
 
 
 # ---------------------------------------------------------------------------
@@ -460,12 +1080,17 @@ def test_button_system_command_executes(tmp_path):
         calls["inject"] += 1
         return True
 
-    def command_fn(text, registry, config, *, inject_fn, addressing="keyword"):
+    def parse_fn(text, *, broadcast_word, macros, programs, slash_commands,
+                 addressing):
         seen["addressing"] = addressing
+        return Command(kind="create", count=2)
+
+    def execute_fn(cmd, registry, config, *, inject_fn):
         return CommandResult(True, "created 2 panes")
 
     d = Daemon(Config(), _Rec(), _Tx("create two panes"), _Reg(_panes()),
-               _Fb(), route_fn=route_fn, inject_fn=inject_fn, command_fn=command_fn)
+               _Fb(), route_fn=route_fn, inject_fn=inject_fn,
+               parse_fn=parse_fn, execute_fn=execute_fn)
     d._process(_wav(tmp_path), "system")
     assert seen["addressing"] == "button"          # system -> button addressing
     assert calls == {"route": 0, "inject": 0}      # command executed; no routing
@@ -621,7 +1246,8 @@ class CapturingJournal:
         self.entries.append(dict(entry))
 
 
-def _make_capturing_daemon(tmp_path, *, transcript, lines, focused, inject_ok=True):
+def _make_capturing_daemon(tmp_path, *, transcript, lines, focused, inject_ok=True,
+                           filler_filter=True):
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
     recorder = FakeRecorder(wav)
@@ -641,7 +1267,9 @@ def _make_capturing_daemon(tmp_path, *, transcript, lines, focused, inject_ok=Tr
     def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05, io=None):
         return inject_ok
 
-    daemon = Daemon(Config(addressing="keyword"), recorder, transcriber, registry,
+    daemon = Daemon(Config(addressing="keyword", inject_submit_delay=0.0,
+                           filler_filter=filler_filter),
+                    recorder, transcriber, registry,
                     feedback, route_fn=route_fn, inject_fn=inject_fn, journal=journal,
                     async_fn=lambda fn, *a: fn(*a))
     return daemon, journal
@@ -687,3 +1315,72 @@ def test_journal_no_audio_entry_has_version_but_no_timing(tmp_path):
     assert e["decision"] == "no_audio"
     assert e["v"] == 1
     assert "transcribe_ms" not in e  # transcription never ran
+
+
+# ---------------------------------------------------------------------------
+# Task 3: filler filter hook in the daemon
+# ---------------------------------------------------------------------------
+
+def test_filler_stripped_before_routing(tmp_path):
+    # Leading filler "um" is removed before text reaches route/inject. The raw
+    # transcript is preserved in entry["transcript"]; the cleaned text is in
+    # entry["filtered_transcript"] and is what routing and injection see.
+    journal = CapturingJournal()
+    daemon, recorder, transcriber, feedback, route_calls, inject_calls = make_daemon(
+        tmp_path, transcript="um alpha run the tests", lines=[PANE_LINE], focused="%1",
+        journal=journal)
+    daemon.on_press()
+    _release_and_process(daemon)
+
+    # route received the filler-stripped text (leading "um " removed -> capitalised)
+    assert route_calls, "expected at least one route call"
+    assert route_calls[0][0] == "Alpha run the tests"
+    # inject received the name-stripped remainder
+    assert inject_calls == [("%1", "run the tests", 2.0, 0.05)]
+    # journal contract: raw transcript preserved; filtered_transcript holds cleaned text
+    assert journal.entries, "expected a journal entry"
+    entry = journal.entries[-1]
+    assert entry["transcript"] == "um alpha run the tests"
+    assert entry["filtered_transcript"] == "Alpha run the tests"
+
+
+def test_filler_filter_disabled_passthrough(tmp_path):
+    # With filler_filter=False the raw transcript, including the filler, reaches
+    # routing unchanged.
+    journal = CapturingJournal()
+    daemon, recorder, transcriber, feedback, route_calls, inject_calls = make_daemon(
+        tmp_path, transcript="um alpha run the tests", lines=[PANE_LINE],
+        focused="%1", filler_filter=False, journal=journal)
+    daemon.on_press()
+    _release_and_process(daemon)
+
+    # route received the unmodified transcript (filler NOT stripped)
+    assert route_calls, "expected at least one route call"
+    assert route_calls[0][0] == "um alpha run the tests"
+    # journal contract: raw transcript always present; filtered_transcript absent
+    # when filler_filter is disabled
+    assert journal.entries, "expected a journal entry"
+    entry = journal.entries[-1]
+    assert entry["transcript"] == "um alpha run the tests"
+    assert "filtered_transcript" not in entry
+
+
+def test_all_filler_treated_as_empty(tmp_path):
+    # A transcript that collapses entirely to "" after filler stripping must
+    # follow the same "didn't catch that" path as a blank transcript.
+    journal = CapturingJournal()
+    daemon, recorder, transcriber, feedback, route_calls, inject_calls = make_daemon(
+        tmp_path, transcript="um uh hmm", lines=[PANE_LINE], focused="%1",
+        journal=journal)
+    daemon.on_press()
+    _release_and_process(daemon)
+
+    assert inject_calls == []
+    assert route_calls == []
+    assert any("catch" in s.lower() for s in feedback.statuses)
+    # journal contract: raw transcript present; decision and outcome reflect empty path
+    assert journal.entries, "expected a journal entry"
+    entry = journal.entries[-1]
+    assert entry["transcript"] == "um uh hmm"
+    assert entry["decision"] == "empty"
+    assert entry["outcome"] == "no_transcript"

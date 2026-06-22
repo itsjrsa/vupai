@@ -153,6 +153,34 @@ def test_parse_create_default_program():
     assert c.kind == "create" and c.count == 4 and c.program is None and c.unit == "pane"
 
 
+def test_parse_create_spoken_count_past_nine():
+    c = _parse_btn("create ten panes")
+    assert c.kind == "create" and c.count == 10
+    c = _parse_btn("create twelve panes")
+    assert c.kind == "create" and c.count == 12
+
+
+def test_parse_create_digit_count_past_nine():
+    c = _parse_btn("create 16 panes")
+    assert c.kind == "create" and c.count == 16
+
+
+def test_parse_create_at_max_count():
+    from vupai.commands import MAX_CREATE_COUNT
+
+    c = _parse_btn(f"create {MAX_CREATE_COUNT} panes")
+    assert c.kind == "create" and c.count == MAX_CREATE_COUNT
+
+
+def test_parse_create_over_max_count_rejected():
+    # Past the safety cap the create parse fails, so the utterance is not a
+    # create command (falls through to unknown - never spawns a runaway count).
+    from vupai.commands import MAX_CREATE_COUNT
+
+    c = _parse_btn(f"create {MAX_CREATE_COUNT + 1} panes")
+    assert c is None or c.kind != "create"
+
+
 def test_parse_create_article_means_one():
     # "create a pane" == "create one pane".
     c = _parse_btn("create a pane")
@@ -207,6 +235,23 @@ def test_parse_create_explicit_codex_program():
     # A non-default agent is selectable by a single program token from `programs`.
     c = _parse_btn("create two codex panes")
     assert c.kind == "create" and c.count == 2 and c.program == "codex"
+
+
+def test_parse_create_codex_homophone():
+    # "codex" mishears as "codecs"/"codec" - the curated alias recovers it. This
+    # is the reported failure: "open two codex" lands as "open two codecs".
+    for spoken in ("open two codecs panes", "open two codec", "create a codecs"):
+        c = _parse_btn(spoken)
+        assert c is not None and c.kind == "create" and c.program == "codex", spoken
+
+
+def test_parse_create_opencode_split_phrase():
+    # "opencode" is transcribed as the two-token split "open code"; the phrase
+    # alias recovers it even though "open" is itself a create verb.
+    c = _parse_btn("create two open code panes")
+    assert c is not None and c.kind == "create" and c.count == 2 and c.program == "opencode"
+    c = _parse_btn("open two open code")
+    assert c is not None and c.kind == "create" and c.count == 2 and c.program == "opencode"
 
 
 def test_parse_create_windows_unit():
@@ -383,6 +428,21 @@ def test_execute_focus_unknown_name():
     reg = FakeRegistry([_pane("%1", "nova", active=True)])
     res = execute_command(Command(kind="focus", name="zzzz"), reg, Config(), io=FakeTmux())
     assert res.ok is False
+
+
+def test_parse_focus_strips_leading_the():
+    # "focus the nova" / "switch to the nova" must address nova, not "the".
+    assert _parse_btn("focus the nova") == Command(kind="focus", name="nova")
+    assert _parse_btn("switch to the nova") == Command(kind="focus", name="nova")
+
+
+def test_parse_swap_strips_the():
+    assert _parse_btn("swap the nova and the atlas") == Command(
+        kind="swap", name="nova", name_b="atlas")
+
+
+def test_parse_zoom_strips_the():
+    assert _parse_btn("zoom the nova") == Command(kind="zoom", name="nova")
 
 
 def test_parse_swap_misheard_verb():

@@ -90,6 +90,39 @@ _UNIT_ALIASES = {
 }
 
 
+# Curated ASR mishearings of a program token -> canonical key in `programs`.
+# Same rationale as _UNIT_ALIASES: deterministic, lists only implausible-as-literal
+# mistranscriptions, and contained (the create parse already required a valid 1-9
+# count, so a misfire falls through to `unknown`, never injected). "codex" lands as
+# "codecs"/"codec" (the reported bug). Single-token aliases only; multi-token
+# splits live in _PROGRAM_PHRASE_ALIASES. Extend with a one-liner + a test.
+_PROGRAM_ALIASES = {"codecs": "codex", "codec": "codex"}
+# Program names the ASR splits into two tokens. "opencode" comes back as the
+# literal phrase "open code" - and since "open" is itself a create verb, this can
+# never match the single-token program check, so the whole phrase is mapped here.
+# Keyed by the token tuple (already lowercased/stripped by _tokens).
+_PROGRAM_PHRASE_ALIASES: dict[tuple[str, ...], str] = {("open", "code"): "opencode"}
+
+
+def _resolve_program(mid: list[str], programs: dict[str, str]) -> str | None:
+    """Map the program tokens of a create utterance to a `programs` value, or None.
+
+    Returns the launch string (which may be "" for the default shell) when `mid`
+    names a known program directly, via a single-token homophone, or via a
+    two-token split phrase; None when `mid` is unrecognized (the caller then
+    falls the utterance through to `unknown`). `mid` is non-empty and already
+    filler-stripped by the caller.
+    """
+    phrase = _PROGRAM_PHRASE_ALIASES.get(tuple(mid))
+    if phrase is not None:
+        return programs.get(phrase)
+    if len(mid) == 1:
+        key = _PROGRAM_ALIASES.get(mid[0], mid[0])
+        if key in programs:
+            return programs[key]
+    return None
+
+
 def _resolve_unit(token: str) -> str | None:
     """Map a trailing token to a canonical unit ("pane"/"window"), or None.
 
@@ -108,6 +141,19 @@ _ALL_TARGETS = ("all", "everyone", "everybody")
 # with the slash all-target grammar; none are valid CALLSIGNS, so this can't
 # shadow a real pane name.
 _CLOSE_ALL_TARGETS = frozenset(_ALL_TARGETS) | {"others", "rest"}
+
+
+# Command kinds that mutate/destroy state irreversibly and so are gated behind a
+# confirmation prompt when config.confirm_destructive is on. close/close_others
+# kill panes (the process is gone - no undo); broadcast fans text to every agent.
+DESTRUCTIVE_KINDS = frozenset({"close", "close_others", "broadcast"})
+
+# Upper bound on panes a single create utterance may spawn. A safety bound so a
+# mishearing ("create thirty" misheard for something) can't fan out a runaway
+# count; large-but-plausible counts are gated by the confirmation popup instead
+# (see config.confirm_create_threshold). Kept <= the CALLSIGNS pool so a
+# max-count create from a fresh window can still name every pane.
+MAX_CREATE_COUNT = 30
 
 
 @dataclass(frozen=True)
@@ -146,7 +192,7 @@ def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
     if not rest:
         return None
     n = 1 if rest[0] in _ONE_WORDS else word_to_int(rest[0])
-    if n is None or not (1 <= n <= 9):
+    if n is None or not (1 <= n <= MAX_CREATE_COUNT):
         return None
     # The trailing unit noun is optional ("create two" == "create two panes").
     # When the last token names a unit, consume it; otherwise default to a pane
@@ -161,10 +207,10 @@ def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
     mid = [t for t in tail if t not in _CREATE_FILLERS]
     if not mid:
         program: str | None = None
-    elif len(mid) == 1 and mid[0] in programs:
-        program = programs[mid[0]]
     else:
-        return None  # unrecognized program -> falls through to unknown
+        program = _resolve_program(mid, programs)
+        if program is None:
+            return None  # unrecognized program -> falls through to unknown
     return Command(kind="create", count=n, program=program, unit=unit)
 
 
@@ -180,16 +226,22 @@ def _parse_close(toks: list[str]) -> Command | None:
 
 
 def _parse_focus(toks: list[str]) -> Command | None:
-    if len(toks) >= 2 and toks[0] == "focus":
-        return Command(kind="focus", name=toks[1])
+    # Drop a leading "the" from the target ("focus the nova"), matching close/slash.
+    if toks and toks[0] == "focus":
+        rest = [t for t in toks[1:] if t != "the"]
+        if rest:
+            return Command(kind="focus", name=rest[0])
+        return None
     if len(toks) >= 3 and toks[0] in ("switch", "go") and toks[1] == "to":
-        return Command(kind="focus", name=toks[2])
+        rest = [t for t in toks[2:] if t != "the"]
+        if rest:
+            return Command(kind="focus", name=rest[0])
     return None
 
 
 def _parse_swap(toks: list[str]) -> Command | None:
     if toks and (toks[0] in _SWAP_VERBS or toks[0] in _SWAP_VERB_ALIASES):
-        names = [t for t in toks[1:] if t != "and"]
+        names = [t for t in toks[1:] if t not in ("and", "the")]
         if len(names) >= 2:
             return Command(kind="swap", name=names[0], name_b=names[1])
     return None
@@ -206,6 +258,7 @@ def _parse_zoom(toks: list[str]) -> Command | None:
         rest = toks[2:]
     else:
         return None
+    rest = [t for t in rest if t != "the"]  # "zoom the nova" -> nova
     return Command(kind="zoom", name=rest[0] if rest else "")
 
 

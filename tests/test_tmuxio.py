@@ -138,6 +138,14 @@ def test_enable_pane_titles_runs_both_set_commands(monkeypatch):
     ]
 
 
+def test_set_base_index_makes_windows_and_panes_one_based(monkeypatch):
+    fake = FakeRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.set_base_index()
+    assert fake.calls[0]["args"] == ["tmux", "set", "-g", "base-index", "1"]
+    assert fake.calls[1]["args"] == ["tmux", "set", "-g", "pane-base-index", "1"]
+
+
 def test_set_status_sets_option_then_refreshes(monkeypatch):
     fake = FakeRun()
     patch_run(monkeypatch, fake)

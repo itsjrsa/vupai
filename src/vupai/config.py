@@ -24,6 +24,12 @@ class Config:
     poll_interval: float = 0.5             # registry refresh cadence (s)
     inject_confirm_timeout: float = 2.0    # s to wait for pasted text to appear
     inject_poll_interval: float = 0.05
+    # Pause between the pasted text being confirmed in the pane and the Enter
+    # that submits it, so you can read it and cancel a mishearing by clearing the
+    # input (Esc / Ctrl-U) during the window. Applies to spoken dictation/
+    # name-routed text only, not slash/broadcast. Set 0.0 to submit immediately;
+    # a longer value also stalls the next utterance by that much.
+    inject_submit_delay: float = 1.5
     aliases: dict[str, str] = field(default_factory=dict)  # spoken alias -> pane name
     broadcast_word: str = "everyone"      # leading word = inject to all agents
     pane_command: str = "claude"          # default program for created panes
@@ -47,6 +53,41 @@ class Config:
     # Render an ambient daemon-state segment in tmux's status-right (listening /
     # working / last result / errors). Set false to leave status-right untouched.
     status_indicator: bool = True
+    # Require confirmation before a destructive command (close / close others /
+    # broadcast) fires. On by default: ASR mishears verbs (the alias tables
+    # include real words), so a misheard destructive action should not act on a
+    # single transcript. A tmux popup asks y/n; anything but yes (or a
+    # confirm_timeout_s lapse) cancels - fail-safe. Set false to disable.
+    confirm_destructive: bool = True
+    confirm_timeout_s: float = 8.0
+    # Confirm before a create command opens many panes at once. A large fan-out
+    # tiles the window tight and (past ~16 names) makes voice addressing
+    # unreliable, so a create with count >= this threshold gets the same y/n
+    # popup as destructive commands. Shares the confirm_destructive master switch
+    # and confirm_timeout_s. Set high (e.g. 99) to effectively never prompt.
+    confirm_create_threshold: int = 8
+    # Live transcript HUD: echo what was heard (and surface rejections) on the
+    # target pane via tmux display-message, so a misroute/mishearing is visible
+    # where you're looking. Set false to leave the status segment as the only
+    # surface. Verbatim dictation is never echoed (the text lands in the pane).
+    hud_enabled: bool = True
+    # Agent-state poller (see watcher.py): watch named panes and fire a macOS
+    # notification when an agent goes busy -> idle (finished). OFF by default -
+    # it adds a background thread and the busy/idle heuristic is unvalidated on a
+    # live Claude TUI; enable once tuned. notify_poll_interval is the tick cadence
+    # (s); notify_capture_lines is how much of each pane's tail to classify.
+    notify_enabled: bool = False
+    notify_poll_interval: float = 2.0
+    notify_capture_lines: int = 12
+    # Strip non-lexical filler tokens (um, uh, er, ah, eh, hmm, mm) from every
+    # transcript before commands/routing/dictation see it. On by default: the
+    # default set is non-lexical only, so removal is essentially risk-free, and
+    # the effect is visible in the journal (filtered_transcript). Add soft
+    # fillers (like, so, you know) at your own risk; none ship by default.
+    filler_filter: bool = True
+    filler_words: frozenset[str] = field(
+        default_factory=lambda: frozenset(
+            {"um", "uh", "er", "ah", "eh", "hmm", "mm"}))
 
 
 CONFIG_PATH = Path.home() / ".config" / "vupai" / "config.toml"
@@ -66,6 +107,11 @@ def load_config(path: Path | None = None) -> Config:
 
     known = {f.name for f in fields(Config)}
     kwargs = {key: value for key, value in data.items() if key in known}
+    # TOML has no set type: accept filler_words as a list and normalize to a
+    # lowercased frozenset matching the field type.
+    if "filler_words" in kwargs:
+        kwargs["filler_words"] = frozenset(
+            str(w).lower() for w in kwargs["filler_words"])
     return Config(**kwargs)
 
 

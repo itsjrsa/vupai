@@ -180,20 +180,34 @@ _TERMINAL_APPS: dict[str, tuple[str, str]] = {
 }
 
 
+# Reverse of _TERMINAL_APPS: bundle id -> friendly name. Lets us recover the
+# real terminal's name from __CFBundleIdentifier when TERM_PROGRAM is unhelpful
+# (e.g. set to "tmux" inside a pane).
+_BUNDLE_NAMES: dict[str, str] = {bundle: name for name, bundle in _TERMINAL_APPS.values()}
+
+
 def terminal_app(env: Mapping[str, str] | None = None) -> TerminalApp:
     """Identify the host terminal app from the environment (best-effort).
 
     Falls back to ``__CFBundleIdentifier`` (set by macOS LaunchServices) for an
     unrecognized TERM_PROGRAM, and finally to a generic placeholder so callers
     always get a usable display name.
+
+    tmux/screen set TERM_PROGRAM to themselves inside a pane, but macOS TCC grants
+    attach to the *real* terminal app (the daemon's responsible process), which is
+    what the Settings pane lists - never "tmux". So when TERM_PROGRAM is one of
+    those multiplexers, ignore it and resolve the name from the bundle id instead.
     """
     env = os.environ if env is None else env
     term = env.get("TERM_PROGRAM", "") or ""
     if term in _TERMINAL_APPS:
         name, bundle = _TERMINAL_APPS[term]
         return TerminalApp(name, bundle)
+    if term in ("tmux", "screen"):
+        term = ""  # not a terminal app; let the bundle id drive the name
     bundle = env.get("__CFBundleIdentifier") or None
-    return TerminalApp(term or bundle or "your terminal app", bundle)
+    name = (_BUNDLE_NAMES.get(bundle) if bundle else None) or term or bundle or "your terminal app"
+    return TerminalApp(name, bundle)
 
 
 def open_settings_pane(url: str, *, runner: Callable[..., object] = subprocess.run) -> bool:

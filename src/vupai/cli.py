@@ -9,6 +9,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from vupai import audio, tmuxio
@@ -37,13 +38,114 @@ from vupai.recorder import Recorder
 from vupai.registry import PaneRegistry
 from vupai.router import name_collides, next_callsign
 from vupai.tmuxio import TmuxError
+from vupai.watcher import PaneWatcher
 
 PIDFILE: Path = Path.home() / ".config" / "vupai" / "daemon.pid"
 DAEMON_LOG: Path = Path.home() / ".config" / "vupai" / "daemon.log"
+STATEFILE: Path = Path.home() / ".config" / "vupai" / "daemon.state"
+
+
+def write_daemon_state(phase: str, *, pid: int | None = None,
+                       statefile: Path | None = None, now=None) -> None:
+    """Record the daemon lifecycle phase as `<phase> <pid> <epoch>`.
+
+    Written by the daemon as it progresses (`starting` -> `ready` -> `stopped`)
+    so `daemon_state` / `vupai status` can tell warming from ready, and a clean
+    exit from a crash. Best-effort and overwrites in place; the epoch is recorded
+    for a future staleness heartbeat but is not yet used for classification.
+    """
+    statefile = statefile if statefile is not None else STATEFILE
+    pid = pid if pid is not None else os.getpid()
+    now = now if now is not None else time.time
+    statefile.parent.mkdir(parents=True, exist_ok=True)
+    statefile.write_text(f"{phase} {pid} {int(now())}\n")
+
+
+def _read_pidfile_pid(pidfile: Path) -> int | None:
+    try:
+        return int(pidfile.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _read_state(statefile: Path) -> tuple[str, int, int | None] | None:
+    """Parse the state marker into (phase, pid, epoch); None if absent/garbled."""
+    try:
+        parts = statefile.read_text().split()
+    except OSError:
+        return None
+    if len(parts) < 2:
+        return None
+    try:
+        pid = int(parts[1])
+    except ValueError:
+        return None
+    epoch: int | None = None
+    if len(parts) >= 3:
+        try:
+            epoch = int(parts[2])
+        except ValueError:
+            epoch = None
+    return parts[0], pid, epoch
+
+
+def _default_liveness(pid: int) -> bool:
+    """True if `pid` is alive AND is really our daemon (PID-reuse guard)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return _pid_is_vupai(pid)
+
+
+def daemon_state(*, pidfile: Path | None = None, statefile: Path | None = None,
+                 liveness=None) -> str:
+    """Classify the daemon: not_running / warming / ready / crashed / stopped.
+
+    Pure liveness + phase (no time-based staleness yet): a live pid is warming
+    until its marker says `ready`; a dead pid is `crashed` unless it left a
+    `stopped` marker (clean exit). A marker whose pid differs from the pidfile's
+    is stale from an older daemon and is ignored.
+    """
+    pidfile = pidfile if pidfile is not None else PIDFILE
+    statefile = statefile if statefile is not None else STATEFILE
+    liveness = liveness if liveness is not None else _default_liveness
+    pid = _read_pidfile_pid(pidfile)
+    if pid is None:
+        return "not_running"
+    marker = _read_state(statefile)
+    phase = marker[0] if (marker is not None and marker[1] == pid) else None
+    if liveness(pid):
+        return "ready" if phase == "ready" else "warming"
+    if phase == "stopped":
+        return "stopped"
+    if phase in ("ready", "starting"):
+        return "crashed"
+    return "not_running"  # dead pid, no marker of ours: a stale pidfile
+
+
+def _pid_is_vupai(pid: int) -> bool:
+    """True if `pid` is actually a vupai daemon, guarding against PID reuse.
+
+    A pidfile left by a crash/reboot can name a PID the OS later reassigned to an
+    unrelated process; trusting it (skip-spawn) or signalling it (`down`) blindly
+    is the hazard. We confirm the process's command line is our daemon
+    (`-m vupai _daemon`) before treating the PID as ours. Best-effort: if `ps` is
+    unavailable we report False (treat as not-our-daemon) rather than crash."""
+    try:
+        out = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True, text=True,
+        ).stdout
+    except Exception:
+        return False
+    return "vupai" in out and "_daemon" in out
 
 
 def _daemon_running() -> bool:
-    """True if a daemon pid is recorded and that process is still alive."""
+    """True if a recorded daemon pid is alive AND is really our daemon."""
     if not PIDFILE.exists():
         return False
     try:
@@ -56,7 +158,7 @@ def _daemon_running() -> bool:
         return False
     except PermissionError:
         return True  # alive but owned by someone else (shouldn't happen)
-    return True
+    return _pid_is_vupai(pid)  # alive, but is it actually vupai? (PID reuse guard)
 
 
 def _spawn_daemon() -> None:
@@ -151,6 +253,7 @@ def ensure_up() -> None:
                   "instead. Install it or set pane_command in the config.")
         tmuxio.run(argv)
     tmuxio.enable_pane_titles()
+    tmuxio.set_base_index()  # 1-based windows/panes so "focus two" matches the display
     tmuxio.set_extended_keys_off()
     if cfg.status_indicator:
         tmuxio.install_status_indicator()  # ambient daemon-state in status-right
@@ -203,13 +306,22 @@ def _cmd_default(args: argparse.Namespace) -> int:
 def _cmd_down(args: argparse.Namespace) -> int:
     # Terminate the daemon process if we recorded its pid. The daemon is a
     # detached background process (not a tmux window), so SIGTERM is all it takes.
+    # Only signal a PID we can confirm is our daemon: a stale pidfile may name a
+    # reused PID now owned by an unrelated process - SIGTERMing it would be a bug.
     if PIDFILE.exists():
         try:
-            pid = int(PIDFILE.read_text().strip())
-            os.kill(pid, signal.SIGTERM)
-        except (ValueError, ProcessLookupError):
-            pass
-        PIDFILE.unlink(missing_ok=True)
+            pid: int | None = int(PIDFILE.read_text().strip())
+        except ValueError:
+            pid = None
+        if pid is not None and _pid_is_vupai(pid):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+        PIDFILE.unlink(missing_ok=True)  # always clear the (possibly stale) file
+    # Drop the lifecycle marker too, so a fresh start isn't misread as a stale
+    # 'ready'/'crashed' from the prior daemon.
+    STATEFILE.unlink(missing_ok=True)
     return 0
 
 
@@ -232,9 +344,19 @@ def _cmd_status(args: argparse.Namespace) -> int:
     for p in registry.panes:
         active = "*" if p.active else " "
         print(f"  {active} {p.id} [{p.window}/{p.index}] {p.name or '-'} ({p.command})")
-    if _daemon_running():
-        print(f"daemon: running (pid {PIDFILE.read_text().strip()})")
+    state = daemon_state()
+    pid = _read_pidfile_pid(PIDFILE)
+    if state == "ready":
+        print(f"daemon: ready (pid {pid})")
         print(f"  log: {DAEMON_LOG}  (tail -f to watch)")
+    elif state == "warming":
+        print(f"daemon: warming - loading speech model (pid {pid})")
+        print(f"  log: {DAEMON_LOG}  (tail -f to watch)")
+    elif state == "crashed":
+        print(f"daemon: crashed - exited without a clean shutdown (pid {pid}); "
+              f"see {DAEMON_LOG}")
+    elif state == "stopped":
+        print("daemon: stopped")
     else:
         print("daemon: not running")
     cfg = load_config()
@@ -243,6 +365,10 @@ def _cmd_status(args: argparse.Namespace) -> int:
     else:
         print(f"speech model: NOT downloaded ({cfg.model_id}) - "
               "first run will fetch ~600MB before the hotkey responds")
+    if cfg.notify_enabled:
+        print(f"notify: enabled (poll {cfg.notify_poll_interval}s)")
+    else:
+        print("notify: disabled")
     status = check_permissions()
     print(
         f"permissions: microphone={status.microphone} "
@@ -747,7 +873,11 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
         stream=sys.stdout,
     )
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
-    PIDFILE.write_text(str(os.getpid()))
+    pid = os.getpid()
+    PIDFILE.write_text(str(pid))
+    # Mark 'starting' immediately: until warm() finishes and writes 'ready',
+    # `vupai status` should report the daemon as warming, not ready.
+    write_daemon_state("starting", pid=pid)
     cfg = load_config()
     device, warning = audio.resolve_device(cfg.mic_device)
     if warning:
@@ -755,8 +885,35 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     recorder = Recorder(sample_rate=cfg.sample_rate, device=device)
     transcriber = ParakeetTranscriber(cfg.model_id)
     registry = PaneRegistry()
-    feedback = Feedback(indicator_enabled=cfg.status_indicator)
-    Daemon(cfg, recorder, transcriber, registry, feedback).run()
+    feedback = Feedback(indicator_enabled=cfg.status_indicator,
+                        hud_enabled=cfg.hud_enabled)
+    # Agent-state poller: its OWN PaneRegistry (never the daemon's) so the poll
+    # thread and the main pipeline never share a registry refresh. Off unless
+    # notify_enabled. See watcher.py for the isolation contract.
+    watcher = None
+    if cfg.notify_enabled:
+        # capture_fn defaults to the real tmuxio.capture_pane inside PaneWatcher.
+        watcher = PaneWatcher(
+            PaneRegistry(),
+            poll_interval=cfg.notify_poll_interval,
+            capture_lines=cfg.notify_capture_lines)
+    daemon = Daemon(cfg, recorder, transcriber, registry, feedback,
+                    state_writer=lambda phase: write_daemon_state(phase, pid=pid),
+                    watcher=watcher)
+    # `vupai down` sends SIGTERM; the default disposition kills the process
+    # outright, so run()'s teardown (which reaps the sox child) never executes.
+    # Translate SIGTERM/SIGINT into a clean stop(), then restore the prior
+    # handlers so the unit suite's global signal state stays untouched.
+    def _shutdown(signum, frame):
+        daemon.stop()
+    previous: dict = {}
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            previous[sig] = signal.signal(sig, _shutdown)
+        daemon.run()
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
     return 0
 
 

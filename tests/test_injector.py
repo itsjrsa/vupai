@@ -147,6 +147,88 @@ def test_inject_confirms_when_needle_straddles_a_wrap() -> None:
     assert io.pasted == ["%5"]
 
 
+class _LateLandIO:
+    """capture_pane returns absent on the first call (the initial attempt's poll)
+    and present thereafter (the first paste landed late, during the retry)."""
+
+    def __init__(self, needle_text: str) -> None:
+        self._needle_text = needle_text
+        self.captures = 0
+        self.loaded: list[str] = []
+        self.pasted: list[str] = []
+        self.entered: list[str] = []
+
+    def load_buffer(self, text: str) -> None:
+        self.loaded.append(text)
+
+    def paste_buffer(self, pane_id: str) -> None:
+        self.pasted.append(pane_id)
+
+    def capture_pane(self, pane_id: str) -> str:
+        self.captures += 1
+        return "" if self.captures == 1 else f"$ {self._needle_text}"
+
+    def send_enter(self, pane_id: str) -> None:
+        self.entered.append(pane_id)
+
+
+def test_retry_does_not_double_paste_when_first_paste_lands_late() -> None:
+    # First attempt times out, but the paste lands just after. The retry must
+    # detect the text is already present and Enter WITHOUT pasting again -
+    # otherwise the text is doubled and the agent receives it twice.
+    text = "deploy the build"
+    io = _LateLandIO(text)
+
+    result = injector.inject(
+        "%4", text, confirm_timeout=0.0, poll_interval=0.001, io=io
+    )
+
+    assert result is True
+    assert io.pasted == ["%4"]   # exactly ONE paste; the retry skipped re-pasting
+    assert io.loaded == [text]
+    assert io.entered == ["%4"]  # exactly one Enter
+
+
+def test_submit_delay_sends_enter_when_text_still_present() -> None:
+    # With a review delay, the text is still in the pane after the pause -> Enter.
+    text = "run the tests"
+    io = FakeIO(capture_frames=[f"$ {text}"])
+
+    result = injector.inject(
+        "%1", text, confirm_timeout=0.2, poll_interval=0.01,
+        submit_delay=0.001, io=io)
+
+    assert result is True
+    assert io.entered == ["%1"]
+
+
+def test_submit_delay_cancels_when_input_cleared() -> None:
+    # The paste is confirmed, but during the review window the user clears the
+    # input (needle gone on the post-delay re-check) -> cancel: no Enter, None.
+    text = "delete everything"
+    io = FakeIO(capture_frames=[f"$ {text}", "$ "])  # present, then cleared
+
+    result = injector.inject(
+        "%2", text, confirm_timeout=0.2, poll_interval=0.01,
+        submit_delay=0.001, io=io)
+
+    assert result is None            # cancelled (distinct from False)
+    assert io.entered == []          # Enter NEVER sent
+    assert io.pasted == ["%2"]       # pasted once, not re-pasted
+
+
+def test_submit_delay_zero_sends_enter_immediately() -> None:
+    text = "hello world"
+    io = FakeIO(capture_frames=[f"$ {text}"])
+
+    result = injector.inject(
+        "%1", text, confirm_timeout=0.2, poll_interval=0.01,
+        submit_delay=0.0, io=io)
+
+    assert result is True
+    assert io.entered == ["%1"]
+
+
 @pytest.mark.integration
 def test_inject_delivers_line_to_real_cat_pane() -> None:
     if shutil.which("tmux") is None:

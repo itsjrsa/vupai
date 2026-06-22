@@ -24,6 +24,9 @@ class FakeTmux:
     def set_extended_keys_off(self) -> None:
         self.calls.append(("set_extended_keys_off",))
 
+    def set_base_index(self) -> None:
+        self.calls.append(("set_base_index",))
+
     def install_status_indicator(self) -> None:
         self.calls.append(("install_status_indicator",))
 
@@ -73,6 +76,9 @@ def fake_env(monkeypatch, tmp_path):
     # Don't launch a real background process or probe a real pid in unit tests.
     monkeypatch.setattr(cli, "_daemon_running", lambda: False)
     monkeypatch.setattr(cli, "_spawn_daemon", lambda: ft.daemon_spawns.append(True))
+    # `down`/`reload` now verify the recorded pid is really a vupai daemon before
+    # signalling it; treat the test pid as ours unless a test overrides this.
+    monkeypatch.setattr(cli, "_pid_is_vupai", lambda pid: True)
     # ensure_up sweeps unnamed panes via PaneRegistry; default to an empty
     # registry so unit tests never touch a real tmux. Tests override as needed.
     _stub_registry(monkeypatch, [])
@@ -86,6 +92,7 @@ def test_up_spawns_daemon_when_not_running(fake_env):
     # The daemon runs as a detached background process, NOT in a tmux window.
     assert ft.daemon_spawns == [True]
     assert ("enable_pane_titles",) in ft.calls
+    assert ("set_base_index",) in ft.calls  # 1-based numbering for spoken numbers
 
 
 def test_up_installs_status_indicator_by_default(fake_env):
@@ -508,7 +515,7 @@ def test_doctor_all_passed_includes_model(fake_env, monkeypatch, capsys):
 
 def test_status_reports_model_state(fake_env, monkeypatch, capsys):
     from vupai.permissions import PermissionStatus
-    monkeypatch.setattr(cli, "_daemon_running", lambda: False)
+    monkeypatch.setattr(cli, "daemon_state", lambda: "not_running")
     _stub_registry(monkeypatch, [])
     monkeypatch.setattr(
         cli, "check_permissions",
@@ -526,12 +533,71 @@ def test_down_terminates_and_removes_pidfile(monkeypatch, tmp_path):
     pidfile = tmp_path / "daemon.pid"
     pidfile.write_text("4242")
     monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    monkeypatch.setattr(cli, "_pid_is_vupai", lambda pid: True)
     killed: list[tuple[int, int]] = []
     monkeypatch.setattr(cli.os, "kill", lambda pid, sig: killed.append((pid, sig)))
     rc = cli.main(["down"])
     assert rc == 0
     assert killed == [(4242, cli.signal.SIGTERM)]
     assert not pidfile.exists()
+
+
+def test_down_skips_kill_for_non_vupai_pid(monkeypatch, tmp_path):
+    # A stale pidfile whose PID the OS reassigned to an unrelated process must
+    # NOT be SIGTERMed; vupai only signals a confirmed daemon. The stale file is
+    # still cleared so the next `up` starts cleanly.
+    ft = FakeTmux(server=True)
+    monkeypatch.setattr(cli, "tmuxio", ft)
+    pidfile = tmp_path / "daemon.pid"
+    pidfile.write_text("4242")
+    monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    monkeypatch.setattr(cli, "_pid_is_vupai", lambda pid: False)
+    killed: list = []
+    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    rc = cli.main(["down"])
+    assert rc == 0
+    assert killed == []                 # never signal a process that isn't ours
+    assert not pidfile.exists()         # stale pidfile cleared
+
+
+def test_pid_is_vupai_true_for_daemon_argv(monkeypatch):
+    class _R:
+        stdout = "/Users/x/.venv/bin/python -m vupai _daemon\n"
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: _R())
+    assert cli._pid_is_vupai(4242) is True
+
+
+def test_pid_is_vupai_false_for_unrelated_process(monkeypatch):
+    class _R:
+        stdout = "/usr/bin/vim notes.txt\n"
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: _R())
+    assert cli._pid_is_vupai(4242) is False
+
+
+def test_pid_is_vupai_false_when_ps_unavailable(monkeypatch):
+    def _boom(*a, **k):
+        raise OSError("ps missing")
+    monkeypatch.setattr(cli.subprocess, "run", _boom)
+    assert cli._pid_is_vupai(4242) is False
+
+
+def test_daemon_running_false_when_pid_alive_but_not_vupai(monkeypatch, tmp_path):
+    # os.kill(pid, 0) succeeds (PID exists) but it's a reused PID, not our daemon.
+    pidfile = tmp_path / "daemon.pid"
+    pidfile.write_text("4242")
+    monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(cli, "_pid_is_vupai", lambda pid: False)
+    assert cli._daemon_running() is False
+
+
+def test_daemon_running_true_for_live_vupai_pid(monkeypatch, tmp_path):
+    pidfile = tmp_path / "daemon.pid"
+    pidfile.write_text("4242")
+    monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(cli, "_pid_is_vupai", lambda pid: True)
+    assert cli._daemon_running() is True
 
 
 def test_down_without_pidfile_is_noop(monkeypatch, tmp_path):
@@ -554,6 +620,7 @@ def test_reload_stops_then_restarts_daemon(monkeypatch, tmp_path):
     pidfile = tmp_path / "daemon.pid"
     pidfile.write_text("4242")
     monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    monkeypatch.setattr(cli, "_pid_is_vupai", lambda pid: True)
     killed: list[tuple[int, int]] = []
     monkeypatch.setattr(cli.os, "kill", lambda pid, sig: killed.append((pid, sig)))
     _stub_registry(monkeypatch, [])  # ensure_up sweeps the registry; keep it hermetic
@@ -574,7 +641,7 @@ def test_status_prints_panes_and_pidfile_and_permissions(fake_env, monkeypatch, 
     from vupai.permissions import PermissionStatus
     ft, pidfile = fake_env
     pidfile.write_text("999")
-    monkeypatch.setattr(cli, "_daemon_running", lambda: True)
+    monkeypatch.setattr(cli, "daemon_state", lambda: "ready")
     _stub_registry(monkeypatch, [_pane("alpha", "%1"), _pane("beta", "%2")])
     monkeypatch.setattr(
         cli, "check_permissions",
@@ -594,13 +661,15 @@ def test_daemon_builds_and_runs(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "tmuxio", FakeTmux())
     pidfile = tmp_path / "daemon.pid"
     monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    monkeypatch.setattr(cli, "STATEFILE", tmp_path / "daemon.state")
     built = {}
 
     class FakeDaemon:
         def __init__(self, config, recorder, transcriber, registry, feedback,
-                     *, route_fn=None, inject_fn=None):
+                     *, route_fn=None, inject_fn=None, **kwargs):
             built["config"] = config
             built["transcriber"] = transcriber
+            built["kwargs"] = kwargs
             built["ran"] = False
 
         def run(self):
@@ -618,6 +687,279 @@ def test_daemon_builds_and_runs(monkeypatch, tmp_path):
     assert built["transcriber"][0] == "T"
     assert pidfile.exists()
     assert pidfile.read_text().strip() == str(_os.getpid())
+
+
+def test_daemon_installs_sigterm_handler_then_restores(monkeypatch, tmp_path):
+    # `vupai down` SIGTERMs the daemon; without a handler the process dies
+    # abruptly and run()'s teardown (which reaps sox) never runs. _cmd_daemon
+    # must install a handler that calls daemon.stop(), then restore the prior one.
+    monkeypatch.setattr(cli, "tmuxio", FakeTmux())
+    monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
+    monkeypatch.setattr(cli, "STATEFILE", tmp_path / "daemon.state")
+    monkeypatch.setattr(cli, "load_config", lambda: __import__(
+        "vupai.config", fromlist=["Config"]).Config())
+    monkeypatch.setattr(cli.audio, "resolve_device", lambda d: ("", None))
+    captured = {}
+    stops = {"n": 0}
+
+    class FakeDaemon:
+        def __init__(self, *a, **k):
+            ...
+
+        def run(self):
+            captured["handler"] = cli.signal.getsignal(cli.signal.SIGTERM)
+
+        def stop(self):
+            stops["n"] += 1
+
+    monkeypatch.setattr(cli, "Daemon", FakeDaemon)
+    monkeypatch.setattr(cli, "Recorder", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "ParakeetTranscriber", lambda model_id: object())
+    monkeypatch.setattr(cli, "PaneRegistry", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "Feedback", lambda *a, **k: object())
+
+    before = cli.signal.getsignal(cli.signal.SIGTERM)
+    rc = cli.main(["_daemon"])
+    assert rc == 0
+    # A real handler was installed for the duration of run()...
+    handler = captured["handler"]
+    assert callable(handler) and handler is not before
+    handler(cli.signal.SIGTERM, None)     # invoking it requests a clean shutdown
+    assert stops["n"] == 1
+    # ...and the prior handler is restored once run() returns.
+    assert cli.signal.getsignal(cli.signal.SIGTERM) == before
+
+
+# ---------------------------------------------------------------------------
+# Gap 4: daemon state marker (warming / ready / crashed / stopped)
+# ---------------------------------------------------------------------------
+
+def test_write_daemon_state_format(tmp_path):
+    sf = tmp_path / "daemon.state"
+    cli.write_daemon_state("ready", pid=4321, statefile=sf, now=lambda: 1000.0)
+    assert sf.read_text().strip() == "ready 4321 1000"
+
+
+def test_write_daemon_state_overwrites_in_place(tmp_path):
+    sf = tmp_path / "daemon.state"
+    cli.write_daemon_state("starting", pid=1, statefile=sf, now=lambda: 1.0)
+    cli.write_daemon_state("ready", pid=1, statefile=sf, now=lambda: 2.0)
+    assert sf.read_text().strip() == "ready 1 2"
+
+
+def test_daemon_state_not_running_when_no_pidfile(tmp_path):
+    assert cli.daemon_state(
+        pidfile=tmp_path / "no.pid", statefile=tmp_path / "no.state") == "not_running"
+
+
+def test_daemon_state_warming_when_alive_and_marker_starting(tmp_path):
+    pf = tmp_path / "p"
+    pf.write_text("10")
+    sf = tmp_path / "s"
+    cli.write_daemon_state("starting", pid=10, statefile=sf, now=lambda: 1.0)
+    assert cli.daemon_state(pidfile=pf, statefile=sf, liveness=lambda p: True) == "warming"
+
+
+def test_daemon_state_ready_when_alive_and_marker_ready(tmp_path):
+    pf = tmp_path / "p"
+    pf.write_text("10")
+    sf = tmp_path / "s"
+    cli.write_daemon_state("ready", pid=10, statefile=sf, now=lambda: 1.0)
+    assert cli.daemon_state(pidfile=pf, statefile=sf, liveness=lambda p: True) == "ready"
+
+
+def test_daemon_state_crashed_when_dead_and_marker_ready(tmp_path):
+    pf = tmp_path / "p"
+    pf.write_text("10")
+    sf = tmp_path / "s"
+    cli.write_daemon_state("ready", pid=10, statefile=sf, now=lambda: 1.0)
+    assert cli.daemon_state(pidfile=pf, statefile=sf, liveness=lambda p: False) == "crashed"
+
+
+def test_daemon_state_crashed_when_dead_and_marker_starting(tmp_path):
+    pf = tmp_path / "p"
+    pf.write_text("10")
+    sf = tmp_path / "s"
+    cli.write_daemon_state("starting", pid=10, statefile=sf, now=lambda: 1.0)
+    assert cli.daemon_state(pidfile=pf, statefile=sf, liveness=lambda p: False) == "crashed"
+
+
+def test_daemon_state_stopped_when_dead_and_marker_stopped(tmp_path):
+    pf = tmp_path / "p"
+    pf.write_text("10")
+    sf = tmp_path / "s"
+    cli.write_daemon_state("stopped", pid=10, statefile=sf, now=lambda: 1.0)
+    assert cli.daemon_state(pidfile=pf, statefile=sf, liveness=lambda p: False) == "stopped"
+
+
+def test_daemon_state_ignores_marker_from_a_different_pid(tmp_path):
+    # A stale marker left by an OLD daemon (marker pid != pidfile pid) must be
+    # ignored, so a freshly-reused-but-dead pid isn't misread as that old crash.
+    pf = tmp_path / "p"
+    pf.write_text("10")
+    sf = tmp_path / "s"
+    cli.write_daemon_state("ready", pid=99, statefile=sf, now=lambda: 1.0)
+    assert cli.daemon_state(pidfile=pf, statefile=sf, liveness=lambda p: False) == "not_running"
+
+
+def _all_perms():
+    from vupai.permissions import PermissionStatus
+    return PermissionStatus(microphone=True, input_monitoring=True, accessibility=True)
+
+
+def test_status_prints_warming(fake_env, monkeypatch, capsys):
+    ft, pidfile = fake_env
+    pidfile.write_text("4321")
+    monkeypatch.setattr(cli, "daemon_state", lambda: "warming")
+    _stub_registry(monkeypatch, [])
+    monkeypatch.setattr(cli, "check_permissions", lambda **k: _all_perms())
+    assert cli.main(["status"]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "warming" in out and "4321" in out
+
+
+def test_status_prints_crashed_with_log_hint(fake_env, monkeypatch, capsys):
+    ft, pidfile = fake_env
+    pidfile.write_text("4321")
+    monkeypatch.setattr(cli, "daemon_state", lambda: "crashed")
+    _stub_registry(monkeypatch, [])
+    monkeypatch.setattr(cli, "check_permissions", lambda **k: _all_perms())
+    assert cli.main(["status"]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "crashed" in out and str(cli.DAEMON_LOG).lower() in out
+
+
+def test_down_unlinks_statefile(monkeypatch, tmp_path):
+    ft = FakeTmux(server=True)
+    monkeypatch.setattr(cli, "tmuxio", ft)
+    pidfile = tmp_path / "daemon.pid"
+    pidfile.write_text("4242")
+    statefile = tmp_path / "daemon.state"
+    statefile.write_text("ready 4242 1\n")
+    monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    monkeypatch.setattr(cli, "STATEFILE", statefile)
+    monkeypatch.setattr(cli, "_pid_is_vupai", lambda pid: True)
+    monkeypatch.setattr(cli.os, "kill", lambda p, s: None)
+    assert cli.main(["down"]) == 0
+    assert not statefile.exists()
+
+
+def test_cmd_daemon_writes_starting_marker_and_threads_state_writer(monkeypatch, tmp_path):
+    from vupai.config import Config
+    monkeypatch.setattr(cli, "tmuxio", FakeTmux())
+    pidfile = tmp_path / "daemon.pid"
+    statefile = tmp_path / "daemon.state"
+    monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    monkeypatch.setattr(cli, "STATEFILE", statefile)
+    monkeypatch.setattr(cli, "load_config", lambda: Config())
+    monkeypatch.setattr(cli.audio, "resolve_device", lambda d: ("", None))
+    built = {}
+
+    class FakeDaemon:
+        def __init__(self, *a, state_writer=None, **k):
+            built["state_writer"] = state_writer
+
+        def run(self):
+            # The 'starting' marker must already be on disk by the time run starts.
+            built["marker_at_run"] = statefile.read_text()
+
+    monkeypatch.setattr(cli, "Daemon", FakeDaemon)
+    monkeypatch.setattr(cli, "Recorder", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "ParakeetTranscriber", lambda model_id: object())
+    monkeypatch.setattr(cli, "PaneRegistry", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "Feedback", lambda *a, **k: object())
+    assert cli.main(["_daemon"]) == 0
+    assert built["state_writer"] is not None
+    assert "starting" in built["marker_at_run"]
+
+
+def test_status_prints_notify_disabled_by_default(fake_env, monkeypatch, capsys):
+    ft, pidfile = fake_env
+    monkeypatch.setattr(cli, "daemon_state", lambda: "not_running")
+    _stub_registry(monkeypatch, [])
+    monkeypatch.setattr(cli, "check_permissions", lambda **k: _all_perms())
+    assert cli.main(["status"]) == 0
+    assert "notify: disabled" in capsys.readouterr().out
+
+
+def test_cmd_daemon_builds_watcher_when_notify_enabled(monkeypatch, tmp_path):
+    from vupai.config import Config
+    monkeypatch.setattr(cli, "tmuxio", FakeTmux())
+    monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
+    monkeypatch.setattr(cli, "STATEFILE", tmp_path / "daemon.state")
+    monkeypatch.setattr(cli, "load_config", lambda: Config(notify_enabled=True))
+    monkeypatch.setattr(cli.audio, "resolve_device", lambda d: ("", None))
+    built = {}
+
+    class FakeDaemon:
+        def __init__(self, *a, watcher=None, **k):
+            built["watcher"] = watcher
+
+        def run(self):
+            ...
+
+    monkeypatch.setattr(cli, "Daemon", FakeDaemon)
+    monkeypatch.setattr(cli, "PaneWatcher", lambda *a, **k: ("watcher", k))
+    monkeypatch.setattr(cli, "Recorder", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "ParakeetTranscriber", lambda model_id: object())
+    monkeypatch.setattr(cli, "PaneRegistry", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "Feedback", lambda *a, **k: object())
+    assert cli.main(["_daemon"]) == 0
+    assert built["watcher"] is not None  # constructed and threaded into Daemon
+
+
+def test_cmd_daemon_no_watcher_when_notify_disabled(monkeypatch, tmp_path):
+    from vupai.config import Config
+    monkeypatch.setattr(cli, "tmuxio", FakeTmux())
+    monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
+    monkeypatch.setattr(cli, "STATEFILE", tmp_path / "daemon.state")
+    monkeypatch.setattr(cli, "load_config", lambda: Config(notify_enabled=False))
+    monkeypatch.setattr(cli.audio, "resolve_device", lambda d: ("", None))
+    built = {}
+
+    class FakeDaemon:
+        def __init__(self, *a, watcher=None, **k):
+            built["watcher"] = watcher
+
+        def run(self):
+            ...
+
+    monkeypatch.setattr(cli, "Daemon", FakeDaemon)
+    monkeypatch.setattr(cli, "Recorder", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "ParakeetTranscriber", lambda model_id: object())
+    monkeypatch.setattr(cli, "PaneRegistry", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "Feedback", lambda *a, **k: object())
+    assert cli.main(["_daemon"]) == 0
+    assert built["watcher"] is None
+
+
+def test_cmd_daemon_threads_hud_flag(monkeypatch, tmp_path):
+    from vupai.config import Config
+    monkeypatch.setattr(cli, "tmuxio", FakeTmux())
+    monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
+    monkeypatch.setattr(cli, "STATEFILE", tmp_path / "daemon.state")
+    monkeypatch.setattr(cli, "load_config", lambda: Config(hud_enabled=False))
+    monkeypatch.setattr(cli.audio, "resolve_device", lambda d: ("", None))
+    captured = {}
+
+    def fake_feedback(*a, **k):
+        captured.update(k)
+        return object()
+
+    class FakeDaemon:
+        def __init__(self, *a, **k):
+            ...
+
+        def run(self):
+            ...
+
+    monkeypatch.setattr(cli, "Feedback", fake_feedback)
+    monkeypatch.setattr(cli, "Daemon", FakeDaemon)
+    monkeypatch.setattr(cli, "Recorder", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "ParakeetTranscriber", lambda model_id: object())
+    monkeypatch.setattr(cli, "PaneRegistry", lambda *a, **k: object())
+    assert cli.main(["_daemon"]) == 0
+    assert captured.get("hud_enabled") is False
 
 
 # ---------------------------------------------------------------------------

@@ -124,6 +124,15 @@ def bind_rename_key(self_cmd: str, key: str = "R") -> None:
     run(["bind-key", key, "command-prompt", "-p", "rename pane:", f'run-shell "{inner}"'])
 
 
+def set_base_index() -> None:
+    # Number windows and panes from 1, matching the 1-based numbers users speak
+    # ("focus two"). Display/UX only: the router resolves spoken numbers by
+    # position, so it stays correct regardless of this, but aligning tmux's own
+    # numbering keeps `vupai status` and the pane borders consistent with speech.
+    run(["set", "-g", "base-index", "1"])
+    run(["set", "-g", "pane-base-index", "1"])
+
+
 def set_extended_keys_off() -> None:
     # Keep the CR from send-keys delivered as a plain Enter so Claude Code
     # submits on it. extended-keys (CSI-u) can re-encode Enter into an escape

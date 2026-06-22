@@ -4,6 +4,51 @@ Loose, unprioritized backlog of potential directions. Not commitments. Items
 marked _(deferred)_ are already called out in `CLAUDE.md` under "Known
 limitations / deferred".
 
+## High priority (global review, 2026-06-21)
+
+Findings from a multi-agent audit. The confirmed bugs and the MVP gaps have been
+implemented and removed from this list. The remaining open work is the two
+**verify-on-hardware** items and the **improvements** below, ordered by leverage.
+
+### Verify on real hardware, then fix
+
+- **Spawn guard for in-pane `vupai reload`.** `_spawn_daemon` relies on
+  `start_new_session` (setsid), which does NOT change the macOS TCC
+  responsible-process. Running the documented in-pane `vupai reload` may parent
+  the daemon under the tmux server, silently killing the global hotkey (the exact
+  failure CLAUDE.md's "daemon must run OUTSIDE tmux" invariant warns about). NOT
+  changed yet because it conflicts with the documented dogfooding loop and can't
+  be verified in a unit-only env. Confirm responsible-process inheritance on a
+  real Mac; if it reproduces, refuse to spawn from inside tmux (or re-exec under a
+  non-tmux parent) instead of spawning a dead-hotkey daemon.
+- **Injector confirm-poll false-positive on pre-existing text.** `_paste_and_poll`
+  matches the needle anywhere on screen with no pre-paste baseline, so an utterance
+  whose tail already appears on screen confirms instantly (the "poll until it
+  lands" guarantee degrades to "is it somewhere on screen"). Disputed on impact
+  (tmux may serialize paste-before-capture). Fix needs a pre-paste baseline +
+  count-increase check and a full rewrite of the injector test fakes; defer until
+  validated against a real Claude pane (where the `/`-autocomplete overlay also
+  needs checking).
+
+### Improvements (open)
+
+- **Codify the convention-only invariants as tests.** warm()+transcribe() same
+  thread (MLX), no inject/tmux/MLX on the listener thread, recorder timeout
+  behavior. A refactor could reintroduce the `no Stream(gpu,0)` crash with all
+  tests green. Drive on_press/on_release through real threads and assert thread
+  identity + that the listener never touches inject/tmux.
+- **Chatty `down`/`up`/`reload`.** They return 0 silently; the constant reload
+  loop gives no signal. Print stopped/started/reloaded with pid.
+- **Split `cli.py` (826 lines).** Extract the interactive `setup`/`_prompt_*`
+  cluster (and optionally pidfile+lifecycle) into their own modules; they already
+  take injectable collaborators.
+- **Richer injection-failure feedback.** Name the target pane, point at the
+  journal, log the last `capture-pane` snapshot so a transient miss is
+  distinguishable from a systematic TUI incompatibility.
+- **Honest mic-probe caveat.** doctor prints a confident `microphone=True` even
+  though the probe can't tell "granted" from "denied-but-silent"; add a caveat
+  line on all-passed.
+
 ## Closing the loop (vupai is input-only today)
 
 - **Audio / TTS feedback.** Confirmation chime on successful inject, a distinct
@@ -35,9 +80,7 @@ limitations / deferred".
 
 ## Safety / UX
 
-- **Confirmation mode for destructive commands** ("clear all", close panes).
 - **Undo / repeat last command.**
-- **Live transcript HUD** so you can see what was heard before it's injected.
 
 ## Platform reach
 

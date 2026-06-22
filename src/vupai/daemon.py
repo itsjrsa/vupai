@@ -12,10 +12,17 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from .asr import Transcriber
-from .commands import handle_command
+from .asr import Transcriber, model_cached
+from .commands import (
+    DESTRUCTIVE_KINDS,
+    Command,
+    execute_command,
+    parse_command,
+)
 from .config import Config
+from .confirm import DEFAULT_DISABLE_HINT, popup_confirm
 from .feedback import Feedback
+from .filler import strip_fillers
 from .hotkey import Hotkey, MultiHotkey
 from .injector import inject
 from .journal import Journal
@@ -28,10 +35,44 @@ logger = logging.getLogger(__name__)
 # Sentinel enqueued by stop() to unblock the consumer loop for a clean shutdown.
 _SHUTDOWN = object()
 
+# Shown on every empty capture. Covers BOTH causes (a denied Microphone grant
+# AND a disconnected/muted/name-collided device) and is emitted unconditionally -
+# a mid-session unplug is the common case, so the message must not blame
+# permission once and then go quiet.
+_NO_AUDIO_MSG = (
+    "no audio captured - check the mic is connected and unmuted, or grant "
+    "Microphone access in System Settings > Privacy & Security > Microphone"
+)
+
 
 def _spawn_thread(fn, *args) -> None:
     """Default off-thread dispatcher for listener-thread feedback (see _async)."""
     threading.Thread(target=fn, args=args, daemon=True).start()
+
+
+def _summarize_destructive(cmd: Command, registry) -> str:
+    """Short description of a confirmation-gated command for the prompt/journal."""
+    if cmd.kind == "close":
+        return f"close {cmd.name}"
+    if cmd.kind == "close_others":
+        focused = registry.focused()
+        others = [p for p in registry.panes
+                  if focused is None or p.id != focused.id]
+        return f"close {len(others)} other pane(s)"
+    if cmd.kind == "broadcast":
+        return f"broadcast to all agents: {cmd.text[:30]}"
+    if cmd.kind == "create":
+        return f"open {cmd.count} panes"
+    return cmd.kind
+
+
+def _disable_hint(cmd: Command) -> str:
+    """Config hint shown in the popup's '(disable: ...)' footer, targeted to the
+    command: a large create points at its own threshold, so turning this one
+    popup off doesn't mean disabling all destructive confirmations."""
+    if cmd.kind == "create":
+        return "raise confirm_create_threshold in config.toml"
+    return DEFAULT_DISABLE_HINT
 
 
 class Daemon:
@@ -39,8 +80,11 @@ class Daemon:
 
     def __init__(self, config: Config, recorder: Recorder, transcriber: Transcriber,
                  registry: PaneRegistry, feedback: Feedback,
-                 *, route_fn=route, inject_fn=inject, command_fn=handle_command,
-                 journal: Journal | None = None, async_fn=None) -> None:
+                 *, route_fn=route, inject_fn=inject,
+                 parse_fn=parse_command, execute_fn=execute_command,
+                 confirm_fn=popup_confirm,
+                 journal: Journal | None = None, async_fn=None,
+                 state_writer=None, watcher=None) -> None:
         self._config = config
         self._recorder = recorder
         self._transcriber = transcriber
@@ -48,14 +92,27 @@ class Daemon:
         self._feedback = feedback
         self._route_fn = route_fn
         self._inject_fn = inject_fn
-        self._command_fn = command_fn
+        # Command interpretation (parse_fn) is kept separate from execution
+        # (execute_fn) so the destructive-confirmation gate can inspect the
+        # parsed Command's kind BEFORE acting on it.
+        self._parse_fn = parse_fn
+        self._execute_fn = execute_fn
+        # Destructive commands are gated by a synchronous confirmation (default:
+        # a tmux popup). confirm_fn(summary, *, timeout) -> bool; injected for tests.
+        self._confirm_fn = confirm_fn
+        # Optional agent-state poller (watcher.PaneWatcher) - runs on its own
+        # thread, touches only tmux + osascript, never this pipeline. None = off.
+        self._watcher = watcher
+        # Optional lifecycle marker writer: state_writer("ready") after warm(),
+        # state_writer("stopped") on a clean exit. The marker's absence after a
+        # dead pid is how `vupai status` distinguishes a crash from a clean stop.
+        self._state_writer = state_writer
         # How off-listener-thread feedback is dispatched; tests inject a
         # synchronous runner so listener-thread indicator calls are deterministic.
         self._async_fn = async_fn if async_fn is not None else _spawn_thread
         self._journal = journal if journal is not None else Journal.from_config(config)
         self._hotkey: Hotkey | MultiHotkey | None = None
         self._stop_event = threading.Event()
-        self._mic_hint_shown = False
         self._active_mode = "keyword"   # mode the in-flight recording was started under
         # Push-to-talk is serial, but the listener thread must never block on the
         # heavy pipeline (a slow pynput tap callback gets disabled by macOS), so
@@ -85,6 +142,15 @@ class Daemon:
             wav: Path = self._recorder.stop()
         except RuntimeError:
             return  # release without a matching start (debounce edge); ignore
+        except Exception:
+            # Any other stop() failure (a wedged sox kill, OS error): the wav is
+            # unusable. Never let it escape into pynput's wrapper - that would
+            # swallow it AND leave the 'listening' indicator (painted at press)
+            # stuck on. Log it and repaint an error so the state clears.
+            logger.exception("recorder stop failed on release")
+            self._async(self._feedback.error, "recording failed - try again",
+                        self._feedback.reserve())
+            return
         try:
             self._jobs.put_nowait((wav, mode))
         except queue.Full:
@@ -132,45 +198,76 @@ class Daemon:
             if size < MIN_WAV_BYTES:
                 entry["decision"] = "no_audio"
                 entry["outcome"] = "no_audio"
-                if not self._mic_hint_shown:
-                    self._feedback.error(
-                        "no audio captured - grant Microphone access in "
-                        "System Settings > Privacy & Security > Microphone")
-                    self._mic_hint_shown = True
-                else:
-                    self._feedback.error("no audio captured")
+                self._feedback.error(_NO_AUDIO_MSG)
                 return
 
             keep_wav = True  # a real capture: worth retaining if audio is on
             self._feedback.working()  # transcribe+route can take a couple seconds
             self._registry.refresh()
-            hints = [p.name for p in self._registry.panes if p.name != p.id]
+            pane_names = [p.name for p in self._registry.panes if p.name != p.id]
+            # Bias the ASR toward pane names AND program tokens (codex/opencode/
+            # pi): "codex" otherwise mishears as "codecs", "opencode" as "open
+            # code". The command-layer aliases recover these, but biasing the
+            # acoustic model first means fewer mishearings to recover from.
+            hints = pane_names + [p for p in self._config.programs if p]
             _t0 = time.monotonic()
             text = self._transcriber.transcribe(wav, hints=hints)
             entry["transcribe_ms"] = round((time.monotonic() - _t0) * 1000)
             entry["transcript"] = text
+            if self._config.filler_filter:
+                cleaned = strip_fillers(text, self._config.filler_words)
+                if cleaned != text:
+                    entry["filtered_transcript"] = cleaned
+                text = cleaned
             if not text or not text.strip():
                 entry["decision"] = "empty"
                 entry["outcome"] = "no_transcript"
                 self._feedback.status("didn't catch that")
                 return
 
+            # HUD: echo what was heard on the focused pane so a mishearing or
+            # misroute is visible. Verbatim dictation is skipped (it lands in the
+            # pane as the literal text anyway).
+            if mode != "dictation":
+                self._feedback.heard(text, self._hud_pane(), mode=mode)
+
             if mode == "dictation":
                 entry["decision"] = "dictation"
-                ok = self._inject_dictation(text)
-                entry["outcome"] = "injected" if ok else "inject_failed"
+                result = self._inject_dictation(text)
+                if result is True:
+                    entry["outcome"] = "injected"
+                elif result is None:
+                    entry["outcome"] = "cancelled"
+                else:
+                    entry["outcome"] = "inject_failed"
                 return
+
+            addressing = "button" if mode == "system" else "keyword"
 
             # Command layer: utterances addressed to the control/broadcast word
             # are interpreted by vupai itself, not injected into a pane.
-            result = self._command_fn(
-                text, self._registry, self._config, inject_fn=self._inject_fn,
-                addressing="button" if mode == "system" else "keyword")
-            if result is not None:
-                entry["decision"] = "command"
-                entry["command"] = result.message
-                entry["outcome"] = "ok" if result.ok else "unknown"
-                (self._feedback.status if result.ok else self._feedback.error)(result.message)
+            cmd = self._parse_fn(
+                text, broadcast_word=self._config.broadcast_word,
+                macros=self._config.macros, programs=self._config.programs,
+                slash_commands=self._config.slash_commands, addressing=addressing)
+            if cmd is not None:
+                if self._config.confirm_destructive and self._needs_confirm(cmd):
+                    summary = _summarize_destructive(cmd, self._registry)
+                    # Synchronous confirmation (a tmux popup by default). Anything
+                    # but an explicit yes - decline, timeout, broken popup - cancels.
+                    # A large create points its disable hint at the create-specific
+                    # threshold; everything else keeps the destructive default.
+                    if not self._confirm_fn(
+                            summary, timeout=self._config.confirm_timeout_s,
+                            disable_hint=_disable_hint(cmd)):
+                        entry["decision"] = "command"
+                        entry["command"] = summary
+                        entry["outcome"] = "cancelled"
+                        self._feedback.status(f"cancelled: {summary}")
+                        return
+                    self._run_command(cmd, entry, confirmed=True)
+                    return
+                self._run_command(cmd, entry)
                 return
 
             entry["decision"] = "route"
@@ -181,20 +278,20 @@ class Daemon:
                 fuzzy_cutoff=self._config.fuzzy_cutoff)
             entry["confidence"] = route_obj.confidence
             entry["match_method"] = route_obj.match_method
-            entry["available_names"] = list(hints)
+            entry["available_names"] = list(pane_names)
 
             if route_obj.candidates:
                 # Ambiguous near-tie: don't guess. Surface candidates and bail.
                 entry["outcome"] = "ambiguous"
                 entry["candidates"] = list(route_obj.candidates)
-                self._feedback.error(
-                    "ambiguous: " + " / ".join(route_obj.candidates)
-                    + " - say the name again")
+                self._feedback.reject(
+                    "ambiguous - say the name again", self._hud_pane(),
+                    candidates=tuple(route_obj.candidates))
                 return
 
             if route_obj.pane_id is None:
                 entry["outcome"] = "no_target"
-                self._feedback.error("no target")
+                self._feedback.reject("no target", self._hud_pane())
                 return
 
             entry["target_pane"] = route_obj.pane_id
@@ -204,11 +301,16 @@ class Daemon:
             ok = self._inject_fn(
                 route_obj.pane_id, route_obj.text,
                 confirm_timeout=self._config.inject_confirm_timeout,
-                poll_interval=self._config.inject_poll_interval)
+                poll_interval=self._config.inject_poll_interval,
+                **self._submit_delay_kw())
             entry["inject_ms"] = round((time.monotonic() - _i0) * 1000)
-            if ok:
+            if ok is True:
                 entry["outcome"] = "injected"
                 self._feedback.announce(route_obj)
+                return
+            if ok is None:  # user cleared the input during the review window
+                entry["outcome"] = "cancelled"
+                self._feedback.status("cancelled - input cleared before send")
                 return
 
             # Injection failed: the routed pane may have gone away. Re-resolve
@@ -222,35 +324,89 @@ class Daemon:
                 if self._inject_fn(
                         retry.pane_id, retry.text,
                         confirm_timeout=self._config.inject_confirm_timeout,
-                        poll_interval=self._config.inject_poll_interval):
+                        poll_interval=self._config.inject_poll_interval,
+                        **self._submit_delay_kw()) is True:
                     entry["inject_ms"] = round((time.monotonic() - _i1) * 1000)
                     entry["outcome"] = "injected_fallback"
                     entry["target_pane"] = retry.pane_id
                     self._feedback.announce(retry)
                     return
             entry["outcome"] = "inject_failed"
-            self._feedback.error("injection failed - text not confirmed in pane")
+            self._feedback.reject(
+                "injection failed - text not confirmed in pane",
+                route_obj.pane_id or self._hud_pane())
         finally:
             self._journal.record(entry, wav if keep_wav else None)
+            # The recorder owns the temp wav's creation; the daemon owns its
+            # deletion. Journal.record has already COPIED it if retention is on,
+            # so unlink the source unconditionally - otherwise every utterance
+            # leaks a wav into $TMPDIR for the daemon's whole lifetime.
+            try:
+                wav.unlink(missing_ok=True)
+            except OSError:
+                pass
 
-    def _inject_dictation(self, text: str) -> bool:
+    def _needs_confirm(self, cmd: Command) -> bool:
+        """True if `cmd` must pass the confirmation popup. Destructive kinds
+        always qualify; a create qualifies once its count reaches
+        confirm_create_threshold (a large fan-out tiles tight and degrades voice
+        addressing). Both share the confirm_destructive master switch upstream."""
+        if cmd.kind in DESTRUCTIVE_KINDS:
+            return True
+        if cmd.kind == "create":
+            return cmd.count >= self._config.confirm_create_threshold
+        return False
+
+    def _run_command(self, cmd: Command, entry: dict, *, confirmed: bool = False):
+        """Execute a parsed command and record the result. `confirmed` marks a
+        destructive command that went through the confirmation gate."""
+        result = self._execute_fn(
+            cmd, self._registry, self._config, inject_fn=self._inject_fn)
+        entry["decision"] = "command"
+        entry["command"] = result.message
+        if confirmed:
+            entry["confirmed"] = True
+        entry["outcome"] = "ok" if result.ok else "unknown"
+        if result.ok:
+            self._feedback.status(result.message)
+        else:
+            self._feedback.reject(result.message, self._hud_pane())
+        return result
+
+    def _hud_pane(self) -> str | None:
+        """The pane to show HUD overlays on: the focused pane, or None."""
+        focused = self._registry.focused()
+        return focused.id if focused is not None else None
+
+    def _submit_delay_kw(self) -> dict:
+        """Pass the configured review delay to the injector, but only when set -
+        so the many bool-returning inject_fn fakes/callers are untouched at 0.0."""
+        delay = self._config.inject_submit_delay
+        return {"submit_delay": delay} if delay else {}
+
+    def _inject_dictation(self, text: str):
         """Verbatim injection into the focused pane: no command parse, no name
         routing. The literal-text guarantee of the dictation key. Returns True
-        when the paste was confirmed."""
+        when the paste was confirmed and submitted, None if cancelled in the
+        review window, False if the paste was never confirmed."""
         focused = self._registry.focused()
         if focused is None:
-            self._feedback.error("no focused pane")
+            self._feedback.reject("no focused pane", None)
             return False
         ok = self._inject_fn(
             focused.id, text,
             confirm_timeout=self._config.inject_confirm_timeout,
-            poll_interval=self._config.inject_poll_interval)
-        if ok:
+            poll_interval=self._config.inject_poll_interval,
+            **self._submit_delay_kw())
+        if ok is True:
             self._feedback.announce(Route(
                 pane_id=focused.id, text=text, matched_name=None,
                 confidence=0.0, fallback=True))
+        elif ok is None:
+            self._feedback.status("cancelled - input cleared before send")
         else:
-            self._feedback.error("injection failed - text not confirmed in pane")
+            self._feedback.reject(
+                "injection failed - text not confirmed in pane", focused.id)
         return ok
 
     def _make_hotkey(self):
@@ -283,10 +439,17 @@ class Daemon:
         # every _process -> transcribe below runs on the same thread, so the
         # stream always matches. Heavy work is kept off the listener thread (see
         # on_release), so the consumer loop lives here on the warm thread.
+        # Paint a warming state BEFORE the (potentially multi-minute first-run)
+        # model load, so a cold start doesn't look like a dead hotkey.
+        self._feedback.warming(downloading=not model_cached(self._config.model_id))
         self._transcriber.warm()
+        if self._state_writer is not None:
+            self._state_writer("ready")  # model loaded; hotkey about to go live
         self._hotkey = self._make_hotkey()
         self._hotkey.start()
         self._feedback.ready()
+        if self._watcher is not None:
+            self._watcher.start()  # background agent-state poller (own thread)
         try:
             while not self._stop_event.is_set():
                 job = self._jobs.get()  # blocks until an utterance or the sentinel
@@ -302,7 +465,27 @@ class Daemon:
                     except Exception:
                         pass
         finally:
+            # Quiesce the poll thread first so it can't capture-pane mid-teardown.
+            if self._watcher is not None:
+                try:
+                    self._watcher.stop()
+                except Exception:
+                    logger.exception("watcher stop on shutdown failed")
             self._hotkey.stop()
+            # A clean shutdown (SIGTERM via `vupai down`) can land while PTT is
+            # held. Reap the in-flight recorder so the sox child isn't orphaned
+            # holding the mic for the next daemon.
+            if self._recorder.is_recording:
+                try:
+                    self._recorder.stop()
+                except Exception:
+                    logger.exception("recorder cleanup on shutdown failed")
+            # Clean-exit marker, written LAST. A dead pid without it == a crash.
+            if self._state_writer is not None:
+                try:
+                    self._state_writer("stopped")
+                except Exception:
+                    logger.exception("writing stopped state marker failed")
 
     def stop(self) -> None:
         """Request a clean shutdown of the consumer loop (e.g. from a signal)."""
