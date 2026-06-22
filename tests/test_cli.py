@@ -26,6 +26,9 @@ class FakeTmux:
     def enable_pane_titles(self) -> None:
         self.calls.append(("enable_pane_titles",))
 
+    def set_terminal_title(self) -> None:
+        self.calls.append(("set_terminal_title",))
+
     def set_extended_keys_off(self) -> None:
         self.calls.append(("set_extended_keys_off",))
 

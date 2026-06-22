@@ -112,6 +112,17 @@ def enable_pane_titles() -> None:
          "#{pane_title}"])
 
 
+def set_terminal_title() -> None:
+    """Drive the terminal window/tab title as ``vupai - <session>``.
+
+    tmux ships with ``set-titles`` off, so without this the terminal keeps
+    whatever launched it (the bare ``vupai`` command). ``#S`` expands to the
+    attached session name, so each session's terminal title is distinct.
+    """
+    run(["set", "-g", "set-titles", "on"])
+    run(["set", "-g", "set-titles-string", "vupai - #S"])
+
+
 def set_pane_autoname_hooks(self_cmd: str) -> None:
     """Auto-assign a callsign to every newly created pane.
 

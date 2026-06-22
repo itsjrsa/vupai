@@ -291,6 +291,7 @@ def ensure_up(session: str | None = None) -> str:
         # _exec_create). "=name" exact-matches the new session's active pane.
         tmuxio.set_pane_program(f"={name}", program_label(prog))
     tmuxio.enable_pane_titles()
+    tmuxio.set_terminal_title()  # terminal tab reads "vupai - <session>"
     tmuxio.set_base_index()  # 1-based windows/panes so "focus two" matches the display
     tmuxio.set_extended_keys_off()
     if cfg.status_indicator:

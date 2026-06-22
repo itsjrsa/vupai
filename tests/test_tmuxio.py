@@ -151,6 +151,16 @@ def test_enable_pane_titles_runs_both_set_commands(monkeypatch):
     ]
 
 
+def test_set_terminal_title_enables_session_aware_title(monkeypatch):
+    fake = FakeRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.set_terminal_title()
+    assert fake.calls[0]["args"] == ["tmux", "set", "-g", "set-titles", "on"]
+    # #S expands to the attached session, so each session's tab is distinct.
+    assert fake.calls[1]["args"] == [
+        "tmux", "set", "-g", "set-titles-string", "vupai - #S"]
+
+
 def test_set_base_index_makes_windows_and_panes_one_based(monkeypatch):
     fake = FakeRun()
     patch_run(monkeypatch, fake)
