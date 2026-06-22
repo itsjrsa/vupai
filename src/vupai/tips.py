@@ -63,7 +63,7 @@ def build_tips(cfg) -> list[str]:
     talk_key = cfg.command_hotkey if cfg.addressing == "button" else cfg.hotkey
     hints = [
         f"hold {talk_key} to talk",
-        "set status_tips=false in config.toml to hide tips",
+        "set status_tips=false to hide these",
     ]
     commands: list[str] = []
     if cfg.addressing == "button":
