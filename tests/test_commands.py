@@ -1013,6 +1013,11 @@ def test_parse_layout_two_token_verb_and_filler():
     assert _parse_btn("layout the grid").layout == "tiled"
 
 
+def test_parse_layout_plural_verb_alias():
+    # "layouts" is the curated plural mishearing of the "layout" lead verb.
+    assert _parse_btn("layouts grid").layout == "tiled"
+
+
 def test_parse_layout_unknown_or_bare_verb_falls_through():
     assert _parse_btn("layout") is None
     assert _parse_btn("layout wobble") is None
@@ -1100,7 +1105,7 @@ def test_execute_layout_only_counts_focused_window():
     res = execute_command(Command(kind="layout", layout="tiled", main_focus=False),
                           reg, Config(), io=io)
     assert res.ok and "nothing to arrange" in res.message
-    assert not any(c[0] == "select_layout" for c in io.calls)
+    assert io.calls == []
 
 
 def test_execute_layout_no_focused_pane():

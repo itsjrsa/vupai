@@ -66,16 +66,6 @@ _LAYOUT_VERB_ALIASES = frozenset({"layouts"})
 # toks[0]-matched set. View-only action, so a miss is harmless (falls through to
 # dictation). "even" alone is intentionally absent (it would tie-break columns
 # vs rows); say the axis. Extend with a one-liner + a test.
-# tmux layout name -> the word used in the spoken-feedback message. Pinned so the
-# message wording is fixed, not re-derived. Mirrors the feedback-label column of
-# the design's vocabulary table.
-_LAYOUT_LABELS = {
-    "tiled": "grid",
-    "main-vertical": "main left",
-    "main-horizontal": "main top",
-    "even-horizontal": "columns",
-    "even-vertical": "rows",
-}
 _LAYOUTS: dict[str, tuple[str, bool]] = {
     "grid": ("tiled", False),
     "tile": ("tiled", False),
@@ -94,6 +84,16 @@ _LAYOUTS: dict[str, tuple[str, bool]] = {
     "even columns": ("even-horizontal", False),
     "rows": ("even-vertical", False),
     "even rows": ("even-vertical", False),
+}
+# tmux layout name -> the word used in the spoken-feedback message. Pinned so the
+# message wording is fixed, not re-derived. Mirrors the feedback-label column of
+# the design's vocabulary table.
+_LAYOUT_LABELS = {
+    "tiled": "grid",
+    "main-vertical": "main left",
+    "main-horizontal": "main top",
+    "even-horizontal": "columns",
+    "even-vertical": "rows",
 }
 # Unit nouns for `create`. "pane" is canonical; "agent"/"split" are homophone-free
 # synonyms ("pane" mishears as "pain"/"panel") that map to the same thing - say
