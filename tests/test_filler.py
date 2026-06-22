@@ -50,3 +50,14 @@ def test_midsentence_removal_preserves_lowercase():
 
 def test_leading_punctuation_before_filler_recapitalizes():
     assert strip_fillers("...um hello", WORDS) == "Hello"
+
+
+def test_elongated_doubled_letter_fillers():
+    # Words that already end in a doubled letter must still match when elongated.
+    assert strip_fillers("hmmm yes", WORDS) == "Yes"
+    assert strip_fillers("mmm yes", WORDS) == "Yes"
+
+
+def test_elongated_single_letter_fillers():
+    assert strip_fillers("ummm okay", WORDS) == "Okay"
+    assert strip_fillers("hello uhh fine", WORDS) == "hello fine"

@@ -15,19 +15,21 @@ _TOKEN = re.compile(r"[\w']+|[^\w']+", re.UNICODE)
 
 
 def _is_filler(token: str, words: frozenset[str]) -> bool:
-    """True if token matches a filler word, tolerating a repeated final letter.
-
-    "um" matches "um"/"umm"/"ummm" (the trailing run collapses to one). Match is
-    case-insensitive and anchored to the whole token (callers pass single
-    tokens), so substrings like "umbrella" never match.
+    """True if token matches a filler word, tolerating elongation of the final
+    letter ("um" matches umm/ummm; "hmm" matches hmmm; "mm" matches mmm). Match
+    is case-insensitive and anchored to the whole token, so substrings like
+    "umbrella" never match.
     """
     lowered = token.lower()
     if lowered in words:
         return True
-    # Collapse a trailing run of the same letter to a single letter and retry,
-    # so elongated fillers (ummm, uhh) match without enumerating every length.
-    collapsed = re.sub(r"(.)\1+$", r"\1", lowered)
-    return collapsed in words
+    for word in words:
+        if not word:
+            continue
+        # Allow zero or more extra repetitions of the word's final letter.
+        if re.fullmatch(re.escape(word) + re.escape(word[-1]) + "*", lowered):
+            return True
+    return False
 
 
 def strip_fillers(text: str, words: frozenset[str]) -> str:
