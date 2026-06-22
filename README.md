@@ -10,8 +10,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-black.svg">
 </p>
 
-*vupai* (say "voo-pie") is a **V**oice **U**I for your AI **pa**nes: hold a key,
-speak, and what you say lands in the right one.
+*vupai* (say "voo-pie") is a **V**oice **U**I for your AI **pa**nes.
 
 Hold a key, speak, and what you say is typed into the right tmux pane: the one
 you're looking at, or an agent you call by name (*"nova, run the tests"*).
@@ -79,6 +78,11 @@ uv sync            # creates .venv and installs everything (incl. the MLX runtim
 Run the CLI with `uv run vupai …` from the repo, or see the dogfooding loop
 (`vupai reload` / `vupai --reload`) in [AGENTS.md](AGENTS.md).
 
+> [!NOTE]
+> The examples below use the bare `vupai` command (the installed tool). If you're
+> running from a source checkout, prefix each one with `uv run` (e.g. `uv run
+> vupai setup`).
+
 Working on vupai with an AI coding agent (Claude Code, Codex, opencode, Cursor,
 Aider, …)? [AGENTS.md](AGENTS.md) is the single source of truth for repo
 conventions, architecture, and invariants; [CLAUDE.md](CLAUDE.md) just points to
@@ -89,7 +93,7 @@ it.
 The fastest path after install is the interactive bootstrap:
 
 ```bash
-uv run vupai setup
+vupai setup
 ```
 
 It walks you through everything first-run: checks the Homebrew tools, captures
@@ -106,7 +110,7 @@ under **System Settings → Privacy & Security**: **Accessibility**, **Input
 Monitoring**, and **Microphone**. Run:
 
 ```bash
-uv run vupai doctor
+vupai doctor
 ```
 
 It probes each one and prints the exact System-Settings path for anything
@@ -115,15 +119,15 @@ missing.
 > [!WARNING]
 > macOS grants these to the terminal binary, not the script, so the hotkey and
 > mic silently fail until you grant them. If voice seems dead, this is the first
-> thing to check (`uv run vupai doctor`).
+> thing to check (`vupai doctor`).
 
 ## Usage
 
 ```bash
-uv run vupai                 # attach-or-create the session named after the cwd
-uv run vupai attach backend  # attach to "backend" (create it if absent)
-uv run vupai new backend     # create "backend" (error if it already exists)
-uv run vupai kill backend    # kill the "backend" session
+vupai                 # attach-or-create the session named after the cwd
+vupai attach backend  # attach to "backend" (create it if absent)
+vupai new backend     # create "backend" (error if it already exists)
+vupai kill backend    # kill the "backend" session
 ```
 
 `vupai` starts the push-to-talk daemon as a **detached background process**
