@@ -237,6 +237,62 @@ def restore_status_right() -> None:
     run(["set", "-gu", "@vupai_status"])
 
 
+def set_tip(text: str) -> None:
+    """Publish the current tip into @vupai_tip, then nudge a redraw. Mirrors
+    set_status: the value lives in a cheap user option that install_tip_segment
+    wired into status-left once. Best-effort redraw (a detached server has no
+    client)."""
+    run(["set", "-g", "@vupai_tip", text])
+    try:
+        run(["refresh-client", "-S"])
+    except TmuxError:
+        pass  # no client attached; the option value is still set
+
+
+# Marker proving the vupai tip segment is already in status-left (idempotent
+# re-install), mirroring _STATUS_SEGMENT for status-right.
+_TIP_SEGMENT = "#{@vupai_tip}"
+
+
+def install_tip_segment() -> None:
+    """Render the rotating-tip segment in status-left, APPENDING it after the
+    user's original status-left (tmux draws status-left before the window list).
+
+    The original is captured once into @vupai_tip_orig and the line is always
+    rebuilt from that saved copy, so re-install is idempotent (the segment never
+    stacks) and reversible (see restore_status_left). A blank/unset original
+    falls back to tmux's default "[#S] "."""
+    saved = show_global("@vupai_tip_orig")
+    if saved is None:
+        current = show_global("status-left") or ""
+        original = "" if _TIP_SEGMENT in current else current
+        run(["set", "-g", "@vupai_tip_orig", original])
+        saved = original
+
+    head = saved if saved.strip() else "[#S] "
+    run(["set", "-g", "status-left", f"{head}  {_TIP_SEGMENT}"])
+
+    try:
+        current_len = int(show_global("status-left-length") or "0")
+    except ValueError:
+        current_len = 0
+    if current_len < 80:
+        run(["set", "-g", "status-left-length", "80"])
+
+
+def restore_status_left() -> None:
+    """Reverse install_tip_segment: restore the captured original status-left
+    and drop vupai's tip options. Safe when nothing was ever installed."""
+    saved = show_global("@vupai_tip_orig")
+    if saved is not None:
+        if saved:
+            run(["set", "-g", "status-left", saved])
+        else:
+            run(["set", "-gu", "status-left"])  # revert to tmux's default
+        run(["set", "-gu", "@vupai_tip_orig"])
+    run(["set", "-gu", "@vupai_tip"])
+
+
 def server_running() -> bool:
     try:
         run(["has-session"])

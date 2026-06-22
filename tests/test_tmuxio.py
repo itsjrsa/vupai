@@ -426,6 +426,48 @@ def test_inside_tmux_reflects_env(monkeypatch):
     assert tmuxio.inside_tmux() is False
 
 
+def test_set_tip_sets_option_then_refreshes(monkeypatch):
+    fake = ScriptedRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.set_tip("tip: focus nova")
+    assert fake.calls[0]["args"] == ["tmux", "set", "-g", "@vupai_tip", "tip: focus nova"]
+    assert fake.calls[1]["args"] == ["tmux", "refresh-client", "-S"]
+
+
+def test_install_tip_segment_appends_to_existing_left(monkeypatch):
+    fake = ScriptedRun({"status-left": "[#S] ", "status-left-length": "10"})
+    patch_run(monkeypatch, fake)
+    tmuxio.install_tip_segment()
+    sets = dict(fake.set_values())
+    assert sets["@vupai_tip_orig"] == "[#S] "          # captured original
+    assert sets["status-left"] == "[#S]   #{@vupai_tip}"  # original + tip after it
+    assert sets["status-left-length"] == "80"            # grown from 10
+
+
+def test_install_tip_segment_is_idempotent(monkeypatch):
+    fake = ScriptedRun({
+        "@vupai_tip_orig": "[#S] ",
+        "status-left": "[#S]   #{@vupai_tip}",
+        "status-left-length": "80",
+    })
+    patch_run(monkeypatch, fake)
+    tmuxio.install_tip_segment()
+    sets = dict(fake.set_values())
+    assert sets["status-left"] == "[#S]   #{@vupai_tip}"  # segment never stacks
+    assert "@vupai_tip_orig" not in sets                  # not recaptured
+    assert "status-left-length" not in sets               # already >= 80
+
+
+def test_restore_status_left_puts_original_back_and_drops_options(monkeypatch):
+    fake = ScriptedRun({"@vupai_tip_orig": "[#S] "})
+    patch_run(monkeypatch, fake)
+    tmuxio.restore_status_left()
+    args = [c["args"] for c in fake.calls]
+    assert ["tmux", "set", "-g", "status-left", "[#S] "] in args
+    assert ["tmux", "set", "-gu", "@vupai_tip_orig"] in args
+    assert ["tmux", "set", "-gu", "@vupai_tip"] in args
+
+
 @pytest.mark.integration
 def test_list_panes_roundtrip_real_tmux():
     # Uses a throwaway, isolated tmux server via a private socket name so it
