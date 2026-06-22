@@ -209,6 +209,23 @@ def test_parse_create_explicit_codex_program():
     assert c.kind == "create" and c.count == 2 and c.program == "codex"
 
 
+def test_parse_create_codex_homophone():
+    # "codex" mishears as "codecs"/"codec" - the curated alias recovers it. This
+    # is the reported failure: "open two codex" lands as "open two codecs".
+    for spoken in ("open two codecs panes", "open two codec", "create a codecs"):
+        c = _parse_btn(spoken)
+        assert c is not None and c.kind == "create" and c.program == "codex", spoken
+
+
+def test_parse_create_opencode_split_phrase():
+    # "opencode" is transcribed as the two-token split "open code"; the phrase
+    # alias recovers it even though "open" is itself a create verb.
+    c = _parse_btn("create two open code panes")
+    assert c is not None and c.kind == "create" and c.count == 2 and c.program == "opencode"
+    c = _parse_btn("open two open code")
+    assert c is not None and c.kind == "create" and c.count == 2 and c.program == "opencode"
+
+
 def test_parse_create_windows_unit():
     c = _parse_btn("make two windows")
     assert c.kind == "create" and c.count == 2 and c.unit == "window"
@@ -862,23 +879,3 @@ def test_button_filler_before_broadcast_is_not_peeled():
     # Broadcast must stay raw-led; "um everyone ..." is not broadcast (no peel),
     # it falls through to None and the router/inject handles it verbatim.
     assert _parse_btn("um everyone deploy") is None
-
-
-# ---------------------------------------------------------------------------
-# Gap 2: confirmation grammar
-# ---------------------------------------------------------------------------
-
-def test_classify_confirmation_grammar():
-    from vupai.commands import classify_confirmation
-    cw = frozenset({"confirm"})
-    xw = frozenset({"cancel", "no"})
-
-    def f(t):
-        return classify_confirmation(t, confirm_words=cw, cancel_words=xw)
-
-    assert f("confirm") == "confirm"
-    assert f("okay confirm") == "confirm"      # leading filler peeled
-    assert f("cancel") == "cancel"
-    assert f("no") == "cancel"
-    assert f("run the tests") == "other"
-    assert f("") == "other"

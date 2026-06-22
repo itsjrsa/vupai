@@ -9,7 +9,6 @@ import logging
 import queue
 import threading
 import time
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -17,11 +16,11 @@ from .asr import Transcriber, model_cached
 from .commands import (
     DESTRUCTIVE_KINDS,
     Command,
-    classify_confirmation,
     execute_command,
     parse_command,
 )
 from .config import Config
+from .confirm import popup_confirm
 from .feedback import Feedback
 from .hotkey import Hotkey, MultiHotkey
 from .injector import inject
@@ -50,14 +49,6 @@ def _spawn_thread(fn, *args) -> None:
     threading.Thread(target=fn, args=args, daemon=True).start()
 
 
-@dataclass
-class _Pending:
-    """A destructive command armed and awaiting a spoken confirmation."""
-    cmd: Command
-    deadline: float          # clock() value past which the arm expires
-    summary: str             # human-readable description for prompt/journal
-
-
 def _summarize_destructive(cmd: Command, registry) -> str:
     """Short description of a destructive command for the confirm prompt/journal."""
     if cmd.kind == "close":
@@ -79,8 +70,9 @@ class Daemon:
                  registry: PaneRegistry, feedback: Feedback,
                  *, route_fn=route, inject_fn=inject,
                  parse_fn=parse_command, execute_fn=execute_command,
+                 confirm_fn=popup_confirm,
                  journal: Journal | None = None, async_fn=None,
-                 state_writer=None, clock=time.monotonic, watcher=None) -> None:
+                 state_writer=None, watcher=None) -> None:
         self._config = config
         self._recorder = recorder
         self._transcriber = transcriber
@@ -93,11 +85,9 @@ class Daemon:
         # parsed Command's kind BEFORE acting on it.
         self._parse_fn = parse_fn
         self._execute_fn = execute_fn
-        # A destructive command armed and awaiting confirmation. Read/mutated
-        # ONLY on the main consumer thread inside _process - never from the
-        # listener callbacks.
-        self._clock = clock
-        self._pending: _Pending | None = None
+        # Destructive commands are gated by a synchronous confirmation (default:
+        # a tmux popup). confirm_fn(summary, *, timeout) -> bool; injected for tests.
+        self._confirm_fn = confirm_fn
         # Optional agent-state poller (watcher.PaneWatcher) - runs on its own
         # thread, touches only tmux + osascript, never this pipeline. None = off.
         self._watcher = watcher
@@ -202,7 +192,12 @@ class Daemon:
             keep_wav = True  # a real capture: worth retaining if audio is on
             self._feedback.working()  # transcribe+route can take a couple seconds
             self._registry.refresh()
-            hints = [p.name for p in self._registry.panes if p.name != p.id]
+            pane_names = [p.name for p in self._registry.panes if p.name != p.id]
+            # Bias the ASR toward pane names AND program tokens (codex/opencode/
+            # pi): "codex" otherwise mishears as "codecs", "opencode" as "open
+            # code". The command-layer aliases recover these, but biasing the
+            # acoustic model first means fewer mishearings to recover from.
+            hints = pane_names + [p for p in self._config.programs if p]
             _t0 = time.monotonic()
             text = self._transcriber.transcribe(wav, hints=hints)
             entry["transcribe_ms"] = round((time.monotonic() - _t0) * 1000)
@@ -232,11 +227,6 @@ class Daemon:
 
             addressing = "button" if mode == "system" else "keyword"
 
-            # A destructive command armed on a previous utterance consumes THIS
-            # utterance as its yes/no answer (unless it has expired).
-            if self._pending is not None and self._resolve_pending(text, entry):
-                return
-
             # Command layer: utterances addressed to the control/broadcast word
             # are interpreted by vupai itself, not injected into a pane.
             cmd = self._parse_fn(
@@ -245,8 +235,17 @@ class Daemon:
                 slash_commands=self._config.slash_commands, addressing=addressing)
             if cmd is not None:
                 if self._config.confirm_destructive and cmd.kind in DESTRUCTIVE_KINDS:
-                    self._begin_confirmation(
-                        cmd, _summarize_destructive(cmd, self._registry), entry)
+                    summary = _summarize_destructive(cmd, self._registry)
+                    # Synchronous confirmation (a tmux popup by default). Anything
+                    # but an explicit yes - decline, timeout, broken popup - cancels.
+                    if not self._confirm_fn(
+                            summary, timeout=self._config.confirm_timeout_s):
+                        entry["decision"] = "command"
+                        entry["command"] = summary
+                        entry["outcome"] = "cancelled"
+                        self._feedback.status(f"cancelled: {summary}")
+                        return
+                    self._run_command(cmd, entry, confirmed=True)
                     return
                 self._run_command(cmd, entry)
                 return
@@ -259,7 +258,7 @@ class Daemon:
                 fuzzy_cutoff=self._config.fuzzy_cutoff)
             entry["confidence"] = route_obj.confidence
             entry["match_method"] = route_obj.match_method
-            entry["available_names"] = list(hints)
+            entry["available_names"] = list(pane_names)
 
             if route_obj.candidates:
                 # Ambiguous near-tie: don't guess. Surface candidates and bail.
@@ -342,43 +341,6 @@ class Daemon:
         else:
             self._feedback.reject(result.message, self._hud_pane())
         return result
-
-    def _begin_confirmation(self, cmd: Command, summary: str, entry: dict) -> None:
-        """Arm a destructive command and prompt for the spoken confirm word."""
-        self._pending = _Pending(
-            cmd=cmd, deadline=self._clock() + self._config.confirm_timeout_s,
-            summary=summary)
-        entry["decision"] = "confirm_pending"
-        entry["command"] = summary
-        entry["outcome"] = "pending"
-        self._feedback.confirm_prompt(summary, self._config.confirm_word)
-
-    def _resolve_pending(self, text: str, entry: dict) -> bool:
-        """Resolve an armed destructive command against this utterance.
-
-        Returns True when the utterance was consumed as the answer (executed on
-        "confirm", dropped otherwise - fail-safe). Returns False ONLY when the
-        arm has expired, so the caller processes `text` as a fresh utterance.
-        """
-        pending = self._pending
-        assert pending is not None
-        if self._clock() >= pending.deadline:
-            self._pending = None
-            return False  # expired -> not consumed; treat text as fresh
-        self._pending = None  # consume regardless of verdict
-        verdict = classify_confirmation(
-            text,
-            confirm_words=frozenset({self._config.confirm_word}),
-            cancel_words=frozenset({self._config.cancel_word}))
-        if verdict == "confirm":
-            self._run_command(pending.cmd, entry, confirmed=True)
-            return True
-        # cancel OR any other utterance: drop the pending action (fail-safe).
-        entry["decision"] = "confirm_cancelled"
-        entry["command"] = pending.summary
-        entry["outcome"] = "cancelled"
-        self._feedback.status(f"cancelled: {pending.summary}")
-        return True
 
     def _hud_pane(self) -> str | None:
         """The pane to show HUD overlays on: the focused pane, or None."""

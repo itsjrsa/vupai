@@ -245,17 +245,14 @@ def test_set_hotkey_config_replaces_existing_values(tmp_path: Path) -> None:
 def test_confirm_defaults():
     cfg = Config()
     assert cfg.confirm_destructive is True
-    assert cfg.confirm_word == "confirm"
-    assert cfg.cancel_word == "cancel"
     assert cfg.confirm_timeout_s == 8.0
 
 
 def test_confirm_destructive_loadable_from_toml(tmp_path: Path):
     p = tmp_path / "config.toml"
-    p.write_text("confirm_destructive = false\nconfirm_word = \"yes\"\n")
+    p.write_text("confirm_destructive = false\n")
     cfg = load_config(p)
     assert cfg.confirm_destructive is False
-    assert cfg.confirm_word == "yes"
 
 
 def test_hud_enabled_default_and_loadable(tmp_path: Path):

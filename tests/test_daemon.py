@@ -176,8 +176,10 @@ def test_release_routes_and_injects_stripped_text(tmp_path):
     _release_and_process(daemon)
 
     assert recorder.stopped == 1
-    # hints are the live pane names
-    assert transcriber.last_hints == ["alpha"]
+    # hints are the live pane names plus program tokens (biases ASR so "codex"
+    # is not heard as "codecs", "opencode" not as "open code")
+    assert transcriber.last_hints[0] == "alpha"
+    assert {"codex", "opencode"} <= set(transcriber.last_hints)
     # route received the full transcript and the focused id
     assert route_calls[0][0] == "alpha run the tests"
     assert route_calls[0][2] == "%1"
@@ -937,31 +939,36 @@ def _close_lines():
     ]
 
 
-def _confirm_daemon(tmp_path, *, confirm_destructive=True, confirm_timeout_s=8.0,
-                    clock=None, focused="%1"):
-    """Daemon wired with a fake execute_fn (records executed commands) and the
-    REAL parse_command, so the confirm gate is exercised end to end."""
+def _confirm_daemon(tmp_path, *, confirm_destructive=True, answer=True,
+                    focused="%1"):
+    """Daemon wired with a fake execute_fn (records executed commands), the REAL
+    parse_command, and a fake confirm_fn (records (summary, timeout) calls and
+    returns `answer`), so the confirm gate is exercised end to end."""
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
-    cfg = Config(confirm_destructive=confirm_destructive,
-                 confirm_timeout_s=confirm_timeout_s)
+    cfg = Config(confirm_destructive=confirm_destructive)
     registry = make_registry(_close_lines(), focused)
     feedback = FakeFeedback()
     journal = CapturingJournal()
     executed: list = []
+    confirms: list = []
 
     def execute_fn(cmd, reg, config, *, inject_fn):
         executed.append(cmd)
         return CommandResult(True, f"did {cmd.kind} {cmd.name}".strip())
 
-    clk = clock if clock is not None else (lambda: 0.0)
+    def confirm_fn(summary, *, timeout):
+        confirms.append((summary, timeout))
+        return answer
+
     d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber(""), registry, feedback,
                route_fn=lambda *a, **k: Route(
                    pane_id=focused, text="x", matched_name=None,
                    confidence=0.0, fallback=True),
                inject_fn=lambda *a, **k: True, execute_fn=execute_fn,
-               journal=journal, clock=clk, async_fn=lambda fn, *a: fn(*a))
-    return d, feedback, journal, executed, wav
+               confirm_fn=confirm_fn, journal=journal,
+               async_fn=lambda fn, *a: fn(*a))
+    return d, feedback, journal, executed, confirms, wav
 
 
 def _say(daemon, wav, text, mode="system"):
@@ -973,94 +980,56 @@ def _say(daemon, wav, text, mode="system"):
 
 
 def test_confirm_disabled_executes_destructive_immediately(tmp_path):
-    d, fb, journal, executed, wav = _confirm_daemon(
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(
         tmp_path, confirm_destructive=False)
     _say(d, wav, "close nova")
     assert [c.kind for c in executed] == ["close"]
-    assert d._pending is None
-    assert fb.confirms == []
+    assert confirms == []                       # never prompted
 
 
-def test_destructive_command_arms_pending_and_does_not_execute(tmp_path):
-    d, fb, journal, executed, wav = _confirm_daemon(tmp_path)
+def test_destructive_prompts_and_executes_on_confirm(tmp_path):
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=True)
     _say(d, wav, "close nova")
-    assert executed == []
-    assert d._pending is not None
-    assert any("close" in c.lower() and "nova" in c.lower() for c in fb.confirms)
-    assert journal.entries[-1]["decision"] == "confirm_pending"
-
-
-def test_confirm_word_executes_pending(tmp_path):
-    d, fb, journal, executed, wav = _confirm_daemon(tmp_path)
-    _say(d, wav, "close nova")
-    _say(d, wav, "confirm")
+    assert len(confirms) == 1
+    summary, timeout = confirms[0]
+    assert "close" in summary.lower() and "nova" in summary.lower()
+    assert timeout == 8.0                        # confirm_timeout_s threaded through
     assert [c.kind for c in executed] == ["close"]
-    assert d._pending is None
     assert journal.entries[-1].get("confirmed") is True
+    assert journal.entries[-1]["outcome"] == "ok"
 
 
-def test_cancel_word_drops_pending_without_executing(tmp_path):
-    d, fb, journal, executed, wav = _confirm_daemon(tmp_path)
+def test_destructive_declined_does_not_execute(tmp_path):
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=False)
     _say(d, wav, "close nova")
-    _say(d, wav, "cancel")
-    assert executed == []
-    assert d._pending is None
-    assert journal.entries[-1]["decision"] == "confirm_cancelled"
+    assert len(confirms) == 1                    # was prompted
+    assert executed == []                        # but not executed
+    assert journal.entries[-1]["outcome"] == "cancelled"
+    assert any("cancel" in s.lower() for s in fb.statuses)
 
 
-def test_non_confirm_utterance_cancels_pending_by_default(tmp_path):
-    # Any non-confirm utterance is fail-safe: it drops the pending destructive
-    # action AND is itself swallowed as the answer (not executed as its own cmd).
-    d, fb, journal, executed, wav = _confirm_daemon(tmp_path)
-    _say(d, wav, "close nova")
-    _say(d, wav, "focus alpha")
-    assert executed == []
-    assert d._pending is None
-
-
-def test_expired_pending_is_dropped_and_new_utterance_processed(tmp_path):
-    clk = {"t": 0.0}
-    d, fb, journal, executed, wav = _confirm_daemon(
-        tmp_path, confirm_timeout_s=8.0, clock=lambda: clk["t"])
-    _say(d, wav, "close nova")
-    clk["t"] = 9.0  # past the deadline before the next utterance
-    _say(d, wav, "confirm")
-    # Expired: the held close never ran, and "confirm" was processed fresh
-    # (not a command -> route + inject), so nothing destructive executed.
-    assert all(c.kind != "close" for c in executed)
-    assert d._pending is None
-
-
-def test_confirm_with_leading_filler_still_confirms(tmp_path):
-    d, fb, journal, executed, wav = _confirm_daemon(tmp_path)
-    _say(d, wav, "close nova")
-    _say(d, wav, "okay confirm")
-    assert [c.kind for c in executed] == ["close"]
-
-
-def test_non_destructive_command_never_arms(tmp_path):
-    d, fb, journal, executed, wav = _confirm_daemon(tmp_path)
+def test_non_destructive_command_not_prompted(tmp_path):
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path)
     _say(d, wav, "focus nova")
-    assert d._pending is None
+    assert confirms == []
     assert [c.kind for c in executed] == ["focus"]
 
 
-def test_dictation_path_never_gates(tmp_path):
+def test_dictation_never_prompts(tmp_path):
     # Dictation injects verbatim and never parses a command, so destructive-
-    # sounding dictation can't arm a confirmation.
-    d, fb, journal, executed, wav = _confirm_daemon(tmp_path)
+    # sounding dictation can't trigger a confirmation.
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path)
     _say(d, wav, "close nova", mode="dictation")
-    assert d._pending is None
+    assert confirms == []
     assert executed == []
 
 
-def test_pending_then_confirm_journals_two_entries(tmp_path):
-    d, fb, journal, executed, wav = _confirm_daemon(tmp_path)
-    _say(d, wav, "close nova")
-    _say(d, wav, "confirm")
-    decisions = [e["decision"] for e in journal.entries]
-    assert decisions == ["confirm_pending", "command"]
-    assert journal.entries[1].get("confirmed") is True
+def test_broadcast_is_gated_by_confirm(tmp_path):
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=True)
+    _say(d, wav, "everyone deploy the build")
+    assert len(confirms) == 1
+    assert "broadcast" in confirms[0][0].lower()
+    assert [c.kind for c in executed] == ["broadcast"]
 
 
 # ---------------------------------------------------------------------------

@@ -53,15 +53,13 @@ class Config:
     # Render an ambient daemon-state segment in tmux's status-right (listening /
     # working / last result / errors). Set false to leave status-right untouched.
     status_indicator: bool = True
-    # Require a spoken confirmation before a destructive command (close / close
-    # others / broadcast) fires. On by default: ASR mishears verbs (the alias
-    # tables include real words), so a misheard destructive action should not act
-    # on a single transcript. Say `confirm_word` to proceed; anything else (or a
-    # `confirm_timeout_s` lapse) cancels - fail-safe.
+    # Require confirmation before a destructive command (close / close others /
+    # broadcast) fires. On by default: ASR mishears verbs (the alias tables
+    # include real words), so a misheard destructive action should not act on a
+    # single transcript. A tmux popup asks y/n; anything but yes (or a
+    # confirm_timeout_s lapse) cancels - fail-safe. Set false to disable.
     confirm_destructive: bool = True
     confirm_timeout_s: float = 8.0
-    confirm_word: str = "confirm"
-    cancel_word: str = "cancel"
     # Live transcript HUD: echo what was heard (and surface rejections) on the
     # target pane via tmux display-message, so a misroute/mishearing is visible
     # where you're looking. Set false to leave the status segment as the only

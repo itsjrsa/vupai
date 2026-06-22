@@ -148,12 +148,6 @@ class Feedback:
         self.indicator(reason, "error")
         self._pane_msg(pane_id, f"⚠ {label}")
 
-    def confirm_prompt(self, summary: str, confirm_word: str = "confirm") -> None:
-        # Armed a destructive command; waiting for the spoken confirm word.
-        msg = f"{summary}? say '{confirm_word}' to confirm"
-        print(msg)
-        self.indicator(msg, "warn")
-
     def error(self, text: str, seq: int | None = None) -> None:
         # Error lines are prefixed so they stand out in the daemon log. `seq` is
         # supplied when called off the listener thread (the busy-dropped path).

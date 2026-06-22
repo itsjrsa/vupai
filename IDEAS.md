@@ -66,12 +66,19 @@ the manual test plan handed over with this branch.
   and the audio chime (the `chimer` seam exists, default None) - both wait on a
   live-Claude validation of the heuristic in `classify_state`.
 - **Confirmation for destructive voice commands.** DONE (default ON). `close` /
-  `close others` / broadcast arm a pending action and require a spoken
-  `confirm_word`; anything else (or a `confirm_timeout_s` lapse) cancels
-  (fail-safe). Split `daemon` to `parse_fn`+`execute_fn` so the gate inspects
-  `cmd.kind` before acting; `commands.DESTRUCTIVE_KINDS` + `classify_confirmation`.
-  Config: `confirm_destructive` (true), `confirm_timeout_s` (8.0), `confirm_word`,
-  `cancel_word`. _Undo dropped by design_ (a killed pane's process is gone).
+  `close others` / broadcast pop a centered **tmux `display-popup`** (portable,
+  not macOS-specific) that the user answers with one y/n keypress - replacing the
+  earlier two-utterance "say the command, then say 'confirm'" flow (hidden in the
+  status bar, broke the voice flow). The prompt also tells the user how to turn
+  confirmations off. Synchronous + injectable (`confirm_fn`), so the daemon logic
+  is unit-tested with a fake; the popup itself is verified live. Split `daemon`
+  to `parse_fn`+`execute_fn` so the gate inspects `cmd.kind` before acting;
+  `commands.DESTRUCTIVE_KINDS`; `confirm.popup_confirm`. Config:
+  `confirm_destructive` (true), `confirm_timeout_s` (8.0). Fail-safe: anything but
+  an explicit yes - decline, timeout, or a broken/headless popup - cancels.
+  _Undo dropped by design_ (a killed pane's process is gone). _Verify live:_ a
+  detached daemon popping `display-popup` on the attached client; the inner
+  single-key read uses bash.
 - **"Warming" indicator.** DONE. `Feedback.warming(downloading=...)` painted in
   `run()` immediately before `warm()`; `downloading` flag from `model_cached`.
 - **Status distinguishes warming / ready / crashed.** DONE. `cli.write_daemon_state`
