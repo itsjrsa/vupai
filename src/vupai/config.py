@@ -60,6 +60,12 @@ class Config:
     # confirm_timeout_s lapse) cancels - fail-safe. Set false to disable.
     confirm_destructive: bool = True
     confirm_timeout_s: float = 8.0
+    # Confirm before a create command opens many panes at once. A large fan-out
+    # tiles the window tight and (past ~16 names) makes voice addressing
+    # unreliable, so a create with count >= this threshold gets the same y/n
+    # popup as destructive commands. Shares the confirm_destructive master switch
+    # and confirm_timeout_s. Set high (e.g. 99) to effectively never prompt.
+    confirm_create_threshold: int = 8
     # Live transcript HUD: echo what was heard (and surface rejections) on the
     # target pane via tmux display-message, so a misroute/mishearing is visible
     # where you're looking. Set false to leave the status segment as the only

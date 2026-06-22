@@ -142,7 +142,10 @@ control word. Run `vupai voice-commands` for a cheat sheet tailored to your conf
 - *"create 3 panes"* → spin up 3 auto-named panes, tiled (add a program:
   *"…create 2 shell panes"*). The noun is **optional** — *"create two"* or
   *"create a"* works — and *"agent(s)"* / *"split(s)"* are synonyms for *"pane(s)"*
-  if "pane" gets misheard.
+  if "pane" gets misheard. Counts go up to **30** (spoken or digits); a large
+  batch (>= `confirm_create_threshold`, default 8) first asks for a y/n
+  confirmation, since tiling many panes is cramped and voice-addressing degrades
+  past ~16 names.
 - *"focus nova"* → focus the **nova** pane (also: *"switch to / go to …"*).
 - *"swap nova and atlas"* → swap two named panes.
 - *"close nova"* → close a pane.
@@ -191,6 +194,9 @@ poll_interval = 0.5                               # pane-registry refresh (s)
 inject_confirm_timeout = 2.0                      # wait for pasted text before Enter (s)
 inject_poll_interval = 0.05
 pane_command = "claude"                           # default program for voice-created panes
+confirm_destructive = true                        # y/n popup before close / close-others / broadcast
+confirm_timeout_s = 8.0                            # popup auto-cancels after this (s)
+confirm_create_threshold = 8                      # also pop the confirm for "create N panes" when N >= this (set high to disable)
 
 [programs]                                        # spoken token -> argv ("" = plain shell)
 claude = "claude"

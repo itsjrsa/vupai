@@ -18,6 +18,10 @@ def test_word_to_int_digits_and_words():
     assert word_to_int("zero") is None
     assert word_to_int("frontend") is None
     assert word_to_int("12") == 12  # raw digits not capped here
+    assert word_to_int("ten") == 10
+    assert word_to_int("twelve") == 12
+    assert word_to_int("twenty") == 20
+    assert word_to_int("thirty") == 30
 
 
 def mk(id: str, window_id: str, window: str, index: int, name: str,
@@ -254,6 +258,21 @@ def test_next_callsign_ignores_unnamed_pseudo_titles():
 
 def test_next_callsign_returns_none_when_pool_exhausted():
     assert next_callsign(list(CALLSIGNS)) is None
+
+
+def test_callsign_pool_yields_30_distinct_from_empty():
+    # A max-count create (commands.MAX_CREATE_COUNT == 30) from a fresh window
+    # must be able to name every pane. Simulate _exec_create's assignment loop:
+    # any two confusable entries collapse (the second is skipped), so this guards
+    # that the curated list has >= 30 mutually non-confusable callsigns.
+    from vupai.commands import MAX_CREATE_COUNT
+
+    used: list[str] = []
+    for _ in range(MAX_CREATE_COUNT):
+        name = next_callsign(used)
+        assert name is not None, f"pool exhausted after {len(used)} of {MAX_CREATE_COUNT}"
+        used.append(name)
+    assert len(set(used)) == MAX_CREATE_COUNT
 
 
 # ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@ from .commands import (
     parse_command,
 )
 from .config import Config
-from .confirm import popup_confirm
+from .confirm import DEFAULT_DISABLE_HINT, popup_confirm
 from .feedback import Feedback
 from .filler import strip_fillers
 from .hotkey import Hotkey, MultiHotkey
@@ -51,7 +51,7 @@ def _spawn_thread(fn, *args) -> None:
 
 
 def _summarize_destructive(cmd: Command, registry) -> str:
-    """Short description of a destructive command for the confirm prompt/journal."""
+    """Short description of a confirmation-gated command for the prompt/journal."""
     if cmd.kind == "close":
         return f"close {cmd.name}"
     if cmd.kind == "close_others":
@@ -61,7 +61,18 @@ def _summarize_destructive(cmd: Command, registry) -> str:
         return f"close {len(others)} other pane(s)"
     if cmd.kind == "broadcast":
         return f"broadcast to all agents: {cmd.text[:30]}"
+    if cmd.kind == "create":
+        return f"open {cmd.count} panes"
     return cmd.kind
+
+
+def _disable_hint(cmd: Command) -> str:
+    """Config hint shown in the popup's '(disable: ...)' footer, targeted to the
+    command: a large create points at its own threshold, so turning this one
+    popup off doesn't mean disabling all destructive confirmations."""
+    if cmd.kind == "create":
+        return "raise confirm_create_threshold in config.toml"
+    return DEFAULT_DISABLE_HINT
 
 
 class Daemon:
@@ -240,12 +251,15 @@ class Daemon:
                 macros=self._config.macros, programs=self._config.programs,
                 slash_commands=self._config.slash_commands, addressing=addressing)
             if cmd is not None:
-                if self._config.confirm_destructive and cmd.kind in DESTRUCTIVE_KINDS:
+                if self._config.confirm_destructive and self._needs_confirm(cmd):
                     summary = _summarize_destructive(cmd, self._registry)
                     # Synchronous confirmation (a tmux popup by default). Anything
                     # but an explicit yes - decline, timeout, broken popup - cancels.
+                    # A large create points its disable hint at the create-specific
+                    # threshold; everything else keeps the destructive default.
                     if not self._confirm_fn(
-                            summary, timeout=self._config.confirm_timeout_s):
+                            summary, timeout=self._config.confirm_timeout_s,
+                            disable_hint=_disable_hint(cmd)):
                         entry["decision"] = "command"
                         entry["command"] = summary
                         entry["outcome"] = "cancelled"
@@ -331,6 +345,17 @@ class Daemon:
                 wav.unlink(missing_ok=True)
             except OSError:
                 pass
+
+    def _needs_confirm(self, cmd: Command) -> bool:
+        """True if `cmd` must pass the confirmation popup. Destructive kinds
+        always qualify; a create qualifies once its count reaches
+        confirm_create_threshold (a large fan-out tiles tight and degrades voice
+        addressing). Both share the confirm_destructive master switch upstream."""
+        if cmd.kind in DESTRUCTIVE_KINDS:
+            return True
+        if cmd.kind == "create":
+            return cmd.count >= self._config.confirm_create_threshold
+        return False
 
     def _run_command(self, cmd: Command, entry: dict, *, confirmed: bool = False):
         """Execute a parsed command and record the result. `confirmed` marks a

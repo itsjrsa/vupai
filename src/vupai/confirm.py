@@ -26,24 +26,31 @@ logger = logging.getLogger(__name__)
 
 
 # Popup body. One leading blank for top padding; a uniform 2-space left margin
-# so the lines align; one concise disable hint. The box is sized to this (see
-# _POPUP_W/_POPUP_H) so there is no dead space below.
+# so the lines align; one concise disable hint (injected per command so a create
+# points at confirm_create_threshold, a destructive command at confirm_destructive).
+# The box is sized to this (see _POPUP_W/_POPUP_H) so there is no dead space below.
 _POPUP_LINES = (
     "",
     "  {summary}?",
     "",
     "  [y] confirm     [n] cancel",
     "",
-    "  (disable: confirm_destructive = false in config.toml)",
+    "  (disable: {hint})",
 )
-_POPUP_W = 58
+# Default hint for destructive commands; the daemon overrides it for large
+# creates. Every hint names the config key AND the file ("... in config.toml") so
+# the user knows where to change the limit. Keep them within _POPUP_W: the usable
+# content width is _POPUP_W - 2 (borders), and the rendered line is the 2-space
+# margin + "(disable: <hint>)".
+DEFAULT_DISABLE_HINT = "confirm_destructive = false in config.toml"
+_POPUP_W = 62  # widest line is the create hint: "  (disable: raise <key> in config.toml)"
 _POPUP_H = 9   # 6 body lines + the (hidden) cursor row + top/bottom border
 
 
-def _build_script(summary: str, timeout: float, result_path: str) -> str:
+def _build_script(summary: str, timeout: float, result_path: str, hint: str) -> str:
     """The shell run inside the popup: show the prompt, read one key, write the
     choice ('y'/'n') to `result_path`. `read -t` self-dismisses on no input."""
-    lines = [ln.format(summary=summary) for ln in _POPUP_LINES]
+    lines = [ln.format(summary=summary, hint=hint) for ln in _POPUP_LINES]
     printf = "printf '%s\\n' " + " ".join(shlex.quote(ln) for ln in lines)
     return (
         "printf '\\033[?25l'; "  # hide the cursor so no stray block sits below
@@ -53,11 +60,11 @@ def _build_script(summary: str, timeout: float, result_path: str) -> str:
     )
 
 
-def _build_argv(summary: str, timeout: float, result_path: str) -> list[str]:
+def _build_argv(summary: str, timeout: float, result_path: str, hint: str) -> list[str]:
     # bash -c so the single-key `read -rsn1` works regardless of tmux's wrapping
     # shell (POSIX sh lacks read -n/-s/-t). macOS/Linux ship bash; if it is
     # missing the popup fails and we fail-safe to cancel.
-    inner = f"bash -c {shlex.quote(_build_script(summary, timeout, result_path))}"
+    inner = f"bash -c {shlex.quote(_build_script(summary, timeout, result_path, hint))}"
     return tmuxio._base_argv() + [
         "display-popup", "-E", "-w", str(_POPUP_W), "-h", str(_POPUP_H),
         "-T", " vupai - confirm ", inner,
@@ -71,15 +78,21 @@ def _default_run(argv: list[str], *, result_path: str, timeout: float) -> None:
 
 
 def popup_confirm(summary: str, *, timeout: float = 8.0,
+                  disable_hint: str = DEFAULT_DISABLE_HINT,
                   run=_default_run, tmpdir: Path | None = None) -> bool:
-    """Show the confirmation popup for `summary`; True iff the user confirmed."""
+    """Show the confirmation popup for `summary`; True iff the user confirmed.
+
+    `disable_hint` is the text shown in the "(disable: ...)" footer, so the
+    daemon can point a large-create popup at confirm_create_threshold instead of
+    the destructive default.
+    """
     base = tmpdir if tmpdir is not None else Path(tempfile.gettempdir())
     fd, name = tempfile.mkstemp(prefix="vupai-confirm-", dir=base)
     result_path = Path(name)
     os.close(fd)
     result_path.unlink(missing_ok=True)  # the popup (re)creates it on answer
     try:
-        argv = _build_argv(summary, timeout, str(result_path))
+        argv = _build_argv(summary, timeout, str(result_path), disable_hint)
         try:
             run(argv, result_path=str(result_path), timeout=timeout)
         except Exception:

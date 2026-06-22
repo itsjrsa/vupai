@@ -148,6 +148,13 @@ _CLOSE_ALL_TARGETS = frozenset(_ALL_TARGETS) | {"others", "rest"}
 # kill panes (the process is gone - no undo); broadcast fans text to every agent.
 DESTRUCTIVE_KINDS = frozenset({"close", "close_others", "broadcast"})
 
+# Upper bound on panes a single create utterance may spawn. A safety bound so a
+# mishearing ("create thirty" misheard for something) can't fan out a runaway
+# count; large-but-plausible counts are gated by the confirmation popup instead
+# (see config.confirm_create_threshold). Kept <= the CALLSIGNS pool so a
+# max-count create from a fresh window can still name every pane.
+MAX_CREATE_COUNT = 30
+
 
 @dataclass(frozen=True)
 class Command:
@@ -185,7 +192,7 @@ def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
     if not rest:
         return None
     n = 1 if rest[0] in _ONE_WORDS else word_to_int(rest[0])
-    if n is None or not (1 <= n <= 9):
+    if n is None or not (1 <= n <= MAX_CREATE_COUNT):
         return None
     # The trailing unit noun is optional ("create two" == "create two panes").
     # When the last token names a unit, consume it; otherwise default to a pane

@@ -959,8 +959,8 @@ def _confirm_daemon(tmp_path, *, confirm_destructive=True, answer=True,
         executed.append(cmd)
         return CommandResult(True, f"did {cmd.kind} {cmd.name}".strip())
 
-    def confirm_fn(summary, *, timeout):
-        confirms.append((summary, timeout))
+    def confirm_fn(summary, *, timeout, disable_hint=None):
+        confirms.append((summary, timeout, disable_hint))
         return answer
 
     d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber(""), registry, feedback,
@@ -993,9 +993,10 @@ def test_destructive_prompts_and_executes_on_confirm(tmp_path):
     d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=True)
     _say(d, wav, "close nova")
     assert len(confirms) == 1
-    summary, timeout = confirms[0]
+    summary, timeout, hint = confirms[0]
     assert "close" in summary.lower() and "nova" in summary.lower()
     assert timeout == 8.0                        # confirm_timeout_s threaded through
+    assert hint == "confirm_destructive = false in config.toml"
     assert [c.kind for c in executed] == ["close"]
     assert journal.entries[-1].get("confirmed") is True
     assert journal.entries[-1]["outcome"] == "ok"
@@ -1032,6 +1033,33 @@ def test_broadcast_is_gated_by_confirm(tmp_path):
     assert len(confirms) == 1
     assert "broadcast" in confirms[0][0].lower()
     assert [c.kind for c in executed] == ["broadcast"]
+
+
+def test_large_create_is_gated_by_confirm(tmp_path):
+    # count >= confirm_create_threshold (default 8) prompts with an "open N panes"
+    # summary and executes once confirmed.
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=True)
+    _say(d, wav, "create ten panes")
+    assert len(confirms) == 1
+    assert confirms[0][0] == "open 10 panes"
+    assert confirms[0][2] == "raise confirm_create_threshold in config.toml"
+    assert [c.kind for c in executed] == ["create"]
+
+
+def test_large_create_declined_does_not_execute(tmp_path):
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=False)
+    _say(d, wav, "create ten panes")
+    assert len(confirms) == 1
+    assert executed == []
+    assert journal.entries[-1]["outcome"] == "cancelled"
+
+
+def test_small_create_not_prompted(tmp_path):
+    # Below the threshold a create runs straight through, no popup.
+    d, fb, journal, executed, confirms, wav = _confirm_daemon(tmp_path, answer=True)
+    _say(d, wav, "create two panes")
+    assert confirms == []
+    assert [c.kind for c in executed] == ["create"]
 
 
 # ---------------------------------------------------------------------------

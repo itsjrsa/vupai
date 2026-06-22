@@ -7,10 +7,15 @@ from rapidfuzz import fuzz
 
 from vupai.registry import Pane
 
-# Spoken number words for 1..9 -> pane index within the focused window.
+# Spoken number words -> int. 1..9 feed pane number-routing (capped to 1..9 in
+# `_number`); 10..20 and 30 exist only so a spoken create count ("create twelve
+# panes") parses. In-between values (21..29) rely on the digit transcription.
 _NUMBER_WORDS: dict[str, int] = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20, "thirty": 30,
 }
 
 
@@ -240,10 +245,19 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
 # Curated callsigns auto-assigned to new panes: short, easy to say, and chosen
 # to be mutually distinct under the router's fuzzy/phonetic matching so the ASR
 # rarely confuses them. Assignment walks this list in order and skips any that
-# collide with a name already in use.
+# collide with a name already in use, so the effective capacity is the count of
+# mutually non-confusable entries (see test_callsign_pool_yields_30). The list
+# is sized past the create cap (commands.MAX_CREATE_COUNT) so a max-count create
+# from a fresh window never exhausts it. Voice addressing degrades as the pool
+# grows (more names = more ASR confusion), which is what the large-create popup
+# warns about. Order is preserved: existing panes keep their callsigns.
 CALLSIGNS: tuple[str, ...] = (
     "nova", "atlas", "sage", "echo", "orion", "river", "ember", "juno",
     "lyra", "vega", "koda", "slate", "raven", "quill", "tango", "pixel",
+    "delta", "comet", "jasper", "willow", "onyx", "cobalt", "maple", "flint",
+    "harbor", "zephyr", "indigo", "basil", "cedar", "lumen", "sierra", "marlin",
+    "otter", "piper", "cosmo", "banjo", "mocha", "granite", "falcon", "hazel",
+    "neon", "opal", "quartz", "walrus",
 )
 
 

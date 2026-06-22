@@ -179,11 +179,22 @@ Invariants) and talks to tmux purely via the CLI.
   `_SWAP_VERB_ALIASES` (swab/swamp), `_ZOOM_VERB_ALIASES` (zoo). **Precision over
   recall, scaled to blast radius:** destructive verbs keep tighter sets, and every
   alias is safe by construction because the parse still requires its operands (create
-  needs a 1-9 count; close needs a target; swap needs two names) - a misfire with no
-  valid operand returns None and **falls through to verbatim inject**, never an action.
+  needs a valid count, 1..`MAX_CREATE_COUNT` == 30; close needs a target; swap needs
+  two names) - a misfire with no valid operand returns None and **falls through to
+  verbatim inject**, never an action.
   `focus`/`kill`/`unzoom` are intentionally un-aliased (no clean real-word homophone).
   The `create` unit noun is also **optional** ("create two" == "create two panes",
   default pane) with homophone-free synonyms `agent(s)`/`split(s)` -> pane.
+- **Large-create confirmation**: a `create` whose count reaches
+  `config.confirm_create_threshold` (default 8) goes through the same `popup_confirm`
+  y/n gate as the destructive kinds (`daemon._needs_confirm`), summarized as "open N
+  panes". It shares the `confirm_destructive` master switch and `confirm_timeout_s`.
+  Rationale: counts now run to 30 and `CALLSIGNS` was grown past that so every pane
+  still auto-names, but tiling many panes is cramped and voice-addressing degrades
+  past ~16 distinct names (`name_collides` even rejects near-sounding ones), so a big
+  fan-out is worth a confirm. Spoken counts past nine come from `_NUMBER_WORDS`
+  (ten..twenty, thirty); 21..29 rely on the digit transcription. Router number-routing
+  (`_number`) stays capped at 1..9 regardless.
 
 ## Design decisions (settled rationale)
 

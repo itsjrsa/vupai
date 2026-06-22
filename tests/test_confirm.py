@@ -55,3 +55,15 @@ def test_popup_confirm_builds_display_popup_argv_with_disable_hint(tmp_path):
     assert "confirm_destructive" in joined  # the "disable in config" hint
     # the y/n affordance is presented to the user
     assert "y" in joined.lower() and "cancel" in joined.lower()
+
+
+def test_popup_confirm_uses_custom_disable_hint(tmp_path):
+    run = FakeRun(answer="y")
+    confirm.popup_confirm(
+        "open 10 panes", timeout=1.0,
+        disable_hint="raise confirm_create_threshold in config.toml",
+        run=run, tmpdir=tmp_path)
+    joined = " ".join(run.argv)
+    assert "open 10 panes" in joined
+    assert "raise confirm_create_threshold in config.toml" in joined
+    assert "confirm_destructive" not in joined  # the destructive default is overridden

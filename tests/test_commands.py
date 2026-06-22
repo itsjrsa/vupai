@@ -153,6 +153,34 @@ def test_parse_create_default_program():
     assert c.kind == "create" and c.count == 4 and c.program is None and c.unit == "pane"
 
 
+def test_parse_create_spoken_count_past_nine():
+    c = _parse_btn("create ten panes")
+    assert c.kind == "create" and c.count == 10
+    c = _parse_btn("create twelve panes")
+    assert c.kind == "create" and c.count == 12
+
+
+def test_parse_create_digit_count_past_nine():
+    c = _parse_btn("create 16 panes")
+    assert c.kind == "create" and c.count == 16
+
+
+def test_parse_create_at_max_count():
+    from vupai.commands import MAX_CREATE_COUNT
+
+    c = _parse_btn(f"create {MAX_CREATE_COUNT} panes")
+    assert c.kind == "create" and c.count == MAX_CREATE_COUNT
+
+
+def test_parse_create_over_max_count_rejected():
+    # Past the safety cap the create parse fails, so the utterance is not a
+    # create command (falls through to unknown - never spawns a runaway count).
+    from vupai.commands import MAX_CREATE_COUNT
+
+    c = _parse_btn(f"create {MAX_CREATE_COUNT + 1} panes")
+    assert c is None or c.kind != "create"
+
+
 def test_parse_create_article_means_one():
     # "create a pane" == "create one pane".
     c = _parse_btn("create a pane")
