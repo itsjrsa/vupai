@@ -84,7 +84,7 @@ class Daemon:
                  parse_fn=parse_command, execute_fn=execute_command,
                  confirm_fn=popup_confirm,
                  journal: Journal | None = None, async_fn=None,
-                 state_writer=None, watcher=None) -> None:
+                 state_writer=None, watcher=None, tip_rotator=None) -> None:
         self._config = config
         self._recorder = recorder
         self._transcriber = transcriber
@@ -103,6 +103,9 @@ class Daemon:
         # Optional agent-state poller (watcher.PaneWatcher) - runs on its own
         # thread, touches only tmux + osascript, never this pipeline. None = off.
         self._watcher = watcher
+        # Optional rotating status-bar tips (tips.TipRotator) - own thread,
+        # touches only tmux, never this pipeline. None = off.
+        self._tip_rotator = tip_rotator
         # Optional lifecycle marker writer: state_writer("ready") after warm(),
         # state_writer("stopped") on a clean exit. The marker's absence after a
         # dead pid is how `vupai status` distinguishes a crash from a clean stop.
@@ -450,6 +453,8 @@ class Daemon:
         self._feedback.ready()
         if self._watcher is not None:
             self._watcher.start()  # background agent-state poller (own thread)
+        if self._tip_rotator is not None:
+            self._tip_rotator.start()  # rotating status-bar tips (own thread)
         try:
             while not self._stop_event.is_set():
                 job = self._jobs.get()  # blocks until an utterance or the sentinel
@@ -465,6 +470,11 @@ class Daemon:
                     except Exception:
                         pass
         finally:
+            if self._tip_rotator is not None:
+                try:
+                    self._tip_rotator.stop()
+                except Exception:
+                    logger.exception("tip rotator stop on shutdown failed")
             # Quiesce the poll thread first so it can't capture-pane mid-teardown.
             if self._watcher is not None:
                 try:

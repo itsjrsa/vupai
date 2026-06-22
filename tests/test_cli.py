@@ -33,6 +33,12 @@ class FakeTmux:
     def restore_status_right(self) -> None:
         self.calls.append(("restore_status_right",))
 
+    def install_tip_segment(self) -> None:
+        self.calls.append(("install_tip_segment",))
+
+    def restore_status_left(self) -> None:
+        self.calls.append(("restore_status_left",))
+
     def inside_tmux(self) -> bool:
         return self._inside_tmux
 

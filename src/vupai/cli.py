@@ -43,6 +43,7 @@ from vupai.permissions import (
 from vupai.recorder import Recorder
 from vupai.registry import PaneRegistry
 from vupai.router import name_collides, next_callsign
+from vupai.tips import TipRotator, build_tips
 from vupai.tmuxio import TmuxError
 from vupai.watcher import PaneWatcher
 
@@ -268,6 +269,10 @@ def ensure_up() -> None:
         tmuxio.install_status_indicator()  # ambient daemon-state in status-right
     else:
         tmuxio.restore_status_right()      # opted out: hand status-right back
+    if cfg.status_tips:
+        tmuxio.install_tip_segment()   # rotating command tips in status-left
+    else:
+        tmuxio.restore_status_left()   # opted out: hand status-left back
     self_cmd = _self_cmd()
     tmuxio.set_pane_autoname_hooks(self_cmd)  # new panes auto-get a callsign
     tmuxio.bind_rename_key(self_cmd)          # <prefix>+R renames the active pane
@@ -919,9 +924,12 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
             PaneRegistry(),
             poll_interval=cfg.notify_poll_interval,
             capture_lines=cfg.notify_capture_lines)
+    tip_rotator = None
+    if cfg.status_tips:
+        tip_rotator = TipRotator(build_tips(cfg), interval=cfg.status_tips_interval)
     daemon = Daemon(cfg, recorder, transcriber, registry, feedback,
                     state_writer=lambda phase: write_daemon_state(phase, pid=pid),
-                    watcher=watcher)
+                    watcher=watcher, tip_rotator=tip_rotator)
     # `vupai down` sends SIGTERM; the default disposition kills the process
     # outright, so run()'s teardown (which reaps the sox child) never executes.
     # Translate SIGTERM/SIGINT into a clean stop(), then restore the prior

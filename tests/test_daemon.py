@@ -1384,3 +1384,38 @@ def test_all_filler_treated_as_empty(tmp_path):
     assert entry["transcript"] == "um uh hmm"
     assert entry["decision"] == "empty"
     assert entry["outcome"] == "no_transcript"
+
+
+# ---------------------------------------------------------------------------
+# Tip-rotator lifecycle
+# ---------------------------------------------------------------------------
+
+class _FakeRotator:
+    def __init__(self):
+        self.started = False
+        self.stopped = False
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.stopped = True
+
+
+def test_daemon_starts_and_stops_tip_rotator(tmp_path):
+    # Daemon must start the rotator after warm() and stop it first in teardown.
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    recorder = FakeRecorder(wav)
+    transcriber = FakeTranscriber("")
+    registry = make_registry([PANE_LINE], "%1")
+    feedback = FakeFeedback()
+    rot = _FakeRotator()
+    daemon = Daemon(Config(addressing="keyword", inject_submit_delay=0.0),
+                    recorder, transcriber, registry, feedback,
+                    async_fn=lambda fn, *a: fn(*a),
+                    tip_rotator=rot)
+    daemon.stop()   # queue shutdown sentinel before run() so it exits immediately
+    daemon.run()
+    assert rot.started is True
+    assert rot.stopped is True
