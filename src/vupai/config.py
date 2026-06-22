@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -117,31 +118,6 @@ def load_config(path: Path | None = None) -> Config:
         kwargs["filler_words"] = frozenset(
             str(w).lower() for w in kwargs["filler_words"])
     return Config(**kwargs)
-
-
-def write_journal_config(
-    *, enabled: bool, keep_audio: bool, path: Path | None = None
-) -> Path:
-    """Write a fresh config.toml carrying the journal toggles.
-
-    Intended for the first-run `setup` prompt: it creates a starter file when
-    none exists (it does NOT merge into an existing one). Only the journal keys
-    are written; every other setting keeps its default via `load_config`.
-    """
-    target = path if path is not None else CONFIG_PATH
-    target.parent.mkdir(parents=True, exist_ok=True)
-    body = (
-        "# vupai config - see Config in src/vupai/config.py for every key.\n"
-        "\n"
-        "# Utterance journal: a JSONL trail (transcript + decision + outcome)\n"
-        "# at ~/.config/vupai/journal.jsonl, for diagnosing misfires.\n"
-        f"journal_enabled = {str(enabled).lower()}\n"
-        "# Opt-in: also retain each wav next to the journal (ring-bounded to\n"
-        "# journal_audio_retention files) so a misfire can be replayed offline.\n"
-        f"journal_keep_audio = {str(keep_audio).lower()}\n"
-    )
-    target.write_text(body, encoding="utf-8")
-    return target
 
 
 _STARTER_HEADER = (
@@ -263,6 +239,40 @@ def render_config(active: dict[str, str]) -> str:
         else:
             out.append(line)
     return "\n".join(out) + "\n"
+
+
+def write_full_config(
+    *, journal_enabled: bool, journal_keep_audio: bool,
+    path: Path | None = None,
+) -> Path:
+    """Write a fresh full annotated config.toml.
+
+    Every key is present and commented at its default; the two journal toggles
+    are written uncommented to the given values. Intended for the first-run
+    `setup` prompt (it does NOT merge into an existing file). Drop-in
+    replacement for the old write_journal_config.
+    """
+    target = path if path is not None else CONFIG_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    active = {
+        "journal_enabled": str(journal_enabled).lower(),
+        "journal_keep_audio": str(journal_keep_audio).lower(),
+    }
+    target.write_text(render_config(active), encoding="utf-8")
+    return target
+
+
+def regenerate_config(*, path: Path | None = None) -> tuple[Path, Path | None]:
+    """(Re)write the all-commented annotated template, backing up any existing
+    file to <path>.bak first. Returns (written_path, backup_path_or_None)."""
+    target = path if path is not None else CONFIG_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    backup: Path | None = None
+    if target.exists():
+        backup = target.with_suffix(target.suffix + ".bak")
+        shutil.copyfile(target, backup)
+    target.write_text(render_config({}), encoding="utf-8")
+    return target, backup
 
 
 def _escape_toml(value: str) -> str:

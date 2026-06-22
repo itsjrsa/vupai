@@ -26,7 +26,7 @@ from vupai.config import (
     load_config,
     set_hotkey_config,
     set_mic_device,
-    write_journal_config,
+    write_full_config,
 )
 from vupai.daemon import Daemon
 from vupai.feedback import Feedback
@@ -513,8 +513,9 @@ def _prompt_journal_setup(*, reader=None, config_path: Path | None = None) -> No
         keep_audio = _prompt_yes_no(
             "  Also retain audio recordings (your voice) for offline replay?",
             default=False, reader=reader)
-    write_journal_config(
-        enabled=enabled, keep_audio=keep_audio, path=config_path)
+    write_full_config(
+        journal_enabled=enabled, journal_keep_audio=keep_audio,
+        path=config_path)
     print(f"  Wrote {config_path} "
           f"(journal_enabled={enabled}, journal_keep_audio={keep_audio}).")
 

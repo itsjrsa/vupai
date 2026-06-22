@@ -7,10 +7,11 @@ from vupai.config import (
     ANNOTATED_TEMPLATE,
     Config,
     load_config,
+    regenerate_config,
     render_config,
     set_hotkey_config,
     set_mic_device,
-    write_journal_config,
+    write_full_config,
 )
 
 
@@ -131,24 +132,39 @@ def test_journal_defaults() -> None:
     assert c.journal_audio_retention == 500
 
 
-def test_write_journal_config_roundtrips(tmp_path: Path) -> None:
+def test_write_full_config_roundtrips(tmp_path: Path) -> None:
     p = tmp_path / "nested" / "config.toml"  # parent created on write
-    out = write_journal_config(enabled=True, keep_audio=True, path=p)
+    out = write_full_config(
+        journal_enabled=False, journal_keep_audio=True, path=p
+    )
     assert out == p
     c = load_config(p)
-    assert c.journal_enabled is True
+    assert c.journal_enabled is False
     assert c.journal_keep_audio is True
-    # untouched keys stay default
+    # full surface present: an unrelated key is in the file (commented)
+    assert "# hotkey = " in p.read_text(encoding="utf-8")
+    # untouched keys keep defaults
     assert c.journal_audio_retention == 500
     assert c.hotkey == "alt_r"
 
 
-def test_write_journal_config_disabled(tmp_path: Path) -> None:
+def test_regenerate_config_backs_up_existing(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
-    write_journal_config(enabled=False, keep_audio=False, path=p)
-    c = load_config(p)
-    assert c.journal_enabled is False
-    assert c.journal_keep_audio is False
+    p.write_text("hotkey = \"f13\"\n", encoding="utf-8")  # pretend old config
+    written, backup = regenerate_config(path=p)
+    assert written == p
+    assert backup == tmp_path / "config.toml.bak"
+    assert backup.read_text(encoding="utf-8") == "hotkey = \"f13\"\n"
+    # fresh file is the all-commented template -> pristine defaults
+    assert load_config(p) == Config()
+
+
+def test_regenerate_config_no_existing_file(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    written, backup = regenerate_config(path=p)
+    assert written == p
+    assert backup is None
+    assert load_config(p) == Config()
 
 
 def test_mic_device_default() -> None:
@@ -164,7 +180,7 @@ def test_set_mic_device_creates_file(tmp_path: Path) -> None:
 
 def test_set_mic_device_merges_preserving_other_keys(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
-    write_journal_config(enabled=False, keep_audio=True, path=p)
+    write_full_config(journal_enabled=False, journal_keep_audio=True, path=p)
     set_mic_device("USB Mic", path=p)
     c = load_config(p)
     assert c.mic_device == "USB Mic"
