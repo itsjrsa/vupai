@@ -274,6 +274,12 @@ class ScriptedRun:
         return out
 
 
+# Middle segment that renders the focused pane's callsign (+ program), between
+# the indicator and the clock. tmux's own window list is hidden (_hide_window_list).
+PANE = ("#{?@vupai_name,#{@vupai_name},#{pane_current_command}}"
+        "#{?@vupai_program, · #{@vupai_program},}")
+
+
 def test_install_status_indicator_fresh_prepends_to_existing(monkeypatch):
     # First install on a server with a user's custom status-right.
     fake = ScriptedRun({"status-right": "MYRIGHT %H:%M", "status-right-length": "40"})
@@ -282,24 +288,40 @@ def test_install_status_indicator_fresh_prepends_to_existing(monkeypatch):
     sets = dict(fake.set_values())
     assert sets["@vupai_status"] == "#[fg=green]● vupai#[default]"
     assert sets["@vupai_status_orig"] == "MYRIGHT %H:%M"   # captured original
-    assert sets["status-right"] == "#{@vupai_status}  MYRIGHT %H:%M"  # prepended
+    # indicator prepended, focused-pane segment in the middle, clock at the right
+    assert sets["status-right"] == f"#{{@vupai_status}}  {PANE}  MYRIGHT %H:%M"
     assert sets["status-right-length"] == "120"               # grown from 40
+    # tmux's real window list blanked, originals captured for restore
+    assert sets["@vupai_win_orig"] == ""
+    assert sets["window-status-format"] == ""
+    assert sets["window-status-current-format"] == ""
+
+
+def test_install_refreshes_status_on_pane_focus(monkeypatch):
+    fake = ScriptedRun({"status-right": "x"})
+    patch_run(monkeypatch, fake)
+    tmuxio.install_status_indicator()
+    hook = [c["args"] for c in fake.calls if c["args"][1] == "set-hook"]
+    assert ["tmux", "set-hook", "-g", "after-select-pane", "refresh-client -S"] in hook
 
 
 def test_install_is_idempotent_uses_saved_original(monkeypatch):
     # Re-install: saved original exists, live status-right already has the segment.
     fake = ScriptedRun({
         "@vupai_status_orig": "MYRIGHT %H:%M",
-        "status-right": "#{@vupai_status}  MYRIGHT %H:%M",
+        "@vupai_win_orig": "WIN-ORIG",
+        "@vupai_wincur_orig": "CUR-ORIG",
+        "status-right": f"#{{@vupai_status}}  {PANE}  MYRIGHT %H:%M",
         "status-right-length": "120",
     })
     patch_run(monkeypatch, fake)
     tmuxio.install_status_indicator()
     sets = dict(fake.set_values())
     # Rebuilt from the SAVED original, not the live (already-prepended) value.
-    assert sets["status-right"] == "#{@vupai_status}  MYRIGHT %H:%M"
+    assert sets["status-right"] == f"#{{@vupai_status}}  {PANE}  MYRIGHT %H:%M"
     # Original not re-captured (no stacking).
     assert "@vupai_status_orig" not in sets
+    assert "@vupai_win_orig" not in sets  # window originals not re-captured either
     # Length already >= 120: left untouched.
     assert "status-right-length" not in sets
 
@@ -307,13 +329,37 @@ def test_install_is_idempotent_uses_saved_original(monkeypatch):
 def test_install_recovery_when_segment_present_without_saved_original(monkeypatch):
     # The clobber case this change fixes: status-right already has our segment but
     # nothing was saved. Must NOT capture our own segment as the original.
-    fake = ScriptedRun({"status-right": "#{@vupai_status}  %H:%M ",
+    fake = ScriptedRun({"status-right": f"#{{@vupai_status}}  {PANE}  %H:%M",
                         "status-right-length": "120"})
     patch_run(monkeypatch, fake)
     tmuxio.install_status_indicator()
     sets = dict(fake.set_values())
     assert sets["@vupai_status_orig"] == ""            # captured as empty
-    assert sets["status-right"] == "#{@vupai_status}  %H:%M "  # clock fallback
+    assert sets["status-right"] == f"#{{@vupai_status}}  {PANE}  %H:%M"  # clock fallback
+
+
+def test_install_collapses_tmux_default_to_time_only(monkeypatch):
+    # tmux's stock default (pane-title + time + date) is captured as the original
+    # but rendered as a compact time-only clock - no date, no pane-title clutter.
+    stock = ('#{?window_bigger,[#{window_offset_x}#,#{window_offset_y}] ,}'
+             '"#{=21:pane_title}" %H:%M %d-%b-%y')
+    fake = ScriptedRun({"status-right": stock})
+    patch_run(monkeypatch, fake)
+    tmuxio.install_status_indicator()
+    sets = dict(fake.set_values())
+    assert sets["@vupai_status_orig"] == stock          # original still preserved
+    assert sets["status-right"] == f"#{{@vupai_status}}  {PANE}  %H:%M"  # time-only
+
+
+def test_install_preserves_genuinely_custom_status_right(monkeypatch):
+    # A custom status-right with a date but no stock pane-title boilerplate is the
+    # user's deliberate choice - keep it verbatim (at the right, after the pane).
+    custom = "load #{cpu} | %a %d %H:%M"
+    fake = ScriptedRun({"status-right": custom})
+    patch_run(monkeypatch, fake)
+    tmuxio.install_status_indicator()
+    sets = dict(fake.set_values())
+    assert sets["status-right"] == f"#{{@vupai_status}}  {PANE}  {custom}"
 
 
 def test_install_does_not_shrink_existing_length(monkeypatch):
@@ -321,6 +367,21 @@ def test_install_does_not_shrink_existing_length(monkeypatch):
     patch_run(monkeypatch, fake)
     tmuxio.install_status_indicator()
     assert "status-right-length" not in dict(fake.set_values())
+
+
+def test_restore_status_right_restores_window_list(monkeypatch):
+    fake = ScriptedRun({
+        "@vupai_status_orig": "MYRIGHT %H:%M",
+        "@vupai_win_orig": "WIN-ORIG",
+        "@vupai_wincur_orig": "",       # original was tmux's default -> unset
+    })
+    patch_run(monkeypatch, fake)
+    tmuxio.restore_status_right()
+    set_calls = [c["args"] for c in fake.calls if c["args"][1] == "set"]
+    assert ["tmux", "set", "-g", "window-status-format", "WIN-ORIG"] in set_calls
+    assert ["tmux", "set", "-gu", "@vupai_win_orig"] in set_calls
+    assert ["tmux", "set", "-gu", "window-status-current-format"] in set_calls
+    assert ["tmux", "set", "-gu", "@vupai_wincur_orig"] in set_calls
 
 
 def test_restore_status_right_puts_back_saved_original(monkeypatch):
@@ -499,22 +560,20 @@ def test_install_tip_segment_appends_to_existing_left(monkeypatch):
     tmuxio.install_tip_segment()
     sets = dict(fake.set_values())
     assert sets["@vupai_tip_orig"] == "[#S] "          # captured original
-    # original + tip after it, with a trailing gap so the tip never butts
-    # against tmux's window list (drawn right after status-left).
-    assert sets["status-left"] == "[#S]   #{@vupai_tip}  "
+    assert sets["status-left"] == "[#S]   #{@vupai_tip}"
     assert sets["status-left-length"] == "80"            # grown from 10
 
 
 def test_install_tip_segment_is_idempotent(monkeypatch):
     fake = ScriptedRun({
         "@vupai_tip_orig": "[#S] ",
-        "status-left": "[#S]   #{@vupai_tip}  ",
+        "status-left": "[#S]   #{@vupai_tip}",
         "status-left-length": "80",
     })
     patch_run(monkeypatch, fake)
     tmuxio.install_tip_segment()
     sets = dict(fake.set_values())
-    assert sets["status-left"] == "[#S]   #{@vupai_tip}  "  # segment never stacks
+    assert sets["status-left"] == "[#S]   #{@vupai_tip}"  # segment never stacks
     assert "@vupai_tip_orig" not in sets                  # not recaptured
     assert "status-left-length" not in sets               # already >= 80
 

@@ -237,17 +237,51 @@ def show_global(option: str) -> str | None:
         return None
 
 
+# Compact clock used when the captured original is blank or is tmux's stock
+# default (see _status_tail): time only, no date, no pane-title boilerplate.
+_CLOCK_TAIL = "%H:%M "
+
+# Focused-pane readout for the MIDDLE of status-right (between the indicator and
+# the clock): the active pane's vupai callsign - falling back to its running
+# command when unnamed - plus its program label when set. Unlike tmux's window
+# list this tracks pane focus, which is what vupai actually navigates; the
+# after-select-pane hook (see install_status_indicator) refreshes it on focus
+# change. tmux's own window list is hidden (see _hide_window_list).
+_PANE_SEGMENT = (
+    "#{?@vupai_name,#{@vupai_name},#{pane_current_command}}"
+    "#{?@vupai_program, · #{@vupai_program},}"
+)
+
+# Date/day tokens that mark tmux's verbose default. A captured original carrying
+# one of these AND the stock pane_title boilerplate is the default we replace
+# with a compact clock - a genuinely custom status-right is left untouched.
+_DATE_TOKENS = ("%d", "%D", "%b", "%B", "%Y", "%y", "%a", "%A", "%j", "%m")
+
+
+def _status_tail(saved: str) -> str:
+    """The clock/tail to render after the vupai segment. Blank or tmux's stock
+    default (pane-title + date boilerplate) collapses to a compact time-only
+    clock; anything the user genuinely customized is preserved verbatim."""
+    if not saved.strip():
+        return _CLOCK_TAIL
+    if "pane_title" in saved and any(t in saved for t in _DATE_TOKENS):
+        return _CLOCK_TAIL  # tmux's verbose default: drop date + pane title
+    return saved
+
+
 def install_status_indicator() -> None:
     """Render the vupai state segment in status-right, PREPENDING it to whatever
-    was already there rather than replacing it.
+    was already there, with the focused-pane readout in the middle and the clock
+    at the far right (tmux's real window list hidden).
 
     The user's original status-right is captured exactly once into
     @vupai_status_orig (the first install, when our segment isn't already
-    present), then the line is always rebuilt as `<vupai segment>  <original>`.
-    Rebuilding from the saved copy - never the already-modified live value -
-    makes re-install idempotent (the segment never stacks) and reversible (see
-    restore_status_right). When no original exists (fresh server, or recovery
-    after a pre-preserve install overwrote it), a bare clock stands in."""
+    present), then the line is always rebuilt as
+    `<vupai segment>  <pane>  <tail>`, where <tail> is the saved original - or a
+    compact time-only clock when that original is blank or tmux's verbose default
+    (see _status_tail). Rebuilding from the saved copy - never the already-
+    modified live value - makes re-install idempotent (the segment never stacks)
+    and reversible (see restore_status_right)."""
     run(["set", "-g", "@vupai_status", "#[fg=green]● vupai#[default]"])
 
     saved = show_global("@vupai_status_orig")
@@ -259,8 +293,13 @@ def install_status_indicator() -> None:
         run(["set", "-g", "@vupai_status_orig", original])
         saved = original
 
-    tail = saved if saved.strip() else "%H:%M "
-    run(["set", "-g", "status-right", f"{_STATUS_SEGMENT}  {tail}"])
+    tail = _status_tail(saved).rstrip()
+    run(["set", "-g", "status-right",
+         f"{_STATUS_SEGMENT}  {_PANE_SEGMENT}  {tail}"])
+    _hide_window_list()
+    # Redraw the status line on pane focus change so the pane segment tracks
+    # selection at once (tmux won't always redraw status on its own).
+    run(["set-hook", "-g", "after-select-pane", "refresh-client -S"])
 
     # Grow (never shrink) the length budget so the prepended segment + original
     # don't truncate; a larger user value is left untouched.
@@ -272,10 +311,42 @@ def install_status_indicator() -> None:
         run(["set", "-g", "status-right-length", "120"])
 
 
+def _hide_window_list() -> None:
+    """Blank tmux's window list so the only window readout is our status-right
+    segment. The user's original formats are captured once into
+    @vupai_win_orig / @vupai_wincur_orig so restore_status_right can put them
+    back. Idempotent: once captured, the live (already-blanked) value is never
+    re-captured."""
+    for fmt_opt, save_opt in (
+        ("window-status-format", "@vupai_win_orig"),
+        ("window-status-current-format", "@vupai_wincur_orig"),
+    ):
+        if show_global(save_opt) is None:
+            run(["set", "-g", save_opt, show_global(fmt_opt) or ""])
+        run(["set", "-g", fmt_opt, ""])
+
+
+def _restore_window_list() -> None:
+    """Reverse _hide_window_list: put the user's window-status formats back (or
+    unset them to tmux's default) and drop the saved options."""
+    for fmt_opt, save_opt in (
+        ("window-status-format", "@vupai_win_orig"),
+        ("window-status-current-format", "@vupai_wincur_orig"),
+    ):
+        saved = show_global(save_opt)
+        if saved is None:
+            continue
+        if saved:
+            run(["set", "-g", fmt_opt, saved])
+        else:
+            run(["set", "-gu", fmt_opt])  # revert to tmux's default
+        run(["set", "-gu", save_opt])
+
+
 def restore_status_right() -> None:
-    """Reverse install_status_indicator: put the captured original back and drop
-    vupai's options. Used when status_indicator is disabled or on teardown.
-    A no-op-ish safe path when nothing was ever installed."""
+    """Reverse install_status_indicator: put the captured original back, restore
+    tmux's window list, and drop vupai's options. Used when status_indicator is
+    disabled or on teardown. A no-op-ish safe path when nothing was installed."""
     saved = show_global("@vupai_status_orig")
     if saved is not None:
         if saved:
@@ -283,6 +354,8 @@ def restore_status_right() -> None:
         else:
             run(["set", "-gu", "status-right"])  # revert to tmux's default
         run(["set", "-gu", "@vupai_status_orig"])
+    _restore_window_list()
+    run(["set-hook", "-gu", "after-select-pane"])  # drop the pane-refresh hook
     run(["set", "-gu", "@vupai_status"])
 
 
@@ -319,9 +392,7 @@ def install_tip_segment() -> None:
         saved = original
 
     head = saved if saved.strip() else "[#S] "
-    # Trailing gap keeps the tip from butting against tmux's window list, which
-    # is drawn immediately after status-left (no separator of its own).
-    run(["set", "-g", "status-left", f"{head}  {_TIP_SEGMENT}  "])
+    run(["set", "-g", "status-left", f"{head}  {_TIP_SEGMENT}"])
 
     try:
         current_len = int(show_global("status-left-length") or "0")
