@@ -389,8 +389,17 @@ def select_pane(pane_id: str) -> None:
     run(["select-pane", "-t", pane_id])
 
 
-def swap_pane(src: str, dst: str) -> None:
-    run(["swap-pane", "-s", src, "-t", dst])
+def swap_pane(src: str, dst: str, *, detached: bool = False) -> None:
+    """Swap two panes. `detached=True` (`-d`) leaves the active pane unchanged.
+
+    The default (no `-d`) preserves the historical behavior used by the voice
+    "swap A and B" command. Layout's focus-aware main passes `detached=True` so
+    the focused pane lands in the main slot AND stays focused.
+    """
+    args = ["swap-pane", "-s", src, "-t", dst]
+    if detached:
+        args.append("-d")
+    run(args)
 
 
 def pane_zoomed(pane_id: str) -> bool:

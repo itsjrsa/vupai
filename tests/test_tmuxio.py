@@ -458,6 +458,13 @@ def test_swap_pane_argv(monkeypatch):
     assert fake.calls[0]["args"] == ["tmux", "swap-pane", "-s", "%1", "-t", "%2"]
 
 
+def test_swap_pane_detached_appends_d(monkeypatch):
+    fake = FakeRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.swap_pane("%1", "%2", detached=True)
+    assert fake.calls[0]["args"] == ["tmux", "swap-pane", "-s", "%1", "-t", "%2", "-d"]
+
+
 def test_attach_execs_tmux_attach(monkeypatch):
     captured = {}
 
