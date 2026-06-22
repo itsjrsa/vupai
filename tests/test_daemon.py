@@ -127,7 +127,7 @@ def make_registry(lines: list[str], focused: str | None) -> PaneRegistry:
 
 
 def make_daemon(tmp_path, *, transcript: str, lines: list[str], focused: str | None,
-                inject_ok: bool = True, filler_filter: bool = True):
+                inject_ok: bool = True, filler_filter: bool = True, journal=None):
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)  # non-trivial size
     recorder = FakeRecorder(wav)
@@ -157,6 +157,7 @@ def make_daemon(tmp_path, *, transcript: str, lines: list[str], focused: str | N
                            filler_filter=filler_filter),
                     recorder, transcriber, registry,
                     feedback, route_fn=route_fn, inject_fn=inject_fn,
+                    journal=journal,
                     async_fn=lambda fn, *a: fn(*a))  # run feedback inline for determinism
     return daemon, recorder, transcriber, feedback, route_calls, inject_calls
 
@@ -1217,7 +1218,8 @@ class CapturingJournal:
         self.entries.append(dict(entry))
 
 
-def _make_capturing_daemon(tmp_path, *, transcript, lines, focused, inject_ok=True):
+def _make_capturing_daemon(tmp_path, *, transcript, lines, focused, inject_ok=True,
+                           filler_filter=True):
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
     recorder = FakeRecorder(wav)
@@ -1237,7 +1239,8 @@ def _make_capturing_daemon(tmp_path, *, transcript, lines, focused, inject_ok=Tr
     def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05, io=None):
         return inject_ok
 
-    daemon = Daemon(Config(addressing="keyword", inject_submit_delay=0.0),
+    daemon = Daemon(Config(addressing="keyword", inject_submit_delay=0.0,
+                           filler_filter=filler_filter),
                     recorder, transcriber, registry,
                     feedback, route_fn=route_fn, inject_fn=inject_fn, journal=journal,
                     async_fn=lambda fn, *a: fn(*a))
@@ -1294,8 +1297,10 @@ def test_filler_stripped_before_routing(tmp_path):
     # Leading filler "um" is removed before text reaches route/inject. The raw
     # transcript is preserved in entry["transcript"]; the cleaned text is in
     # entry["filtered_transcript"] and is what routing and injection see.
+    journal = CapturingJournal()
     daemon, recorder, transcriber, feedback, route_calls, inject_calls = make_daemon(
-        tmp_path, transcript="um alpha run the tests", lines=[PANE_LINE], focused="%1")
+        tmp_path, transcript="um alpha run the tests", lines=[PANE_LINE], focused="%1",
+        journal=journal)
     daemon.on_press()
     _release_and_process(daemon)
 
@@ -1304,30 +1309,50 @@ def test_filler_stripped_before_routing(tmp_path):
     assert route_calls[0][0] == "Alpha run the tests"
     # inject received the name-stripped remainder
     assert inject_calls == [("%1", "run the tests", 2.0, 0.05)]
+    # journal contract: raw transcript preserved; filtered_transcript holds cleaned text
+    assert journal.entries, "expected a journal entry"
+    entry = journal.entries[-1]
+    assert entry["transcript"] == "um alpha run the tests"
+    assert entry["filtered_transcript"] == "Alpha run the tests"
 
 
 def test_filler_filter_disabled_passthrough(tmp_path):
     # With filler_filter=False the raw transcript, including the filler, reaches
     # routing unchanged.
+    journal = CapturingJournal()
     daemon, recorder, transcriber, feedback, route_calls, inject_calls = make_daemon(
         tmp_path, transcript="um alpha run the tests", lines=[PANE_LINE],
-        focused="%1", filler_filter=False)
+        focused="%1", filler_filter=False, journal=journal)
     daemon.on_press()
     _release_and_process(daemon)
 
     # route received the unmodified transcript (filler NOT stripped)
     assert route_calls, "expected at least one route call"
     assert route_calls[0][0] == "um alpha run the tests"
+    # journal contract: raw transcript always present; filtered_transcript absent
+    # when filler_filter is disabled
+    assert journal.entries, "expected a journal entry"
+    entry = journal.entries[-1]
+    assert entry["transcript"] == "um alpha run the tests"
+    assert "filtered_transcript" not in entry
 
 
 def test_all_filler_treated_as_empty(tmp_path):
     # A transcript that collapses entirely to "" after filler stripping must
     # follow the same "didn't catch that" path as a blank transcript.
+    journal = CapturingJournal()
     daemon, recorder, transcriber, feedback, route_calls, inject_calls = make_daemon(
-        tmp_path, transcript="um uh hmm", lines=[PANE_LINE], focused="%1")
+        tmp_path, transcript="um uh hmm", lines=[PANE_LINE], focused="%1",
+        journal=journal)
     daemon.on_press()
     _release_and_process(daemon)
 
     assert inject_calls == []
     assert route_calls == []
     assert any("catch" in s.lower() for s in feedback.statuses)
+    # journal contract: raw transcript present; decision and outcome reflect empty path
+    assert journal.entries, "expected a journal entry"
+    entry = journal.entries[-1]
+    assert entry["transcript"] == "um uh hmm"
+    assert entry["decision"] == "empty"
+    assert entry["outcome"] == "no_transcript"
