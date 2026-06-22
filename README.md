@@ -212,6 +212,30 @@ no spoken control word is needed. `keyword` mode is the legacy single-key mode: 
 has no command layer - only the `broadcast_word` ("everyone ...") leads; everything
 else is name-addressed or dictated verbatim to the focused pane.
 
+## tmux tips
+
+vupai sets the tmux options it needs at startup (`ensure_up`), so **no config is
+required**. A couple of optional settings just make the multi-agent flow nicer:
+
+```tmux
+# ~/.tmux.conf (optional, pairs well with vupai)
+set -g mouse on                       # click a pane to focus, scroll to read history
+bind -T copy-mode-vi WheelUpPane   send -X scroll-up
+bind -T copy-mode-vi WheelDownPane send -X scroll-down
+```
+
+> [!WARNING]
+> Do **not** enable `extended-keys` (CSI-u) in your tmux config:
+> ```tmux
+> set -s extended-keys on                     # breaks vupai
+> set -as terminal-features 'xterm*:extkeys'  # breaks vupai
+> ```
+> It re-encodes Enter, so vupai's injected text never submits in Claude Code.
+> vupai forces `extended-keys off` at startup, but a later `tmux source-file`
+> (config reload) flips it back on and silently breaks submission. For the same
+> reason, don't override `pane-border-format` / `pane-border-status` (clobbers the
+> voice-name border) or rebind `<prefix> + R` (vupai uses it to rename a pane).
+
 ## Scope & limitations
 
 - **v1 targets Claude Code panes** (and plain shells). Codex/OpenCode have known
