@@ -9,7 +9,7 @@ the focused one by default, or an agent addressed by name ("Nova, run the tests"
 
 ## Status
 
-v1 implemented and on `master` (448 unit tests pass, `ruff` clean). Validated by
+v1 implemented and on `master` (600+ unit tests pass, `ruff` clean). Validated by
 **unit tests only** - the `@integration` (real tmux) and `@slow` (real Parakeet
 model + mic) suites and the live daemon must run on a macOS Apple-Silicon machine.
 The design spec + implementation plan live under `docs/superpowers/`
@@ -37,7 +37,7 @@ vupai setup                                          # interactive: probe + deep
 - `vupai reload` - `down` + `ensure_up` in one step; respawns the daemon so source edits take effect (the daemon loads modules once at spawn, so a live one runs stale code). For dogfooding vupai on itself (or `vupai --reload` to also re-attach)
 - `vupai name <name> [pane]` - label a pane (rejects confusable names; defaults to focused)
 - `vupai autoname [pane]` - assign the next free callsign from the pool to a pane unless already named; driven by the tmux pane-creation hooks (also usable by hand). `<prefix>+R` renames the active pane via this path's sibling `vupai name`
-- `vupai status` - list panes, daemon pid + log path, permission state
+- `vupai status` - list panes **grouped by session** (focused session first, tagged `(focused)`; `*` = the single voice-target pane, `+` = each session's own tmux-active pane), daemon pid + log path, permission state
 - `vupai mic [index|name|default] [--force]` - no arg lists CoreAudio **input** devices (marks the system default and the current pin); an index/exact-name pins that device into `config.toml` via `config.set_mic_device` (a merge writer that preserves comments/other keys), the literal `default` clears the pin. Before pinning a named device it runs `audio.probe_capture` (a 0.4s `rec` with `AUDIODEV` set) and **refuses an unusable device** (exit 1) rather than letting it silently yield "no audio captured" at speech time; `--force` pins anyway, and `default` (clearing the pin) skips the probe. The probe catches the failure mode where a USB mic exposes a speaker and a mic under the **same CoreAudio name** and sox's `AUDIODEV` name-match grabs the output (`can not get audio device properties`), plus disconnected/muted inputs and missing Microphone permission. Selection persists; a running daemon needs `vupai reload` to apply it. Enumeration is `audio.list_input_devices` (`system_profiler -json SPAudioDataType`, ~1s).
 - `vupai keys` - no-arg, interactive: prints the current addressing mode + push-to-talk key(s), then runs the re-runnable picker (`_prompt_hotkey_setup`). Choose the addressing mode (`button`/`keyword`), then pick the dictation key (and, in button mode, the command key) from a curated menu (`hotkey.PTT_KEYS`), by exact pynput key name, or by **pressing the key** (`p` → `hotkey.capture_key`, a one-shot pynput listen). Bare Enter keeps the current value; button mode **rejects two equal keys**. Persists `addressing`/`hotkey`/`command_hotkey` via `config.set_hotkey_config` (a merge writer preserving comments/other keys); a running daemon needs `vupai reload` to apply. NOTE: macOS pynput collapses the left modifiers (`alt_l`→`alt`, `cmd_l`→`cmd`, `ctrl_l`→`ctrl`), so capture reports those bare names and `PTT_KEYS` uses them for the left-side entries.
 - `vupai config --init` - ensure `~/.config/vupai/config.toml` lists every available key. When the file is absent it writes the full annotated template (every `Config` field present, commented at its default, with doc prose). When it exists, it **appends only the keys the file is missing** (as commented defaults under a labeled separator) and **never rewrites or reorders existing content** - so hand edits and chosen values are preserved and nothing is backed up because nothing is overwritten. Safe to re-run after an upgrade to top up newly added settings (`config.update_config`). First-run `vupai setup` writes the same annotated file (with the chosen journal/mic/hotkey keys uncommented).
@@ -62,7 +62,7 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 | `src/vupai/audio.py` | enumerate CoreAudio **input** devices (`system_profiler -json`); `resolve_device` (configured name → present? else fall back to default + warning) |
 | `src/vupai/asr.py` | `parakeet-mlx` `Transcriber` Protocol, lazy `warm()` + cache |
 | `src/vupai/router.py` | name cascade exact→rapidfuzz→metaphone, number-in-window, focus fallback, near-tie ambiguity; `CALLSIGNS` pool + `next_callsign` (auto-name picker) |
-| `src/vupai/registry.py` | `Pane` + `PaneRegistry` parsed from `tmux list-panes` |
+| `src/vupai/registry.py` | `Pane` (incl. `session` from `#{session_name}`) + `PaneRegistry` parsed from `tmux list-panes -a` |
 | `src/vupai/injector.py` | paste → poll `capture-pane` → Enter (the safety core) |
 | `src/vupai/tmuxio.py` | thin exact-argv wrappers over the `tmux` CLI |
 | `src/vupai/feedback.py` | status to stdout / `display-message` on the target pane |
@@ -84,6 +84,15 @@ Invariants) and talks to tmux purely via the CLI.
   single most important property; it has dedicated tests.
 - **`tmuxio.run(args)` prepends `tmux`** - callers pass argv WITHOUT a leading `"tmux"`.
 - **Target the immutable `pane_id` (`%N`)**, never a positional index.
+- **Focus is per-client; the daemon resolves to ONE pane.** `tmuxio.focused_pane_id()`
+  picks the voice-target pane via the **most-recently-active attached client**
+  (`list-clients` by `client_activity`, then `display-message -c <client>`), falling
+  back to a bare `display-message` only when no client is attached. The daemon is
+  detached with no client of its own, so a bare query resolves against the server's
+  globally most-recent session - the WRONG repo on a multi-session server.
+  `registry.focused()` returns that single pane. Note `Pane.active` (per-window
+  `pane_active`) is True for many panes at once and is NOT focus; only `status` reads
+  it (for the `+` marker).
 - **Keep tmux `extended-keys` off** (set in `ensure_up`) so Enter submits in Claude Code.
 - **Voice names live in the `@vupai_name` per-pane user option, NOT `pane_title`.**
   The target apps own the pane title: Claude Code overwrites it with `✳ Claude Code`
@@ -172,6 +181,11 @@ Invariants) and talks to tmux purely via the CLI.
   to route+inject (never swallowed as `unknown`). Interpretation (`parse_command`) is
   separate from execution (`execute_command`); the `Command` dataclass is the seam for
   a future local-LLM interpreter (rules-first, deferred, not built).
+- **Bulk "all" ops are session-scoped.** The registry is server-wide (`list-panes -a`,
+  callsigns unique across the server) so name-addressed commands route across repos -
+  but `close` all/others, `broadcast`, and slash-to-`all` filter to the **focused pane's
+  session** (`Pane.session`) so they can't kill/blast another repo's panes. Broadcast and
+  slash-all require a focused pane to anchor the session (fail-safe: refuse, don't fan out).
 - **Slash commands** (`slash_commands` config map, default `clear`->`/clear`,
   `compact`->`/compact`): grammar is `<verb> [name|all]` (verb leads, matching
   focus/close/swap). Bare verb -> focused pane, a name -> that pane, "all"/"everyone"
