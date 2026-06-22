@@ -25,19 +25,28 @@ from vupai import tmuxio
 logger = logging.getLogger(__name__)
 
 
+# Popup body. One leading blank for top padding; a uniform 2-space left margin
+# so the lines align; one concise disable hint. The box is sized to this (see
+# _POPUP_W/_POPUP_H) so there is no dead space below.
+_POPUP_LINES = (
+    "",
+    "  {summary}?",
+    "",
+    "  [y] confirm     [n] cancel",
+    "",
+    "  (disable: confirm_destructive = false in config.toml)",
+)
+_POPUP_W = 58
+_POPUP_H = 9   # 6 body lines + the (hidden) cursor row + top/bottom border
+
+
 def _build_script(summary: str, timeout: float, result_path: str) -> str:
     """The shell run inside the popup: show the prompt, read one key, write the
     choice ('y'/'n') to `result_path`. `read -t` self-dismisses on no input."""
-    lines = [
-        f"{summary}?",
-        "",
-        "  [y] confirm     [n] cancel",
-        "",
-        "  (disable: set confirm_destructive = false in",
-        "   ~/.config/vupai/config.toml)",
-    ]
+    lines = [ln.format(summary=summary) for ln in _POPUP_LINES]
     printf = "printf '%s\\n' " + " ".join(shlex.quote(ln) for ln in lines)
     return (
+        "printf '\\033[?25l'; "  # hide the cursor so no stray block sits below
         f"{printf}; "
         f"read -rsn1 -t {int(timeout)} k; "
         f'case "$k" in y|Y) printf y;; *) printf n;; esac > {shlex.quote(result_path)}'
@@ -50,7 +59,7 @@ def _build_argv(summary: str, timeout: float, result_path: str) -> list[str]:
     # missing the popup fails and we fail-safe to cancel.
     inner = f"bash -c {shlex.quote(_build_script(summary, timeout, result_path))}"
     return tmuxio._base_argv() + [
-        "display-popup", "-E", "-w", "64", "-h", "13",
+        "display-popup", "-E", "-w", str(_POPUP_W), "-h", str(_POPUP_H),
         "-T", " vupai - confirm ", inner,
     ]
 
