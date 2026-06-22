@@ -440,20 +440,22 @@ def test_install_tip_segment_appends_to_existing_left(monkeypatch):
     tmuxio.install_tip_segment()
     sets = dict(fake.set_values())
     assert sets["@vupai_tip_orig"] == "[#S] "          # captured original
-    assert sets["status-left"] == "[#S]   #{@vupai_tip}"  # original + tip after it
+    # original + tip after it, with a trailing gap so the tip never butts
+    # against tmux's window list (drawn right after status-left).
+    assert sets["status-left"] == "[#S]   #{@vupai_tip}  "
     assert sets["status-left-length"] == "80"            # grown from 10
 
 
 def test_install_tip_segment_is_idempotent(monkeypatch):
     fake = ScriptedRun({
         "@vupai_tip_orig": "[#S] ",
-        "status-left": "[#S]   #{@vupai_tip}",
+        "status-left": "[#S]   #{@vupai_tip}  ",
         "status-left-length": "80",
     })
     patch_run(monkeypatch, fake)
     tmuxio.install_tip_segment()
     sets = dict(fake.set_values())
-    assert sets["status-left"] == "[#S]   #{@vupai_tip}"  # segment never stacks
+    assert sets["status-left"] == "[#S]   #{@vupai_tip}  "  # segment never stacks
     assert "@vupai_tip_orig" not in sets                  # not recaptured
     assert "status-left-length" not in sets               # already >= 80
 

@@ -40,6 +40,23 @@ def test_every_tip_is_prefixed_and_truncated():
     assert all(len(t) <= tips._TIP_MAX for t in pool)
 
 
+def test_long_tip_is_not_cut_mid_word():
+    # A tip too long for _TIP_MAX must end on a word boundary (with an ellipsis),
+    # never sliced through the middle of a word ("...to hide" -> "...to hid").
+    rendered = tips._render("set status_tips=false in config.toml to hide tips")
+    assert len(rendered) <= tips._TIP_MAX
+    assert not rendered.endswith("hid")
+    assert rendered.endswith("…")
+    # The visible body (minus prefix and ellipsis) ends on a complete word.
+    body = rendered[len(tips._TIP_PREFIX):-1]
+    assert not body.endswith(" ")
+    assert "hid" not in body.split()[-1] or body.split()[-1] == "hide"
+
+
+def test_short_tip_is_unchanged():
+    assert tips._render("focus nova") == "tip: focus nova"
+
+
 def test_order_is_deterministic():
     cfg = _cfg(addressing="button")
     assert tips.build_tips(cfg) == tips.build_tips(cfg)

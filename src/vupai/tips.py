@@ -22,10 +22,23 @@ logger = logging.getLogger(__name__)
 
 _TIP_PREFIX = "tip: "
 _TIP_MAX = 48  # truncate so the status-left segment stays compact
+_ELLIPSIS = "…"
 
 
 def _render(text: str) -> str:
-    return (_TIP_PREFIX + text)[:_TIP_MAX]
+    """Prefix and length-cap a tip. When it overflows _TIP_MAX, truncate on a
+    word boundary and append an ellipsis so the tip never ends mid-word (e.g.
+    "...to hide" must not render as "...to hid")."""
+    full = _TIP_PREFIX + text
+    if len(full) <= _TIP_MAX:
+        return full
+    clipped = full[: _TIP_MAX - 1].rstrip()
+    # Back off to a word boundary, but only within the body: a single
+    # space-less word (e.g. a long macro name) is hard-cut rather than erased.
+    cut = clipped.rfind(" ")
+    if cut > len(_TIP_PREFIX):
+        clipped = clipped[:cut]
+    return clipped + _ELLIPSIS
 
 
 def _interleave(a: list[str], b: list[str]) -> list[str]:

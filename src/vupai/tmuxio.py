@@ -270,7 +270,9 @@ def install_tip_segment() -> None:
         saved = original
 
     head = saved if saved.strip() else "[#S] "
-    run(["set", "-g", "status-left", f"{head}  {_TIP_SEGMENT}"])
+    # Trailing gap keeps the tip from butting against tmux's window list, which
+    # is drawn immediately after status-left (no separator of its own).
+    run(["set", "-g", "status-left", f"{head}  {_TIP_SEGMENT}  "])
 
     try:
         current_len = int(show_global("status-left-length") or "0")
@@ -296,6 +298,20 @@ def restore_status_left() -> None:
 def server_running() -> bool:
     try:
         run(["has-session"])
+    except TmuxError:
+        return False
+    return True
+
+
+def has_session(name: str) -> bool:
+    """Whether a session named `name` exists.
+
+    Returns False when the server isn't running too (`has-session` errors),
+    so callers can use this as a single "does this session need creating?"
+    check without a separate server-up probe.
+    """
+    try:
+        run(["has-session", "-t", f"={name}"])
     except TmuxError:
         return False
     return True
@@ -348,6 +364,23 @@ def inside_tmux() -> bool:
     return bool(os.environ.get("TMUX"))
 
 
-def attach() -> None:
-    """Replace the current process with ``tmux attach``."""
-    os.execvp("tmux", ["tmux", "attach"])
+def attach(target: str | None = None) -> None:
+    """Replace the current process with ``tmux attach``.
+
+    `target` pins which session to attach to; without it tmux picks the
+    most-recently-used session.
+    """
+    argv = ["tmux", "attach"]
+    if target:
+        argv += ["-t", f"={target}"]
+    os.execvp("tmux", argv)
+
+
+def switch_client(name: str) -> None:
+    """Move the current client to session `name` (used from inside tmux)."""
+    run(["switch-client", "-t", f"={name}"])
+
+
+def kill_session(name: str) -> None:
+    """Kill session `name` (exact match). The tmux server/daemon are unaffected."""
+    run(["kill-session", "-t", f"={name}"])
