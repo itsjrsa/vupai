@@ -71,11 +71,53 @@ def test_list_panes_ignores_blank_lines(monkeypatch):
     assert tmuxio.list_panes() == ["%1\t@1\twin\t0\tname\tzsh\t1"]
 
 
-def test_focused_pane_id_returns_stripped_id(monkeypatch):
-    fake = FakeRun(stdout="%7\n")
+@dataclass
+class VerbRun:
+    """Returns canned CompletedProcesses keyed by the first tmux subcommand."""
+    responses: dict
+    calls: list[dict] = field(default_factory=list)
+
+    def __call__(self, args, **kwargs):
+        self.calls.append({"args": args, "kwargs": kwargs})
+        verb = args[1] if len(args) > 1 else ""
+        rc, out, err = self.responses.get(verb, (0, "", ""))
+        return subprocess.CompletedProcess(
+            args=args, returncode=rc, stdout=out, stderr=err)
+
+
+def test_focused_pane_id_targets_most_recent_attached_client(monkeypatch):
+    # Two attached clients on different sessions; the newer activity wins, and
+    # the active pane is read in that client's context (-c).
+    fake = VerbRun({
+        "list-clients": (0, "100\t/dev/ttys001\n200\t/dev/ttys002\n", ""),
+        "display-message": (0, "%9\n", ""),
+    })
+    patch_run(monkeypatch, fake)
+    assert tmuxio.focused_pane_id() == "%9"
+    dm = [c["args"] for c in fake.calls if c["args"][1] == "display-message"][0]
+    assert dm == ["tmux", "display-message", "-c", "/dev/ttys002", "-p", "#{pane_id}"]
+
+
+def test_focused_pane_id_falls_back_to_bare_query_when_no_clients(monkeypatch):
+    fake = VerbRun({
+        "list-clients": (0, "", ""),
+        "display-message": (0, "%7\n", ""),
+    })
     patch_run(monkeypatch, fake)
     assert tmuxio.focused_pane_id() == "%7"
-    assert fake.calls[0]["args"] == ["tmux", "display-message", "-p", "#{pane_id}"]
+    dm = [c["args"] for c in fake.calls if c["args"][1] == "display-message"][0]
+    assert dm == ["tmux", "display-message", "-p", "#{pane_id}"]
+
+
+def test_focused_pane_id_falls_back_when_list_clients_errors(monkeypatch):
+    fake = VerbRun({
+        "list-clients": (1, "", "no server running"),
+        "display-message": (0, "%3\n", ""),
+    })
+    patch_run(monkeypatch, fake)
+    assert tmuxio.focused_pane_id() == "%3"
+    dm = [c["args"] for c in fake.calls if c["args"][1] == "display-message"][0]
+    assert dm == ["tmux", "display-message", "-p", "#{pane_id}"]
 
 
 def test_focused_pane_id_returns_none_when_no_server(monkeypatch):

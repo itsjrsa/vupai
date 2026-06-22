@@ -57,12 +57,49 @@ def list_panes() -> list[str]:
 
 
 def focused_pane_id() -> str | None:
+    """Pane id of the pane the user is most likely looking at.
+
+    The daemon runs detached, with no controlling tmux client, so a bare
+    `display-message -p '#{pane_id}'` resolves against the server's globally
+    most-recently-active session. On a multi-session server (one session per
+    repo) that can be a *different* repo's session, so a voice command would
+    split panes in the wrong session/cwd. Anchor instead to the most recently
+    active *attached* client and evaluate the active pane in that client's
+    context, so focus follows the terminal the user last used. Fall back to the
+    bare query when no client is attached.
+    """
+    client = _latest_client()
+    args = ["display-message", "-p", "#{pane_id}"]
+    if client is not None:
+        args[1:1] = ["-c", client]
     try:
-        out = run(["display-message", "-p", "#{pane_id}"])
+        out = run(args)
     except TmuxError:
         return None
-    out = out.strip()
-    return out or None
+    return out.strip() or None
+
+
+def _latest_client() -> str | None:
+    """Name of the most recently active attached client, or None if none."""
+    try:
+        out = run(["list-clients", "-F", "#{client_activity}\t#{client_name}"])
+    except TmuxError:
+        return None
+    best_name: str | None = None
+    best_activity = -1
+    for line in out.splitlines():
+        if "\t" not in line:
+            continue
+        activity, _, name = line.partition("\t")
+        if not name:
+            continue
+        try:
+            ts = int(activity)
+        except ValueError:
+            ts = 0
+        if ts >= best_activity:
+            best_activity, best_name = ts, name
+    return best_name
 
 
 def load_buffer(text: str) -> None:
