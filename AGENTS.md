@@ -68,7 +68,7 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 | `src/vupai/feedback.py` | status to stdout / `display-message` on the target pane |
 | `src/vupai/permissions.py` | best-effort macOS permission probes + `hints` |
 | `src/vupai/config.py` | TOML config at `~/.config/vupai/config.toml` + defaults; `_FIELD_BLOCKS` (per-field doc + commented default) is the single source of truth, `ANNOTATED_TEMPLATE` is built from it and `render_config` uncomments chosen keys; `write_full_config` writes a fresh full annotated file (first-run `setup`; does NOT merge) and `update_config` additively appends only a file's missing key-blocks (for `vupai config --init`; never overwrites, no backup); `set_mic_device` / `set_hotkey_config` MERGE keys in place via shared `_merge_scalar_keys` (preserve comments/other keys, uncomment a commented default in place) |
-| `src/vupai/commands.py` | parse control-word utterances into `Command`s and execute them (create/macro/focus/swap/close/zoom/slash/broadcast); interpretation split from execution |
+| `src/vupai/commands.py` | parse control-word utterances into `Command`s and execute them (create/macro/focus/swap/close/zoom/layout/slash/broadcast); interpretation split from execution |
 | `src/vupai/journal.py` | append-only JSONL utterance trail (transcript + decision + outcome) at `~/.config/vupai/journal.jsonl`; opt-in ring-bounded audio retention for offline misfire replay |
 
 The daemon reaches tmux only through `tmuxio` (the `tmux` CLI); the hotkey is
@@ -181,6 +181,13 @@ Invariants) and talks to tmux purely via the CLI.
   to route+inject (never swallowed as `unknown`). Interpretation (`parse_command`) is
   separate from execution (`execute_command`); the `Command` dataclass is the seam for
   a future local-LLM interpreter (rules-first, deferred, not built).
+- **Layout names are name-phrases, never lead verbs.** `layout <name>`
+  (`commands.py` `_LAYOUTS`) requires the `layout`/`lay out` lead verb; the names
+  (grid/left/top/columns/rows + aliases) are real English words and are safe only
+  as the token(s) AFTER the verb. Never add a layout name to a `toks[0]`-matched
+  set. Focus-aware main (`main-vertical`/`main-horizontal`) swaps the focused pane
+  into the lowest-index "main" slot with `swap-pane -d` (keeps focus), then
+  `select-layout` (which auto-unzooms).
 - **Bulk "all" ops are session-scoped.** The registry is server-wide (`list-panes -a`,
   callsigns unique across the server) so name-addressed commands route across repos -
   but `close` all/others, `broadcast`, and slash-to-`all` filter to the **focused pane's
