@@ -6,29 +6,9 @@ limitations / deferred".
 
 ## High priority (global review, 2026-06-21)
 
-Findings from a multi-agent audit (bugs adversarially verified). The confirmed
-**bugs** below were FIXED in code; the two **verify-on-hardware** items and the
-**MVP gaps / improvements** are open work, ordered by leverage.
-
-### Bugs fixed (this pass)
-
-- Number routing was off-by-one vs tmux's default `pane-base-index` 0 ("two" hit
-  the 3rd pane, a silent wrong-pane inject). Routing is now positional within the
-  focused window; `ensure_up` also pins `base-index`/`pane-base-index` to 1.
-- Recorded WAVs leaked into `$TMPDIR` forever (one per utterance). `_process` now
-  unlinks the source wav after journaling.
-- Stale pidfile + PID reuse could SIGTERM an unrelated process or silently skip
-  spawn. `_daemon_running`/`down` now verify the PID is really a vupai daemon.
-- `vupai down` killed the daemon with no SIGTERM handler, orphaning the `sox`
-  child and leaving `stop()`/`_SHUTDOWN` dead. Handler added; `run()` reaps the
-  recorder on exit; `recorder.stop()` force-kills `sox` if SIGINT doesn't take.
-- Inside tmux, `setup` named the app to grant as "tmux" (TCC attaches to the real
-  terminal). `terminal_app` now ignores `TERM_PROGRAM=tmux/screen`.
-- `focus`/`swap`/`zoom` didn't strip a leading "the" (unlike `close`/slash);
-  "focus the nova" misrouted. Now consistent.
-- Injector retry could double-paste a late-landing first paste, then submit it
-  twice. Retry now skips the re-paste when the text already landed.
-- `audio.list_input_devices` could crash on valid-but-non-object JSON; now guarded.
+Findings from a multi-agent audit. The confirmed bugs and the MVP gaps have been
+implemented and removed from this list. The remaining open work is the two
+**verify-on-hardware** items and the **improvements** below, ordered by leverage.
 
 ### Verify on real hardware, then fix
 
@@ -49,58 +29,6 @@ Findings from a multi-agent audit (bugs adversarially verified). The confirmed
   count-increase check and a full rewrite of the injector test fakes; defer until
   validated against a real Claude pane (where the `/`-autocomplete overlay also
   needs checking).
-
-### MVP gaps (IMPLEMENTED on branch `feat/mvp-gaps`, 2026-06-22)
-
-All six were built test-first (full unit suite green, `ruff` clean). Validated by
-**unit tests only** - the live behaviours (notifications, on-pane HUD, warming
-glyph, crash detection) need a real macOS + tmux + Claude pane to confirm; see
-the manual test plan handed over with this branch.
-
-- **Agent-state feedback / close the loop.** DONE (default OFF). New
-  `src/vupai/watcher.py` `PaneWatcher` runs on its own thread (own
-  `PaneRegistry`, tmux + osascript only - never the record/ASR/inject path),
-  classifies each named pane's tail, and fires a macOS notification on the
-  busy->idle edge. Config: `notify_enabled` (false), `notify_poll_interval` (2.0),
-  `notify_capture_lines` (12). _Deferred:_ the y/n "awaiting input" classification
-  and the audio chime (the `chimer` seam exists, default None) - both wait on a
-  live-Claude validation of the heuristic in `classify_state`.
-- **Confirmation for destructive voice commands.** DONE (default ON). `close` /
-  `close others` / broadcast pop a centered **tmux `display-popup`** (portable,
-  not macOS-specific) that the user answers with one y/n keypress - replacing the
-  earlier two-utterance "say the command, then say 'confirm'" flow (hidden in the
-  status bar, broke the voice flow). The prompt also tells the user how to turn
-  confirmations off. Synchronous + injectable (`confirm_fn`), so the daemon logic
-  is unit-tested with a fake; the popup itself is verified live. Split `daemon`
-  to `parse_fn`+`execute_fn` so the gate inspects `cmd.kind` before acting;
-  `commands.DESTRUCTIVE_KINDS`; `confirm.popup_confirm`. Config:
-  `confirm_destructive` (true), `confirm_timeout_s` (8.0). Fail-safe: anything but
-  an explicit yes - decline, timeout, or a broken/headless popup - cancels.
-  _Undo dropped by design_ (a killed pane's process is gone). _Verify live:_ a
-  detached daemon popping `display-popup` on the attached client; the inner
-  single-key read uses bash.
-- **"Warming" indicator.** DONE. `Feedback.warming(downloading=...)` painted in
-  `run()` immediately before `warm()`; `downloading` flag from `model_cached`.
-- **Status distinguishes warming / ready / crashed.** DONE. `cli.write_daemon_state`
-  marker (`starting`/`ready`/`stopped` + pid + epoch) at
-  `~/.config/vupai/daemon.state`; `daemon_state()` classifies
-  not_running/warming/ready/crashed/stopped (pure liveness+phase, no staleness
-  heartbeat yet); `vupai status` reports it; `down` unlinks the marker.
-- **Mic disconnect gives a clear, repeatable message.** DONE. `_NO_AUDIO_MSG`
-  names BOTH causes (permission AND disconnect/mute) and fires every time
-  (`_mic_hint_shown` removed).
-- **Command discoverability / live transcript HUD.** DONE (default ON,
-  `hud_enabled`). `Feedback.heard` echoes the transcript on the focused pane
-  (skipped for verbatim dictation); `Feedback.reject` surfaces
-  no-target/ambiguous/inject-failed/unknown on the target pane AND the status
-  indicator. `announce`/`heard`/`reject` share `_pane_msg`.
-
-_Deferred this pass (low value / premature):_ CLI toggle subcommands for the new
-config keys (`vupai confirm`/`vupai notify`) and a typed (bool/float) config merge
-writer - the keys are hand-edited in `config.toml` for now (same as
-`status_indicator`); add the writer + subcommands if dogfooding shows they are
-toggled often. The watcher's `notify_debounce` is a constructor knob, not yet a
-config key.
 
 ### Improvements (open)
 
@@ -152,9 +80,7 @@ config key.
 
 ## Safety / UX
 
-- **Confirmation mode for destructive commands** ("clear all", close panes).
 - **Undo / repeat last command.**
-- **Live transcript HUD** so you can see what was heard before it's injected.
 
 ## Platform reach
 
