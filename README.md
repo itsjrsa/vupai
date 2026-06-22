@@ -84,11 +84,26 @@ Aider, …)? [AGENTS.md](AGENTS.md) is the single source of truth for repo
 conventions, architecture, and invariants; [CLAUDE.md](CLAUDE.md) just points to
 it.
 
-## Grant macOS permissions (once)
+## Set up (once)
 
-vupai needs three permissions, granted to **your terminal app**
-(Ghostty / iTerm / Terminal / …), under **System Settings → Privacy & Security**:
-**Accessibility**, **Input Monitoring**, and **Microphone**. Run:
+The fastest path after install is the interactive bootstrap:
+
+```bash
+uv run vupai setup
+```
+
+It walks you through everything first-run: checks the Homebrew tools, captures
+journaling consent, lets you pick a mic and your push-to-talk key(s)/addressing
+mode, downloads the speech model up front (so the first hotkey press doesn't
+stall on a silent fetch), then deep-links you to each macOS permission pane that
+still needs your terminal app enabled. It's safe to re-run any time.
+
+### Grant macOS permissions
+
+`setup` handles these, but to check them on their own: vupai needs three
+permissions, granted to **your terminal app** (Ghostty / iTerm / Terminal / …),
+under **System Settings → Privacy & Security**: **Accessibility**, **Input
+Monitoring**, and **Microphone**. Run:
 
 ```bash
 uv run vupai doctor
@@ -161,6 +176,7 @@ control word. Run `vupai voice-commands` for a cheat sheet tailored to your conf
 
 | Command | What it does |
 |---|---|
+| `vupai setup` | Interactive first-run bootstrap: tools, mic, hotkey, model, permissions (re-runnable) |
 | `vupai` | Ensure tmux + the voice daemon, then attach (default) |
 | `vupai --reload` | Respawn the daemon (pick up source edits), then attach — `reload && vupai` in one step |
 | `vupai up` | Start the daemon without attaching |
