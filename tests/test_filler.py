@@ -41,3 +41,12 @@ def test_custom_word_set_only():
 
 def test_case_insensitive():
     assert strip_fillers("UH okay", WORDS) == "Okay"
+
+
+def test_midsentence_removal_preserves_lowercase():
+    # No leading filler removed -> first word casing untouched.
+    assert strip_fillers("hello uh world", WORDS) == "hello world"
+
+
+def test_leading_punctuation_before_filler_recapitalizes():
+    assert strip_fillers("...um hello", WORDS) == "Hello"
