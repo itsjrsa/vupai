@@ -419,10 +419,10 @@ def _stub_registry(monkeypatch, panes):
     monkeypatch.setattr(cli, "PaneRegistry", FakeRegistry)
 
 
-def _pane(name, pane_id="%2"):
+def _pane(name, pane_id="%2", *, session="", active=True):
     from vupai.registry import Pane
     return Pane(id=pane_id, window_id="@1", window="w", index=1,
-                name=name, command="claude", active=True)
+                name=name, command="claude", active=active, session=session)
 
 
 def test_name_sets_pane_name_on_focused(fake_env, monkeypatch):
@@ -784,6 +784,32 @@ def test_status_prints_panes_and_pidfile_and_permissions(fake_env, monkeypatch, 
     assert "%1" in out
     assert "999" in out          # pidfile contents shown
     assert "microphone" in out.lower()
+
+
+def test_status_groups_by_session_and_marks_only_focused(fake_env, monkeypatch, capsys):
+    # fake_env's tmux reports the focused pane as %1 (in repoA). Across two
+    # sessions, only %1 gets `*`; each session's active pane gets `+`.
+    ft, _ = fake_env
+    monkeypatch.setattr(cli, "daemon_state", lambda: "ready")
+    _stub_registry(monkeypatch, [
+        _pane("nova", "%1", session="repoA", active=True),    # focused -> *
+        _pane("atlas", "%3", session="repoA", active=False),  #          -> blank
+        _pane("orion", "%2", session="repoB", active=True),   # repoB active -> +
+        _pane("shell", "%4", session="repoB", active=False),  #              -> blank
+    ])
+    rc = cli.main(["status"])
+    assert rc == 0
+    lines = capsys.readouterr().out.splitlines()
+    # Focused session is listed first and tagged.
+    assert any(line.strip().startswith("repoA") and "(focused)" in line for line in lines)
+    star = [ln for ln in lines if "%1" in ln][0]
+    plus = [ln for ln in lines if "%2" in ln][0]
+    blank = [ln for ln in lines if "%3" in ln][0]
+    assert star.lstrip().startswith("*")          # voice target
+    assert plus.lstrip().startswith("+")          # repoB's own active pane
+    assert blank.lstrip().startswith("%3")        # no marker
+    # repoA (focused) appears before repoB.
+    assert lines.index(star) < lines.index(plus)
 
 
 def test_daemon_builds_and_runs(monkeypatch, tmp_path):

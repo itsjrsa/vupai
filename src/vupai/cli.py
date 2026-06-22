@@ -439,10 +439,24 @@ def _cmd_reload(args: argparse.Namespace) -> int:
 def _cmd_status(args: argparse.Namespace) -> int:
     registry = PaneRegistry()
     registry.refresh()
-    print("panes:")
+    # `*` marks the single voice-target pane (the active pane of the most-recently
+    # active attached client); `+` marks each session's own tmux-active pane (where
+    # voice would land if that session were focused). Panes are grouped by session
+    # (the focused session first) so a multi-repo server reads clearly.
+    focused_id = tmuxio.focused_pane_id()
+    focused_session = next(
+        (p.session for p in registry.panes if p.id == focused_id), None)
+    by_session: dict[str, list] = {}
     for p in registry.panes:
-        active = "*" if p.active else " "
-        print(f"  {active} {p.id} [{p.window}/{p.index}] {p.name or '-'} ({p.command})")
+        by_session.setdefault(p.session, []).append(p)
+    print("panes:")
+    for session in sorted(by_session, key=lambda s: (s != focused_session, s)):
+        tag = "  (focused)" if session == focused_session else ""
+        print(f"  {session or '-'}{tag}")
+        for p in by_session[session]:
+            mark = "*" if p.id == focused_id else "+" if p.active else " "
+            print(f"    {mark} {p.id} [{p.window}/{p.index}] "
+                  f"{p.name or '-'} ({p.command})")
     state = daemon_state()
     pid = _read_pidfile_pid(PIDFILE)
     if state == "ready":
