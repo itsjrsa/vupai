@@ -53,6 +53,10 @@ class Config:
     # Render an ambient daemon-state segment in tmux's status-right (listening /
     # working / last result / errors). Set false to leave status-right untouched.
     status_indicator: bool = True
+    # Rotating example-command tips in tmux's status-left (a discoverability aid
+    # for the voice grammar). Set false to leave status-left untouched.
+    status_tips: bool = True
+    status_tips_interval: float = 15.0  # seconds between tip rotations
     # Require confirmation before a destructive command (close / close others /
     # broadcast) fires. On by default: ASR mishears verbs (the alias tables
     # include real words), so a misheard destructive action should not act on a

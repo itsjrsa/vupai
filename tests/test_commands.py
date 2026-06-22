@@ -19,6 +19,9 @@ class FakeTmux:
     def set_pane_name(self, pane_id, name):
         self.calls.append(("set_pane_name", pane_id, name))
 
+    def set_pane_program(self, pane_id, label):
+        self.calls.append(("set_pane_program", pane_id, label))
+
     def select_pane(self, pane_id):
         self.calls.append(("select_pane", pane_id))
 
@@ -74,6 +77,10 @@ def test_execute_create_splits_names_and_tiles(monkeypatch):
     assert ("split_window", "@1", "claude; exec ${SHELL:-/bin/sh} -i") in io.calls
     assert ("set_pane_name", "%1", "nova") in io.calls
     assert ("set_pane_name", "%2", "atlas") in io.calls
+    # program label stored separately so the border survives the agent
+    # overwriting pane_title with its own summary
+    assert ("set_pane_program", "%1", "claude") in io.calls
+    assert ("set_pane_program", "%2", "claude") in io.calls
     assert io.calls[-1] == ("select_layout", "@1", "tiled")
 
 
@@ -107,6 +114,17 @@ def test_execute_create_falls_back_to_shell_when_program_missing(monkeypatch):
     assert ("split_window", "@1", "") in io.calls   # degraded to a plain shell
     assert "codex" in res.message and "shell" in res.message
     assert ("set_pane_name", "%1", "nova") in io.calls
+    # degraded to a shell -> empty program label (border omits the segment)
+    assert ("set_pane_program", "%1", "") in io.calls
+
+
+def test_program_label_reduces_to_basename():
+    from vupai.commands import program_label
+    assert program_label("claude") == "claude"
+    assert program_label("/usr/bin/codex --foo bar") == "codex"
+    assert program_label("  opencode  ") == "opencode"
+    # plain-shell default -> empty so the border omits the program segment
+    assert program_label("") == ""
 
 
 def test_execute_create_windows_not_supported():

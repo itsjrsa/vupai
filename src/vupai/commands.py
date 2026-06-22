@@ -7,6 +7,7 @@ Commands, escalated to only on kind == "unknown". No LLM here.
 """
 from __future__ import annotations
 
+import os
 import shlex
 import shutil
 from dataclasses import dataclass
@@ -346,6 +347,19 @@ def wrap_agent_command(program: str) -> str:
     return f"{program}; exec ${{SHELL:-/bin/sh}} -i"
 
 
+def program_label(program: str) -> str:
+    """The short program name shown on the pane border (e.g. "claude").
+
+    Reduces a program string ("claude", "/usr/bin/codex --foo", "") to the
+    basename of its first token. Empty for the plain-shell default, so the
+    border simply omits the program segment.
+    """
+    program = program.strip()
+    if not program:
+        return ""
+    return os.path.basename(shlex.split(program)[0])
+
+
 def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
     if cmd.unit == "window":
         return CommandResult(False, "creating windows by voice isn't supported yet - try panes")
@@ -371,6 +385,7 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
                 False, f"callsign pool exhausted - named {len(assigned)} of {cmd.count}")
         new_id = io.split_window(target, wrap_agent_command(program))
         io.set_pane_name(new_id, name)
+        io.set_pane_program(new_id, program_label(program))
         used.append(name)
         assigned.append(name)
         # Re-tile after every split: splitting always shrinks the active pane,

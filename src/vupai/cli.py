@@ -14,7 +14,12 @@ from pathlib import Path
 
 from vupai import audio, tmuxio
 from vupai.asr import ParakeetTranscriber, model_cached
-from vupai.commands import _CLOSE_VERBS, _CREATE_VERBS, wrap_agent_command
+from vupai.commands import (
+    _CLOSE_VERBS,
+    _CREATE_VERBS,
+    program_label,
+    wrap_agent_command,
+)
 from vupai.config import (
     CONFIG_PATH,
     Config,
@@ -252,6 +257,9 @@ def ensure_up() -> None:
             print(f"'{cfg.pane_command}' not found on PATH - opening a shell "
                   "instead. Install it or set pane_command in the config.")
         tmuxio.run(argv)
+        # Label the initial pane's program too (created panes get this in
+        # _exec_create). "-t vupai" targets the new session's active pane.
+        tmuxio.set_pane_program("vupai", program_label(prog))
     tmuxio.enable_pane_titles()
     tmuxio.set_base_index()  # 1-based windows/panes so "focus two" matches the display
     tmuxio.set_extended_keys_off()

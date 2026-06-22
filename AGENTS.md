@@ -87,6 +87,13 @@ Invariants) and talks to tmux purely via the CLI.
   `set -p @vupai_name`; `PANE_FORMAT` reads `#{@vupai_name}`; the pane border
   shows the voice name when set, else the app title. **Never store the name in
   `pane_title`.**
+- **The launched program lives in `@vupai_program`** (e.g. `claude`), set
+  alongside `@vupai_name` at pane creation (`_exec_create`, and the initial pane
+  in `ensure_up`) for the same reason: agents overwrite `pane_title` with their
+  own conversation summary, which would otherwise erase the program identity.
+  The border renders `name · program · pane_title`, each segment conditional so
+  missing ones collapse. `program_label()` reduces the program string to its
+  basename (`/usr/bin/codex --foo` → `codex`; `""` → omitted).
 - **Unnamed panes:** when `@vupai_name` is unset the field is empty; `parse_panes`
   falls back to the pane id so `name == id`. Router name-matching and the ASR hints
   **skip panes where `name == id`**; number routing still considers them.

@@ -90,15 +90,26 @@ def set_pane_name(pane_id: str, name: str) -> None:
     run(["set", "-p", "-t", pane_id, "@vupai_name", name])
 
 
+def set_pane_program(pane_id: str, label: str) -> None:
+    # Store the launched program (e.g. "claude") in a per-pane user option, like
+    # @vupai_name. pane_title can't carry this: agents overwrite it with their
+    # own summary ("✳ Add help command..."), which erases the program identity.
+    # Read back via @vupai_program in the pane-border-format. Empty label is fine
+    # (plain-shell panes); the format's #{?...} hides the segment when unset.
+    run(["set", "-p", "-t", pane_id, "@vupai_program", label])
+
+
 def enable_pane_titles() -> None:
     run(["set", "-g", "pane-border-status", "top"])
-    # Primary = voice name (bold), secondary = the app's own title (e.g.
-    # "✳ Claude Code"), so the border reads "sage · ✳ Claude Code". When no
-    # voice name is set, show the app title alone.
+    # Three segments, each shown only when present: voice name (bold), program,
+    # then the app's own title. So the border reads "sage · claude · ✳ Add help
+    # command...", keeping the program visible even after the agent overwrites
+    # pane_title with a conversation summary. Missing segments collapse cleanly:
+    # name-only -> "sage · ✳ ...", program-only -> "claude · ✳ ...".
     run(["set", "-g", "pane-border-format",
-         "#{?@vupai_name,"
-         "#[bold]#{@vupai_name}#[nobold] · #{pane_title},"
-         "#{pane_title}}"])
+         "#{?@vupai_name,#[bold]#{@vupai_name}#[nobold] · ,}"
+         "#{?@vupai_program,#{@vupai_program} · ,}"
+         "#{pane_title}"])
 
 
 def set_pane_autoname_hooks(self_cmd: str) -> None:

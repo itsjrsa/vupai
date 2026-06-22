@@ -125,16 +125,29 @@ def test_set_pane_name_argv(monkeypatch):
     ]
 
 
+def test_set_pane_program_argv(monkeypatch):
+    fake = FakeRun()
+    patch_run(monkeypatch, fake)
+    tmuxio.set_pane_program("%3", "claude")
+    # Stored in a per-pane user option so the agent can't clobber it (pane_title
+    # would be overwritten by the agent's own summary).
+    assert fake.calls[0]["args"] == [
+        "tmux", "set", "-p", "-t", "%3", "@vupai_program", "claude",
+    ]
+
+
 def test_enable_pane_titles_runs_both_set_commands(monkeypatch):
     fake = FakeRun()
     patch_run(monkeypatch, fake)
     tmuxio.enable_pane_titles()
     assert fake.calls[0]["args"] == ["tmux", "set", "-g", "pane-border-status", "top"]
+    # name · program · pane_title, each segment conditional so it collapses when
+    # its option is unset.
     assert fake.calls[1]["args"] == [
         "tmux", "set", "-g", "pane-border-format",
-        "#{?@vupai_name,"
-        "#[bold]#{@vupai_name}#[nobold] · #{pane_title},"
-        "#{pane_title}}",
+        "#{?@vupai_name,#[bold]#{@vupai_name}#[nobold] · ,}"
+        "#{?@vupai_program,#{@vupai_program} · ,}"
+        "#{pane_title}",
     ]
 
 

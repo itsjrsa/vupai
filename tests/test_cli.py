@@ -42,6 +42,9 @@ class FakeTmux:
     def set_pane_name(self, pane_id: str, name: str) -> None:
         self.calls.append(("set_pane_name", pane_id, name))
 
+    def set_pane_program(self, pane_id: str, label: str) -> None:
+        self.calls.append(("set_pane_program", pane_id, label))
+
     def set_pane_autoname_hooks(self, self_cmd: str) -> None:
         self.calls.append(("set_pane_autoname_hooks", self_cmd))
 

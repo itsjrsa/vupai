@@ -296,3 +296,17 @@ def test_filler_words_loaded_from_toml_as_frozenset(tmp_path):
     cfg = load_config(cfg_file)
     assert cfg.filler_filter is False
     assert cfg.filler_words == frozenset({"um", "like"})
+
+
+def test_status_tips_defaults_on():
+    cfg = Config()
+    assert cfg.status_tips is True
+    assert cfg.status_tips_interval == 15.0
+
+
+def test_status_tips_loads_from_toml(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text("status_tips = false\nstatus_tips_interval = 30\n")
+    cfg = load_config(p)
+    assert cfg.status_tips is False
+    assert cfg.status_tips_interval == 30
