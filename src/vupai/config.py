@@ -282,7 +282,7 @@ def _merge_scalar_keys(updates: dict[str, str], *, path: Path | None) -> Path:
         key: f'{key} = "{_escape_toml(val)}"' for key, val in updates.items()
     }
     matchers = {
-        key: re.compile(rf"^\s*{re.escape(key)}\s*=") for key in updates
+        key: re.compile(rf"^\s*#?\s*{re.escape(key)}\s*=") for key in updates
     }
 
     if target.exists():

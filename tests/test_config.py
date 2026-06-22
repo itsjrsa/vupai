@@ -191,6 +191,21 @@ def test_set_mic_device_empty_clears_pin(tmp_path: Path) -> None:
     assert load_config(p).mic_device == ""
 
 
+def test_set_mic_device_uncomments_in_place(tmp_path):
+    # On a freshly generated all-commented file, setting mic must edit the
+    # existing line, not append a second active duplicate below it.
+    p = tmp_path / "config.toml"
+    p.write_text(ANNOTATED_TEMPLATE, encoding="utf-8")
+    set_mic_device("AirPods Pro", path=p)
+    text = p.read_text(encoding="utf-8")
+    assert text.count("mic_device =") == 1  # not duplicated
+    assert 'mic_device = "AirPods Pro"' in text
+    assert "# mic_device =" not in text     # the comment line was consumed
+    assert load_config(p).mic_device == "AirPods Pro"
+    # a different commented key is untouched
+    assert "# hotkey = " in text
+
+
 def test_addressing_defaults() -> None:
     c = Config()
     assert c.addressing == "button"
