@@ -110,6 +110,34 @@ _ALL_TARGETS = ("all", "everyone", "everybody")
 _CLOSE_ALL_TARGETS = frozenset(_ALL_TARGETS) | {"others", "rest"}
 
 
+# Command kinds that mutate/destroy state irreversibly and so are gated behind a
+# spoken confirmation when config.confirm_destructive is on. close/close_others
+# kill panes (the process is gone - no undo); broadcast fans text to every agent.
+DESTRUCTIVE_KINDS = frozenset({"close", "close_others", "broadcast"})
+
+
+def classify_confirmation(
+    text: str, *, confirm_words: frozenset[str], cancel_words: frozenset[str]
+) -> str:
+    """Classify a follow-up utterance answering a pending confirmation.
+
+    Returns "confirm", "cancel", or "other". A leading vocative filler is peeled
+    first (mirrors the addressing path) so "okay confirm" still confirms. The
+    daemon treats both "cancel" and "other" as a drop (fail-safe), but the two
+    are distinguished here for journaling and future use.
+    """
+    peeled, _ = _peel_fillers(text)
+    toks = _tokens(peeled)
+    if not toks:
+        return "other"
+    first = toks[0]
+    if first in confirm_words:
+        return "confirm"
+    if first in cancel_words:
+        return "cancel"
+    return "other"
+
+
 @dataclass(frozen=True)
 class Command:
     # create|macro|close|close_others|focus|swap|zoom|unzoom|slash|broadcast|unknown

@@ -862,3 +862,23 @@ def test_button_filler_before_broadcast_is_not_peeled():
     # Broadcast must stay raw-led; "um everyone ..." is not broadcast (no peel),
     # it falls through to None and the router/inject handles it verbatim.
     assert _parse_btn("um everyone deploy") is None
+
+
+# ---------------------------------------------------------------------------
+# Gap 2: confirmation grammar
+# ---------------------------------------------------------------------------
+
+def test_classify_confirmation_grammar():
+    from vupai.commands import classify_confirmation
+    cw = frozenset({"confirm"})
+    xw = frozenset({"cancel", "no"})
+
+    def f(t):
+        return classify_confirmation(t, confirm_words=cw, cancel_words=xw)
+
+    assert f("confirm") == "confirm"
+    assert f("okay confirm") == "confirm"      # leading filler peeled
+    assert f("cancel") == "cancel"
+    assert f("no") == "cancel"
+    assert f("run the tests") == "other"
+    assert f("") == "other"

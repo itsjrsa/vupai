@@ -50,29 +50,50 @@ Findings from a multi-agent audit (bugs adversarially verified). The confirmed
   validated against a real Claude pane (where the `/`-autocomplete overlay also
   needs checking).
 
-### MVP gaps (open, highest impact first)
+### MVP gaps (IMPLEMENTED on branch `feat/mvp-gaps`, 2026-06-22)
 
-- **Agent-state feedback / close the loop.** vupai is input-only; nothing pings
-  back when an agent finishes, blocks on a permission prompt, or awaits input.
-  Poll `capture-pane` per named pane, detect the idle/awaiting transition, fire a
-  macOS notification + chime. (Overlaps the "Idle / done detection" item below.)
-- **Confirmation/undo for destructive voice commands.** `close` / `close others`
-  / broadcast fire on one ASR transcript with no confirm or undo, despite the
-  project distrusting Parakeet's verbs (alias tables incl. real words like "rose").
-  Config-gated confirm step for destructive kinds.
-- **"Warming" indicator.** `run()` calls `warm()` (multi-second, or a multi-minute
-  first-run download) BEFORE starting the listener/painting idle, so the daemon
-  looks dead with no feedback. Paint a "warming" state before `Daemon.run()`.
-- **Status distinguishes warming / ready / crashed.** A crashed daemon leaves the
-  last-painted (often green) status frozen; `vupai status` prints "running"
-  identically for warming and ready. Write a readiness marker after `warm()` and a
-  stopped marker on exit.
-- **Mic disconnect gives a clear, repeatable message.** A device lost mid-session
-  hits the empty-capture path, which blames Microphone permission (wrong) and
-  shows the hint only once. Reword to cover both causes and repeat it.
-- **Command discoverability / live transcript HUD.** Show what was heard before/at
-  inject; surface rejections on the focused pane, not just the truncated status
-  segment. (Overlaps "Live transcript HUD" below.)
+All six were built test-first (full unit suite green, `ruff` clean). Validated by
+**unit tests only** - the live behaviours (notifications, on-pane HUD, warming
+glyph, crash detection) need a real macOS + tmux + Claude pane to confirm; see
+the manual test plan handed over with this branch.
+
+- **Agent-state feedback / close the loop.** DONE (default OFF). New
+  `src/vupai/watcher.py` `PaneWatcher` runs on its own thread (own
+  `PaneRegistry`, tmux + osascript only - never the record/ASR/inject path),
+  classifies each named pane's tail, and fires a macOS notification on the
+  busy->idle edge. Config: `notify_enabled` (false), `notify_poll_interval` (2.0),
+  `notify_capture_lines` (12). _Deferred:_ the y/n "awaiting input" classification
+  and the audio chime (the `chimer` seam exists, default None) - both wait on a
+  live-Claude validation of the heuristic in `classify_state`.
+- **Confirmation for destructive voice commands.** DONE (default ON). `close` /
+  `close others` / broadcast arm a pending action and require a spoken
+  `confirm_word`; anything else (or a `confirm_timeout_s` lapse) cancels
+  (fail-safe). Split `daemon` to `parse_fn`+`execute_fn` so the gate inspects
+  `cmd.kind` before acting; `commands.DESTRUCTIVE_KINDS` + `classify_confirmation`.
+  Config: `confirm_destructive` (true), `confirm_timeout_s` (8.0), `confirm_word`,
+  `cancel_word`. _Undo dropped by design_ (a killed pane's process is gone).
+- **"Warming" indicator.** DONE. `Feedback.warming(downloading=...)` painted in
+  `run()` immediately before `warm()`; `downloading` flag from `model_cached`.
+- **Status distinguishes warming / ready / crashed.** DONE. `cli.write_daemon_state`
+  marker (`starting`/`ready`/`stopped` + pid + epoch) at
+  `~/.config/vupai/daemon.state`; `daemon_state()` classifies
+  not_running/warming/ready/crashed/stopped (pure liveness+phase, no staleness
+  heartbeat yet); `vupai status` reports it; `down` unlinks the marker.
+- **Mic disconnect gives a clear, repeatable message.** DONE. `_NO_AUDIO_MSG`
+  names BOTH causes (permission AND disconnect/mute) and fires every time
+  (`_mic_hint_shown` removed).
+- **Command discoverability / live transcript HUD.** DONE (default ON,
+  `hud_enabled`). `Feedback.heard` echoes the transcript on the focused pane
+  (skipped for verbatim dictation); `Feedback.reject` surfaces
+  no-target/ambiguous/inject-failed/unknown on the target pane AND the status
+  indicator. `announce`/`heard`/`reject` share `_pane_msg`.
+
+_Deferred this pass (low value / premature):_ CLI toggle subcommands for the new
+config keys (`vupai confirm`/`vupai notify`) and a typed (bool/float) config merge
+writer - the keys are hand-edited in `config.toml` for now (same as
+`status_indicator`); add the writer + subcommands if dogfooding shows they are
+toggled often. The watcher's `notify_debounce` is a constructor knob, not yet a
+config key.
 
 ### Improvements (open)
 

@@ -121,6 +121,33 @@ def test_indicator_disabled_skips_set_status():
     assert io.status == []
 
 
+def test_warming_sets_indicator():
+    io = FakeIO(calls=[])
+    fb = Feedback(io=io)
+    fb.warming()
+    assert io.status and "warming" in io.status[0].lower()
+
+
+def test_warming_downloading_label_mentions_download():
+    io = FakeIO(calls=[])
+    fb = Feedback(io=io)
+    fb.warming(downloading=True)
+    assert "download" in io.status[0].lower()
+
+
+def test_warming_disabled_skips_set_status():
+    io = FakeIO(calls=[])
+    fb = Feedback(io=io, indicator_enabled=False)
+    fb.warming()
+    assert io.status == []
+
+
+def test_warming_prints_log_line(capsys):
+    # A headless cold start must be diagnosable from the daemon log.
+    Feedback(indicator_enabled=False).warming()
+    assert capsys.readouterr().out.strip() != ""
+
+
 def test_indicator_truncates_long_label():
     io = FakeIO(calls=[])
     fb = Feedback(io=io)
@@ -155,3 +182,69 @@ def test_indicator_swallows_io_without_set_status():
     class Bare:
         def display_message(self, *_): ...
     Feedback(io=Bare()).error("boom")  # no raise
+
+
+# ---------------------------------------------------------------------------
+# Gap 6: live transcript HUD (heard / reject)
+# ---------------------------------------------------------------------------
+
+def test_heard_writes_transcript_to_pane():
+    io = FakeIO(calls=[])
+    Feedback(io=io).heard("run the tests", "%3")
+    assert io.calls == [("%3", "heard: run the tests")]
+    assert io.status == []                     # informational, no indicator
+
+
+def test_heard_truncates_long_transcript():
+    io = FakeIO(calls=[])
+    Feedback(io=io).heard("x" * 200, "%1")
+    assert io.calls[0][1].count("x") == 60     # bounded on-pane label
+
+
+def test_heard_skips_when_pane_none():
+    io = FakeIO(calls=[])
+    Feedback(io=io).heard("hi", None)
+    assert io.calls == []
+
+
+def test_heard_skips_when_hud_disabled():
+    io = FakeIO(calls=[])
+    Feedback(io=io, hud_enabled=False).heard("hi", "%1")
+    assert io.calls == []
+
+
+def test_reject_writes_reason_to_pane_and_sets_error_indicator():
+    io = FakeIO(calls=[])
+    Feedback(io=io).reject("no target", "%2")
+    assert io.calls and "no target" in io.calls[0][1]
+    assert io.status and "no target" in io.status[0] and "⚠" in io.status[0]
+
+
+def test_reject_includes_candidates():
+    io = FakeIO(calls=[])
+    Feedback(io=io).reject("ambiguous", "%1", candidates=("nova", "novak"))
+    assert "nova" in io.calls[0][1] and "novak" in io.calls[0][1]
+
+
+def test_reject_skips_pane_when_none_but_still_sets_indicator():
+    io = FakeIO(calls=[])
+    Feedback(io=io).reject("boom", None)
+    assert io.calls == []
+    assert io.status and "boom" in io.status[0]
+
+
+def test_pane_msg_swallows_io_exception():
+    class Raising:
+        def display_message(self, *_): raise RuntimeError("nope")
+        def set_status(self, *_): ...
+    fb = Feedback(io=Raising())
+    fb.heard("hi", "%1")          # no raise
+    fb.reject("boom", "%1")       # no raise
+
+
+def test_announce_suppressed_when_hud_disabled():
+    io = FakeIO(calls=[])
+    fb = Feedback(io=io, hud_enabled=False)
+    fb.announce(make_route(pane_id="%3", text="hi", matched_name="api", fallback=False))
+    assert io.calls == []                     # pane overlay gated by hud
+    assert io.status and "api" in io.status[0]  # indicator still fires

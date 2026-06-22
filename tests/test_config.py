@@ -236,3 +236,48 @@ def test_set_hotkey_config_replaces_existing_values(tmp_path: Path) -> None:
     text = p.read_text()
     assert text.count("hotkey =") == 2  # hotkey + command_hotkey, no dupes
     assert text.count("addressing =") == 1
+
+
+# ---------------------------------------------------------------------------
+# Gap 2: destructive-command confirmation config
+# ---------------------------------------------------------------------------
+
+def test_confirm_defaults():
+    cfg = Config()
+    assert cfg.confirm_destructive is True
+    assert cfg.confirm_word == "confirm"
+    assert cfg.cancel_word == "cancel"
+    assert cfg.confirm_timeout_s == 8.0
+
+
+def test_confirm_destructive_loadable_from_toml(tmp_path: Path):
+    p = tmp_path / "config.toml"
+    p.write_text("confirm_destructive = false\nconfirm_word = \"yes\"\n")
+    cfg = load_config(p)
+    assert cfg.confirm_destructive is False
+    assert cfg.confirm_word == "yes"
+
+
+def test_hud_enabled_default_and_loadable(tmp_path: Path):
+    assert Config().hud_enabled is True
+    p = tmp_path / "config.toml"
+    p.write_text("hud_enabled = false\n")
+    assert load_config(p).hud_enabled is False
+
+
+def test_notify_defaults_and_loadable(tmp_path: Path):
+    assert Config().notify_enabled is False
+    assert Config().notify_poll_interval == 2.0
+    assert Config().notify_capture_lines == 12
+    p = tmp_path / "config.toml"
+    p.write_text("notify_enabled = true\nnotify_poll_interval = 1.5\n")
+    cfg = load_config(p)
+    assert cfg.notify_enabled is True
+    assert cfg.notify_poll_interval == 1.5
+
+
+def test_inject_submit_delay_default_and_loadable(tmp_path: Path):
+    assert Config().inject_submit_delay == 1.5
+    p = tmp_path / "config.toml"
+    p.write_text("inject_submit_delay = 0.0\n")
+    assert load_config(p).inject_submit_delay == 0.0
