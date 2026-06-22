@@ -1349,3 +1349,30 @@ def test_cmd_keys_prints_current_then_prompts(fake_env, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "button" in out
     assert "alt_r" in out
+
+
+# ---------------------------------------------------------------------------
+# vupai config --init
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace  # noqa: E402
+
+from vupai.config import Config, load_config  # noqa: E402
+
+
+def test_cmd_config_init_writes_template(tmp_path, monkeypatch, capsys):
+    p = tmp_path / "config.toml"
+    monkeypatch.setattr(cli, "CONFIG_PATH", p)
+    cli._cmd_config(SimpleNamespace(init=True))
+    assert load_config(p) == Config()
+    assert str(p) in capsys.readouterr().out
+
+
+def test_cmd_config_init_backs_up_existing(tmp_path, monkeypatch, capsys):
+    p = tmp_path / "config.toml"
+    p.write_text("hotkey = \"f13\"\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "CONFIG_PATH", p)
+    cli._cmd_config(SimpleNamespace(init=True))
+    out = capsys.readouterr().out
+    assert (tmp_path / "config.toml.bak").exists()
+    assert "config.toml.bak" in out

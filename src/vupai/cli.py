@@ -24,6 +24,7 @@ from vupai.config import (
     CONFIG_PATH,
     Config,
     load_config,
+    regenerate_config,
     set_hotkey_config,
     set_mic_device,
     write_full_config,
@@ -746,6 +747,18 @@ def _prompt_hotkey_setup(*, reader=None, capture=None,
         print("  Run `vupai reload` for the daemon to pick it up.")
 
 
+def _cmd_config(args) -> int:
+    """`vupai config --init`: (re)write the full annotated config.toml."""
+    if not getattr(args, "init", False):
+        print("usage: vupai config --init")
+        return 2
+    written, backup = regenerate_config(path=CONFIG_PATH)
+    if backup is not None:
+        print(f"Backed up existing config to {backup}")
+    print(f"Wrote annotated config to {written}")
+    return 0
+
+
 def _cmd_keys(args: argparse.Namespace) -> int:
     """Show the current trigger keys, then run the interactive picker."""
     cfg = load_config()
@@ -967,6 +980,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "keys", help="show / change the push-to-talk trigger keys (interactive)"
     ).set_defaults(func=_cmd_keys)
+
+    p_config = sub.add_parser(
+        "config", help="write a full annotated config.toml")
+    p_config.add_argument(
+        "--init", action="store_true",
+        help="(re)write config.toml with every key commented at its default")
+    p_config.set_defaults(func=_cmd_config)
 
     sub.add_parser("doctor").set_defaults(func=_cmd_doctor)
     sub.add_parser(
