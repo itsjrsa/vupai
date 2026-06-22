@@ -120,13 +120,20 @@ missing.
 ## Usage
 
 ```bash
-uv run vupai            # ensures tmux + the voice daemon, then attaches you
+uv run vupai                 # attach-or-create the session named after the cwd
+uv run vupai attach backend  # attach to "backend" (create it if absent)
+uv run vupai new backend     # create "backend" (error if it already exists)
+uv run vupai kill backend    # kill the "backend" session
 ```
 
 `vupai` starts the push-to-talk daemon as a **detached background process**
 (not a tmux window — it must run under your terminal app to receive global key
-events) and attaches you to the tmux session. The daemon survives detach/reattach;
-see its status with `vupai status`.
+events) and attaches you to a tmux session. Sessions follow tmux-style verbs:
+bare `vupai` attaches-or-creates a session named after the current directory's
+basename (so each repo gets its own); `attach`/`new`/`kill` target a session by
+name (the name defaults to the cwd basename when omitted). The daemon is
+**global** (one per machine, shared across all sessions) and survives
+detach/reattach; see its status with `vupai status`.
 
 Then:
 

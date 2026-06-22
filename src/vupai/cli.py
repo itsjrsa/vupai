@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -242,14 +243,41 @@ def _initial_pane_command(cfg: Config) -> str:
     return ""  # plain shell
 
 
-def ensure_up() -> None:
-    """Start the tmux server, configure naming, and ensure the voice daemon is running."""
+def _slugify_session(raw: str) -> str:
+    """Turn an arbitrary string into a legal tmux session name.
+
+    tmux forbids `.` and `:` in session names; whitespace is awkward. Collapse
+    those to hyphens so a repo like `my.app` yields the session `my-app`.
+    """
+    slug = re.sub(r"[.\s:]+", "-", raw.strip()).strip("-")
+    return slug or "vupai"
+
+
+def _resolve_session_name(session: str | None) -> str:
+    """Pick the session name: the explicit arg, else the cwd basename.
+
+    With no name, each repo gets its own session (named after its directory)
+    so `vupai` in different folders no longer collides on one shared session.
+    """
+    if session:
+        return _slugify_session(session)
+    return _slugify_session(os.path.basename(os.getcwd()))
+
+
+def ensure_up(session: str | None = None) -> str:
+    """Ensure the named session exists, configure naming, ensure the daemon runs.
+
+    Returns the resolved session name so the caller can attach to it.
+    """
     cfg = load_config()
-    if not tmuxio.server_running():
-        # Start a detached server. NOTE: tmuxio.run() already prepends "tmux",
-        # so the argv must NOT include it again. Open the initial pane on the
-        # agent (agent-first); fall back to a shell if it isn't installed.
-        argv = ["new-session", "-d", "-s", "vupai"]
+    name = _resolve_session_name(session)
+    if not tmuxio.has_session(name):
+        # Create the session (starting the server if it isn't up yet). NOTE:
+        # tmuxio.run() already prepends "tmux", so the argv must NOT include it
+        # again. `-c cwd` opens the session in the invoking directory; open the
+        # initial pane on the agent (agent-first), falling back to a shell if it
+        # isn't installed.
+        argv = ["new-session", "-d", "-s", name, "-c", os.getcwd()]
         prog = _initial_pane_command(cfg)
         if prog:
             # Single arg: tmux runs it through the shell, so the wrapper's
@@ -260,8 +288,8 @@ def ensure_up() -> None:
                   "instead. Install it or set pane_command in the config.")
         tmuxio.run(argv)
         # Label the initial pane's program too (created panes get this in
-        # _exec_create). "-t vupai" targets the new session's active pane.
-        tmuxio.set_pane_program("vupai", program_label(prog))
+        # _exec_create). "=name" exact-matches the new session's active pane.
+        tmuxio.set_pane_program(f"={name}", program_label(prog))
     tmuxio.enable_pane_titles()
     tmuxio.set_base_index()  # 1-based windows/panes so "focus two" matches the display
     tmuxio.set_extended_keys_off()
@@ -289,14 +317,66 @@ def ensure_up() -> None:
             print("The hotkey won't respond until it finishes. Watch progress:")
             print(f"  tail -f {DAEMON_LOG}")
         _spawn_daemon()
+    return name
 
 
 # ---------------------------------------------------------------------------
 # Command handlers
 # ---------------------------------------------------------------------------
 
+def _enter_session(name: str) -> None:
+    """Move the client into session `name`.
+
+    From a normal terminal that's `tmux attach`. From inside an existing pane
+    `attach` would refuse to nest, so switch the current client instead - which
+    is exactly how you hop between named sessions with the verb commands.
+    """
+    if tmuxio.inside_tmux():
+        tmuxio.switch_client(name)
+    else:
+        tmuxio.attach(name)
+
+
 def _cmd_up(args: argparse.Namespace) -> int:
-    ensure_up()
+    ensure_up(getattr(args, "session", None))
+    return 0
+
+
+def _cmd_attach(args: argparse.Namespace) -> int:
+    """`vupai attach [NAME]`: attach to NAME, creating it if absent.
+
+    Mirrors `tmux new-session -A -s NAME`. NAME defaults to the cwd basename.
+    """
+    name = ensure_up(getattr(args, "session", None))
+    _enter_session(name)
+    return 0
+
+
+def _cmd_new(args: argparse.Namespace) -> int:
+    """`vupai new [NAME]`: create NAME (error if it exists), then attach.
+
+    Mirrors `tmux new-session -s NAME`, which refuses a duplicate name.
+    """
+    name = _resolve_session_name(getattr(args, "session", None))
+    if tmuxio.has_session(name):
+        print(f"Session '{name}' already exists - use 'vupai attach {name}'.")
+        return 1
+    ensure_up(name)
+    _enter_session(name)
+    return 0
+
+
+def _cmd_kill(args: argparse.Namespace) -> int:
+    """`vupai kill [NAME]`: kill session NAME (the daemon stays up).
+
+    Mirrors `tmux kill-session -t NAME`. NAME defaults to the cwd basename.
+    The voice daemon is global, so killing a session never stops it.
+    """
+    name = _resolve_session_name(getattr(args, "session", None))
+    if not tmuxio.has_session(name):
+        print(f"No session named '{name}'.")
+        return 1
+    tmuxio.kill_session(name)
     return 0
 
 
@@ -305,7 +385,7 @@ def _cmd_default(args: argparse.Namespace) -> int:
     # attaches - collapsing the `vupai reload && vupai` dogfooding loop.
     if getattr(args, "reload", False):
         _cmd_down(args)
-    ensure_up()
+    name = ensure_up(None)  # bare `vupai` targets the cwd-named session
     # `tmux attach` refuses to nest, so attaching from inside a pane would fail
     # (and looks like a broken reload). When already inside tmux, the daemon has
     # been respawned and there's nowhere new to attach - so just report and stop.
@@ -313,7 +393,7 @@ def _cmd_default(args: argparse.Namespace) -> int:
         print("Already inside tmux - daemon reloaded; staying in the current "
               "session (skipped attach to avoid nesting).")
         return 0
-    tmuxio.attach()
+    tmuxio.attach(name)
     return 0
 
 
@@ -970,7 +1050,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", metavar="command")
 
-    sub.add_parser("up").set_defaults(func=_cmd_up)
+    p_up = sub.add_parser("up", help="ensure a session + the daemon (no attach)")
+    p_up.add_argument("session", nargs="?", default=None)
+    p_up.set_defaults(func=_cmd_up)
+
+    # tmux-style session verbs. The session name is a positional after the verb
+    # (never bare, so a mistyped subcommand errors instead of silently creating
+    # a session); it defaults to the cwd basename when omitted.
+    p_attach = sub.add_parser(
+        "attach", aliases=["a"],
+        help="attach to a session, creating it if absent (default: cwd name)")
+    p_attach.add_argument("session", nargs="?", default=None)
+    p_attach.set_defaults(func=_cmd_attach)
+
+    p_new = sub.add_parser(
+        "new", help="create a session (error if it exists), then attach")
+    p_new.add_argument("session", nargs="?", default=None)
+    p_new.set_defaults(func=_cmd_new)
+
+    p_kill = sub.add_parser(
+        "kill", help="kill a session (the global daemon keeps running)")
+    p_kill.add_argument("session", nargs="?", default=None)
+    p_kill.set_defaults(func=_cmd_kill)
+
     sub.add_parser("down").set_defaults(func=_cmd_down)
     sub.add_parser(
         "reload", help="restart the daemon so source edits take effect"

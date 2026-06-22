@@ -18,6 +18,11 @@ class FakeTmux:
     def server_running(self) -> bool:
         return self._server
 
+    def has_session(self, name: str) -> bool:
+        # The suite models a single pre-existing session, so "server up" doubles
+        # as "the target session already exists".
+        return self._server
+
     def enable_pane_titles(self) -> None:
         self.calls.append(("enable_pane_titles",))
 
@@ -42,8 +47,14 @@ class FakeTmux:
     def inside_tmux(self) -> bool:
         return self._inside_tmux
 
-    def attach(self) -> None:
-        self.calls.append(("attach",))
+    def attach(self, target: str | None = None) -> None:
+        self.calls.append(("attach", target))
+
+    def switch_client(self, name: str) -> None:
+        self.calls.append(("switch_client", name))
+
+    def kill_session(self, name: str) -> None:
+        self.calls.append(("kill_session", name))
 
     def set_pane_name(self, pane_id: str, name: str) -> None:
         self.calls.append(("set_pane_name", pane_id, name))
@@ -176,8 +187,10 @@ def test_up_starts_server_when_down(monkeypatch, tmp_path):
     rc = cli.main(["up"])
     assert rc == 0
     # new-session issued via tmuxio.run WITHOUT a redundant leading "tmux"
+    name = cli._resolve_session_name(None)
+    cwd = cli.os.getcwd()
     run_calls = [c for c in ft.calls if c[0] == "run"]
-    assert ["new-session", "-d", "-s", "vupai"] in [list(c[1]) for c in run_calls]
+    assert ["new-session", "-d", "-s", name, "-c", cwd] in [list(c[1]) for c in run_calls]
     assert all(c[1][0] != "tmux" for c in run_calls)  # run() prepends tmux itself
 
 
@@ -192,9 +205,11 @@ def test_up_opens_initial_pane_on_agent_when_installed(monkeypatch, tmp_path):
     _stub_registry(monkeypatch, [])
     rc = cli.main(["up"])
     assert rc == 0
+    name = cli._resolve_session_name(None)
+    cwd = cli.os.getcwd()
     run_calls = [list(c[1]) for c in ft.calls if c[0] == "run"]
     # The agent is wrapped so the pane drops to a shell when it exits.
-    assert ["new-session", "-d", "-s", "vupai",
+    assert ["new-session", "-d", "-s", name, "-c", cwd,
             "claude; exec ${SHELL:-/bin/sh} -i"] in run_calls
 
 
@@ -210,8 +225,10 @@ def test_up_falls_back_to_shell_when_agent_missing(monkeypatch, tmp_path, capsys
     _stub_registry(monkeypatch, [])
     rc = cli.main(["up"])
     assert rc == 0
+    name = cli._resolve_session_name(None)
+    cwd = cli.os.getcwd()
     run_calls = [list(c[1]) for c in ft.calls if c[0] == "run"]
-    assert ["new-session", "-d", "-s", "vupai"] in run_calls  # no trailing program
+    assert ["new-session", "-d", "-s", name, "-c", cwd] in run_calls  # no trailing program
     assert "not found on PATH" in capsys.readouterr().out
 
 
@@ -241,7 +258,99 @@ def test_default_no_subcommand_attaches(fake_env):
     ft, pidfile = fake_env
     rc = cli.main([])
     assert rc == 0
-    assert ("attach",) in ft.calls
+    assert ("attach", cli._resolve_session_name(None)) in ft.calls
+
+
+def test_attach_named_creates_and_attaches(monkeypatch, tmp_path):
+    # `vupai attach backend` creates a session named `backend` (server was down)
+    # and attaches to it by exact target.
+    ft = FakeTmux(server=False)
+    monkeypatch.setattr(cli, "tmuxio", ft)
+    monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
+    monkeypatch.setattr(cli, "_daemon_running", lambda: False)
+    monkeypatch.setattr(cli, "_spawn_daemon", lambda: None)
+    monkeypatch.setattr(cli.shutil, "which", lambda c: None)
+    _stub_registry(monkeypatch, [])
+    rc = cli.main(["attach", "backend"])
+    assert rc == 0
+    run_calls = [list(c[1]) for c in ft.calls if c[0] == "run"]
+    cwd = cli.os.getcwd()
+    assert ["new-session", "-d", "-s", "backend", "-c", cwd] in run_calls
+    assert ("attach", "backend") in ft.calls
+
+
+def test_attach_existing_session_skips_create(fake_env):
+    # When the target session already exists (server up), no new-session is
+    # issued - just an attach to it. The `a` alias works too.
+    ft, _ = fake_env
+    rc = cli.main(["a", "backend"])
+    assert rc == 0
+    assert not any(c[0] == "run" and c[1][0] == "new-session" for c in ft.calls)
+    assert ("attach", "backend") in ft.calls
+
+
+def test_attach_inside_tmux_switches_client(fake_env):
+    # From inside a pane `attach` would nest, so the client is switched instead.
+    ft, _ = fake_env
+    ft._inside_tmux = True
+    rc = cli.main(["attach", "backend"])
+    assert rc == 0
+    assert ("switch_client", "backend") in ft.calls
+    assert not any(c[0] == "attach" for c in ft.calls)
+
+
+def test_new_errors_when_session_exists(fake_env, capsys):
+    # `vupai new NAME` refuses a duplicate (like tmux), pointing at `attach`.
+    ft, _ = fake_env  # server up => session exists
+    rc = cli.main(["new", "backend"])
+    assert rc == 1
+    assert not any(c[0] == "run" and c[1][0] == "new-session" for c in ft.calls)
+    assert "already exists" in capsys.readouterr().out
+
+
+def test_new_creates_when_absent(monkeypatch, tmp_path):
+    ft = FakeTmux(server=False)
+    monkeypatch.setattr(cli, "tmuxio", ft)
+    monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
+    monkeypatch.setattr(cli, "_daemon_running", lambda: False)
+    monkeypatch.setattr(cli, "_spawn_daemon", lambda: None)
+    monkeypatch.setattr(cli.shutil, "which", lambda c: None)
+    _stub_registry(monkeypatch, [])
+    rc = cli.main(["new", "backend"])
+    assert rc == 0
+    run_calls = [list(c[1]) for c in ft.calls if c[0] == "run"]
+    assert any(c[:4] == ["new-session", "-d", "-s", "backend"] for c in run_calls)
+    assert ("attach", "backend") in ft.calls
+
+
+def test_kill_existing_session(fake_env):
+    ft, _ = fake_env  # server up => session exists
+    rc = cli.main(["kill", "backend"])
+    assert rc == 0
+    assert ("kill_session", "backend") in ft.calls
+
+
+def test_kill_missing_session_reports(monkeypatch, tmp_path, capsys):
+    ft = FakeTmux(server=False)  # nothing exists
+    monkeypatch.setattr(cli, "tmuxio", ft)
+    rc = cli.main(["kill", "backend"])
+    assert rc == 1
+    assert not any(c[0] == "kill_session" for c in ft.calls)
+    assert "No session" in capsys.readouterr().out
+
+
+def test_bare_positional_is_not_a_session_name(fake_env):
+    # The verb scheme means a bare word is parsed as a (missing) subcommand,
+    # so a mistyped command errors instead of silently creating a session.
+    with pytest.raises(SystemExit):
+        cli.main(["stauts"])
+
+
+def test_slugify_session_sanitizes_illegal_chars():
+    # tmux forbids `.` and `:` in session names; whitespace is awkward.
+    assert cli._slugify_session("my.app") == "my-app"
+    assert cli._slugify_session("foo bar:baz") == "foo-bar-baz"
+    assert cli._slugify_session("  ") == "vupai"  # empty falls back
 
 
 def test_default_reload_respawns_daemon_then_attaches(fake_env, monkeypatch):
@@ -258,7 +367,7 @@ def test_default_reload_respawns_daemon_then_attaches(fake_env, monkeypatch):
     assert killed == [(4321, cli.signal.SIGTERM)]
     assert not pidfile.exists()  # _cmd_down clears the stale pidfile
     assert ft.daemon_spawns == [True]  # ensure_up respawned the daemon
-    assert ("attach",) in ft.calls
+    assert ("attach", cli._resolve_session_name(None)) in ft.calls
 
 
 def test_default_reload_inside_tmux_skips_attach(fake_env, monkeypatch, capsys):
@@ -273,7 +382,7 @@ def test_default_reload_inside_tmux_skips_attach(fake_env, monkeypatch, capsys):
 
     assert rc == 0
     assert ft.daemon_spawns == [True]  # daemon still respawned
-    assert ("attach",) not in ft.calls  # but no nesting attach
+    assert not any(c[0] == "attach" for c in ft.calls)  # but no nesting attach
     assert "nesting" in capsys.readouterr().out
 
 
