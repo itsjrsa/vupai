@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import shutil
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -125,94 +124,138 @@ _STARTER_HEADER = (
 )
 
 
-ANNOTATED_TEMPLATE = '''\
-# vupai config - every available key, defaulted and commented out.
-# Uncomment a line (drop the leading "# ") and edit its value to override.
-# See Config in src/vupai/config.py for the authoritative defaults.
-# A running daemon loads config once at spawn: `vupai reload` to apply changes.
+_TEMPLATE_HEADER = (
+    '# vupai config - every available key, defaulted and commented out.\n'
+    '# Uncomment a line (drop the leading "# ") and edit its value to override.\n'
+    '# See Config in src/vupai/config.py for the authoritative defaults.\n'
+    '# A running daemon loads config once at spawn: `vupai reload` to apply changes.\n'
+    '\n'
+)
 
-# pynput Key name for the push-to-talk dictation key. alt_r = Right-Option.
-# hotkey = "alt_r"
-# Addressing mode: "button" (two-key default) or "keyword" (legacy single key,
-# no command layer).
-# addressing = "button"
-# button mode only: the system/command key that runs the command layer.
-# command_hotkey = "cmd_r"
-# ASR model id. English-only; the v3 multilingual model drifts to Russian on
-# short audio.
-# model_id = "mlx-community/parakeet-tdt-0.6b-v2"
-# Capture sample rate (Hz).
-# sample_rate = 16000
-# CoreAudio input device name (sox AUDIODEV). "" = macOS system default.
-# Set via `vupai mic`; resolved at daemon startup with fallback to default.
-# mic_device = ""
-# rapidfuzz name-match score, 0..100. Higher = stricter.
-# fuzzy_cutoff = 82
-# tmux pane-registry refresh cadence (seconds).
-# poll_interval = 0.5
-# Seconds to wait for pasted text to appear in the pane before giving up.
-# inject_confirm_timeout = 2.0
-# Poll cadence (seconds) while waiting for the paste to confirm.
-# inject_poll_interval = 0.05
-# Pause (seconds) between confirmed paste and the Enter that submits it, so a
-# mishearing can be cancelled. Applies to dictation/name-routed text only.
-# Set 0.0 to submit immediately.
-# inject_submit_delay = 1.5
-# Spoken alias -> pane name overrides for routing.
-# [aliases]
-# "nova" = "atlas"
-# Leading spoken word that injects to all named agents.
-# broadcast_word = "everyone"
-# Default program launched in a newly created pane ("" = plain shell).
-# pane_command = "claude"
-# Spoken token -> argv for `create` ("" = default shell).
-# [programs]
-# claude = "claude"
-# codex = "codex"
-# shell = ""
-# opencode = "opencode"
-# pi = "pi"
-# Spoken phrase -> ordered list of actions (macro).
-# [macros]
-# "set up" = ["create two panes", "tile"]
-# Spoken verb -> literal slash string injected into the target pane(s).
-# [slash_commands]
-# clear = "/clear"
-# compact = "/compact"
-# Utterance journal: a JSONL trail (transcript + decision + outcome) at
-# ~/.config/vupai/journal.jsonl, for diagnosing misfires.
-# journal_enabled = true
-# Opt-in: also retain each wav (your voice) for offline misfire replay.
-# journal_keep_audio = false
-# Ring bound: how many wavs to keep when journal_keep_audio is on.
-# journal_audio_retention = 500
-# Render an ambient daemon-state segment in tmux status-right.
-# status_indicator = true
-# Rotating example-command tips in tmux status-left (voice-grammar
-# discoverability aid). Set false to leave status-left untouched.
-# status_tips = true
-# Seconds between status-left tip rotations.
-# status_tips_interval = 15.0
-# Require y/n confirmation before a destructive command (close / broadcast).
-# confirm_destructive = true
-# Seconds before the confirm popup auto-cancels (fail-safe).
-# confirm_timeout_s = 8.0
-# Confirm before a create opens at least this many panes at once.
-# confirm_create_threshold = 8
-# Live transcript HUD: echo what was heard on the target pane.
-# hud_enabled = true
-# Agent-state poller: notify when an agent goes busy -> idle. Off by default
-# (background thread; busy/idle heuristic unvalidated on a live Claude TUI).
-# notify_enabled = false
-# Poller tick cadence (seconds).
-# notify_poll_interval = 2.0
-# How many lines of each pane's tail to classify busy/idle.
-# notify_capture_lines = 12
-# Strip non-lexical filler tokens before commands/routing/dictation.
-# filler_filter = true
-# The filler set (non-lexical only by default; add soft fillers at your risk).
-# filler_words = ["um", "uh", "er", "ah", "eh", "hmm", "mm"]
-'''
+# (field_name, block) in Config declaration order. Each block is the field's doc
+# comment line(s) plus its commented default - a scalar `# key = default`, or a
+# commented `[table]` / array block for dict/set fields. This is the SINGLE
+# SOURCE OF TRUTH for the generated file: ANNOTATED_TEMPLATE is built from it,
+# the drift guard asserts every Config field has a block, and `update_config`
+# appends only the blocks a file is missing. Adding a Config field => add a block.
+_FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
+    ("hotkey",
+     '# pynput Key name for the push-to-talk dictation key. alt_r = Right-Option.\n'
+     '# hotkey = "alt_r"\n'),
+    ("addressing",
+     '# Addressing mode: "button" (two-key default) or "keyword" (legacy single key,\n'
+     '# no command layer).\n'
+     '# addressing = "button"\n'),
+    ("command_hotkey",
+     '# button mode only: the system/command key that runs the command layer.\n'
+     '# command_hotkey = "cmd_r"\n'),
+    ("model_id",
+     '# ASR model id. English-only; the v3 multilingual model drifts to Russian on\n'
+     '# short audio.\n'
+     '# model_id = "mlx-community/parakeet-tdt-0.6b-v2"\n'),
+    ("sample_rate",
+     '# Capture sample rate (Hz).\n'
+     '# sample_rate = 16000\n'),
+    ("mic_device",
+     '# CoreAudio input device name (sox AUDIODEV). "" = macOS system default.\n'
+     '# Set via `vupai mic`; resolved at daemon startup with fallback to default.\n'
+     '# mic_device = ""\n'),
+    ("fuzzy_cutoff",
+     '# rapidfuzz name-match score, 0..100. Higher = stricter.\n'
+     '# fuzzy_cutoff = 82\n'),
+    ("poll_interval",
+     '# tmux pane-registry refresh cadence (seconds).\n'
+     '# poll_interval = 0.5\n'),
+    ("inject_confirm_timeout",
+     '# Seconds to wait for pasted text to appear in the pane before giving up.\n'
+     '# inject_confirm_timeout = 2.0\n'),
+    ("inject_poll_interval",
+     '# Poll cadence (seconds) while waiting for the paste to confirm.\n'
+     '# inject_poll_interval = 0.05\n'),
+    ("inject_submit_delay",
+     '# Pause (seconds) between confirmed paste and the Enter that submits it, so a\n'
+     '# mishearing can be cancelled. Applies to dictation/name-routed text only.\n'
+     '# Set 0.0 to submit immediately.\n'
+     '# inject_submit_delay = 1.5\n'),
+    ("aliases",
+     '# Spoken alias -> pane name overrides for routing.\n'
+     '# [aliases]\n'
+     '# "nova" = "atlas"\n'),
+    ("broadcast_word",
+     '# Leading spoken word that injects to all named agents.\n'
+     '# broadcast_word = "everyone"\n'),
+    ("pane_command",
+     '# Default program launched in a newly created pane ("" = plain shell).\n'
+     '# pane_command = "claude"\n'),
+    ("programs",
+     '# Spoken token -> argv for `create` ("" = default shell).\n'
+     '# [programs]\n'
+     '# claude = "claude"\n'
+     '# codex = "codex"\n'
+     '# shell = ""\n'
+     '# opencode = "opencode"\n'
+     '# pi = "pi"\n'),
+    ("macros",
+     '# Spoken phrase -> ordered list of actions (macro).\n'
+     '# [macros]\n'
+     '# "set up" = ["create two panes", "tile"]\n'),
+    ("slash_commands",
+     '# Spoken verb -> literal slash string injected into the target pane(s).\n'
+     '# [slash_commands]\n'
+     '# clear = "/clear"\n'
+     '# compact = "/compact"\n'),
+    ("journal_enabled",
+     '# Utterance journal: a JSONL trail (transcript + decision + outcome) at\n'
+     '# ~/.config/vupai/journal.jsonl, for diagnosing misfires.\n'
+     '# journal_enabled = true\n'),
+    ("journal_keep_audio",
+     '# Opt-in: also retain each wav (your voice) for offline misfire replay.\n'
+     '# journal_keep_audio = false\n'),
+    ("journal_audio_retention",
+     '# Ring bound: how many wavs to keep when journal_keep_audio is on.\n'
+     '# journal_audio_retention = 500\n'),
+    ("status_indicator",
+     '# Render an ambient daemon-state segment in tmux status-right.\n'
+     '# status_indicator = true\n'),
+    ("status_tips",
+     '# Rotating example-command tips in tmux status-left (voice-grammar\n'
+     '# discoverability aid). Set false to leave status-left untouched.\n'
+     '# status_tips = true\n'),
+    ("status_tips_interval",
+     '# Seconds between status-left tip rotations.\n'
+     '# status_tips_interval = 15.0\n'),
+    ("confirm_destructive",
+     '# Require y/n confirmation before a destructive command (close / broadcast).\n'
+     '# confirm_destructive = true\n'),
+    ("confirm_timeout_s",
+     '# Seconds before the confirm popup auto-cancels (fail-safe).\n'
+     '# confirm_timeout_s = 8.0\n'),
+    ("confirm_create_threshold",
+     '# Confirm before a create opens at least this many panes at once.\n'
+     '# confirm_create_threshold = 8\n'),
+    ("hud_enabled",
+     '# Live transcript HUD: echo what was heard on the target pane.\n'
+     '# hud_enabled = true\n'),
+    ("notify_enabled",
+     '# Agent-state poller: notify when an agent goes busy -> idle. Off by default\n'
+     '# (background thread; busy/idle heuristic unvalidated on a live Claude TUI).\n'
+     '# notify_enabled = false\n'),
+    ("notify_poll_interval",
+     '# Poller tick cadence (seconds).\n'
+     '# notify_poll_interval = 2.0\n'),
+    ("notify_capture_lines",
+     "# How many lines of each pane's tail to classify busy/idle.\n"
+     '# notify_capture_lines = 12\n'),
+    ("filler_filter",
+     '# Strip non-lexical filler tokens before commands/routing/dictation.\n'
+     '# filler_filter = true\n'),
+    ("filler_words",
+     '# The filler set (non-lexical only by default; add soft fillers at your risk).\n'
+     '# filler_words = ["um", "uh", "er", "ah", "eh", "hmm", "mm"]\n'),
+)
+
+ANNOTATED_TEMPLATE = _TEMPLATE_HEADER + "".join(
+    block for _, block in _FIELD_BLOCKS)
 
 
 def render_config(active: dict[str, str]) -> str:
@@ -262,17 +305,51 @@ def write_full_config(
     return target
 
 
-def regenerate_config(*, path: Path | None = None) -> tuple[Path, Path | None]:
-    """(Re)write the all-commented annotated template, backing up any existing
-    file to <path>.bak first. Returns (written_path, backup_path_or_None)."""
+def _field_present(text: str, name: str) -> bool:
+    """Whether `name` already appears in config text as a key (active or
+    commented), either a scalar `key =` or a `[table]` header. The `\\s*=` /
+    `]` right-boundary stops a key matching a longer key that contains it
+    (e.g. `poll_interval` will not match `notify_poll_interval`)."""
+    scalar = re.compile(rf"^\s*#?\s*{re.escape(name)}\s*=", re.MULTILINE)
+    table = re.compile(rf"^\s*#?\s*\[{re.escape(name)}\]", re.MULTILINE)
+    return bool(scalar.search(text) or table.search(text))
+
+
+def update_config(
+    *, path: Path | None = None
+) -> tuple[Path, list[str], bool]:
+    """Ensure config.toml lists every Config key, appending ONLY the blocks it
+    is missing (doc + commented default), never rewriting or reordering existing
+    lines. Hand edits and any chosen values are preserved; nothing is backed up
+    because nothing is overwritten. Backs the new keys with a labeled separator
+    so a re-run after an upgrade just tops up the freshly added settings.
+
+    Returns (path, added_keys, created). A missing file is created from the full
+    annotated template (created=True, added_keys = every field). When the file
+    already lists every key, added_keys is empty.
+    """
     target = path if path is not None else CONFIG_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
-    backup: Path | None = None
-    if target.exists():
-        backup = target.with_suffix(target.suffix + ".bak")
-        shutil.copyfile(target, backup)
-    target.write_text(render_config({}), encoding="utf-8")
-    return target, backup
+    if not target.exists():
+        target.write_text(ANNOTATED_TEMPLATE, encoding="utf-8")
+        return target, [name for name, _ in _FIELD_BLOCKS], True
+    existing = target.read_text(encoding="utf-8")
+    missing = [
+        (name, block)
+        for name, block in _FIELD_BLOCKS
+        if not _field_present(existing, name)
+    ]
+    if not missing:
+        return target, [], False
+    sep = "" if existing.endswith("\n") else "\n"
+    addition = "".join(block for _, block in missing)
+    target.write_text(
+        existing + sep
+        + "\n# --- keys added by `vupai config --init` ---\n"
+        + addition,
+        encoding="utf-8",
+    )
+    return target, [name for name, _ in missing], False
 
 
 def _escape_toml(value: str) -> str:

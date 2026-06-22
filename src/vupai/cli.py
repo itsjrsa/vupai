@@ -24,9 +24,9 @@ from vupai.config import (
     CONFIG_PATH,
     Config,
     load_config,
-    regenerate_config,
     set_hotkey_config,
     set_mic_device,
+    update_config,
     write_full_config,
 )
 from vupai.daemon import Daemon
@@ -753,14 +753,23 @@ def _prompt_hotkey_setup(*, reader=None, capture=None,
 
 
 def _cmd_config(args) -> int:
-    """`vupai config --init`: (re)write the full annotated config.toml."""
+    """`vupai config --init`: ensure config.toml lists every available key.
+
+    Creates the full annotated file when none exists; otherwise appends only
+    the keys it is missing (as commented defaults), never overwriting existing
+    content. Safe to re-run after an upgrade to top up newly added settings.
+    """
     if not getattr(args, "init", False):
         print("usage: vupai config --init")
         return 2
-    written, backup = regenerate_config(path=CONFIG_PATH)
-    if backup is not None:
-        print(f"Backed up existing config to {backup}")
-    print(f"Wrote annotated config to {written}")
+    path, added, created = update_config(path=CONFIG_PATH)
+    if created:
+        print(f"Wrote annotated config to {path}")
+    elif added:
+        print(f"Added {len(added)} missing key(s) to {path}: "
+              f"{', '.join(added)}")
+    else:
+        print(f"{path} already lists every key; nothing to add.")
     return 0
 
 
@@ -990,10 +999,11 @@ def build_parser() -> argparse.ArgumentParser:
     ).set_defaults(func=_cmd_keys)
 
     p_config = sub.add_parser(
-        "config", help="write a full annotated config.toml")
+        "config", help="ensure config.toml lists every available key")
     p_config.add_argument(
         "--init", action="store_true",
-        help="(re)write config.toml with every key commented at its default")
+        help="create config.toml if absent, else append only its missing keys "
+             "(commented); never overwrites existing content")
     p_config.set_defaults(func=_cmd_config)
 
     sub.add_parser("doctor").set_defaults(func=_cmd_doctor)

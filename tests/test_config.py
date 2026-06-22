@@ -7,10 +7,10 @@ from vupai.config import (
     ANNOTATED_TEMPLATE,
     Config,
     load_config,
-    regenerate_config,
     render_config,
     set_hotkey_config,
     set_mic_device,
+    update_config,
     write_full_config,
 )
 
@@ -148,23 +148,60 @@ def test_write_full_config_roundtrips(tmp_path: Path) -> None:
     assert c.hotkey == "alt_r"
 
 
-def test_regenerate_config_backs_up_existing(tmp_path: Path) -> None:
-    p = tmp_path / "config.toml"
-    p.write_text("hotkey = \"f13\"\n", encoding="utf-8")  # pretend old config
-    written, backup = regenerate_config(path=p)
+def test_update_config_creates_full_file_when_absent(tmp_path: Path) -> None:
+    p = tmp_path / "nested" / "config.toml"  # parent created on write
+    written, added, created = update_config(path=p)
     assert written == p
-    assert backup == tmp_path / "config.toml.bak"
-    assert backup.read_text(encoding="utf-8") == "hotkey = \"f13\"\n"
-    # fresh file is the all-commented template -> pristine defaults
+    assert created is True
+    # every field reported as added; file is the full annotated template
+    assert "hotkey" in added and "filler_words" in added
     assert load_config(p) == Config()
 
 
-def test_regenerate_config_no_existing_file(tmp_path: Path) -> None:
+def test_update_config_appends_only_missing_keys(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
-    written, backup = regenerate_config(path=p)
+    # a hand-edited file: one active key, one chosen comment, no other keys
+    p.write_text(
+        "# my notes\nhotkey = \"f13\"\n", encoding="utf-8")
+    written, added, created = update_config(path=p)
     assert written == p
-    assert backup is None
-    assert load_config(p) == Config()
+    assert created is False
+    # the present key is NOT re-added; everything else is
+    assert "hotkey" not in added
+    assert "journal_enabled" in added and "filler_words" in added
+    text = p.read_text(encoding="utf-8")
+    # original content preserved verbatim
+    assert "# my notes\nhotkey = \"f13\"\n" in text
+    # appended keys are commented defaults under a labeled separator
+    assert "# --- keys added by `vupai config --init` ---" in text
+    # the chosen value survives; newly added keys load at their defaults
+    c = load_config(p)
+    assert c.hotkey == "f13"
+    assert c.journal_enabled is True
+    assert c.confirm_create_threshold == 8
+
+
+def test_update_config_noop_when_complete(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    # a file that already lists every key (the full template)
+    write_full_config(journal_enabled=True, journal_keep_audio=False, path=p)
+    before = p.read_text(encoding="utf-8")
+    written, added, created = update_config(path=p)
+    assert written == p
+    assert created is False
+    assert added == []
+    # nothing appended: file is byte-for-byte unchanged
+    assert p.read_text(encoding="utf-8") == before
+
+
+def test_update_config_does_not_readd_a_substring_key(tmp_path: Path) -> None:
+    # status_tips present must not mark status_tips_interval present (or vice
+    # versa): the right-boundary in _field_present disambiguates.
+    p = tmp_path / "config.toml"
+    p.write_text("# status_tips = true\n", encoding="utf-8")
+    _, added, _ = update_config(path=p)
+    assert "status_tips" not in added
+    assert "status_tips_interval" in added
 
 
 def test_mic_device_default() -> None:

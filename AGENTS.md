@@ -36,7 +36,7 @@ vupai setup                                          # interactive: probe + deep
 - `vupai status` - list panes, daemon pid + log path, permission state
 - `vupai mic [index|name|default] [--force]` - no arg lists CoreAudio **input** devices (marks the system default and the current pin); an index/exact-name pins that device into `config.toml` via `config.set_mic_device` (a merge writer that preserves comments/other keys), the literal `default` clears the pin. Before pinning a named device it runs `audio.probe_capture` (a 0.4s `rec` with `AUDIODEV` set) and **refuses an unusable device** (exit 1) rather than letting it silently yield "no audio captured" at speech time; `--force` pins anyway, and `default` (clearing the pin) skips the probe. The probe catches the failure mode where a USB mic exposes a speaker and a mic under the **same CoreAudio name** and sox's `AUDIODEV` name-match grabs the output (`can not get audio device properties`), plus disconnected/muted inputs and missing Microphone permission. Selection persists; a running daemon needs `vupai reload` to apply it. Enumeration is `audio.list_input_devices` (`system_profiler -json SPAudioDataType`, ~1s).
 - `vupai keys` - no-arg, interactive: prints the current addressing mode + push-to-talk key(s), then runs the re-runnable picker (`_prompt_hotkey_setup`). Choose the addressing mode (`button`/`keyword`), then pick the dictation key (and, in button mode, the command key) from a curated menu (`hotkey.PTT_KEYS`), by exact pynput key name, or by **pressing the key** (`p` → `hotkey.capture_key`, a one-shot pynput listen). Bare Enter keeps the current value; button mode **rejects two equal keys**. Persists `addressing`/`hotkey`/`command_hotkey` via `config.set_hotkey_config` (a merge writer preserving comments/other keys); a running daemon needs `vupai reload` to apply. NOTE: macOS pynput collapses the left modifiers (`alt_l`→`alt`, `cmd_l`→`cmd`, `ctrl_l`→`ctrl`), so capture reports those bare names and `PTT_KEYS` uses them for the left-side entries.
-- `vupai config --init` - (re)write `~/.config/vupai/config.toml` as a full annotated template: every `Config` field present, commented out at its default, with doc prose, so the whole tunable surface is discoverable without reading source. Backs up any existing file to `config.toml.bak` first (`config.regenerate_config`). First-run `vupai setup` writes this same annotated file (with the chosen journal/mic/hotkey keys uncommented).
+- `vupai config --init` - ensure `~/.config/vupai/config.toml` lists every available key. When the file is absent it writes the full annotated template (every `Config` field present, commented at its default, with doc prose). When it exists, it **appends only the keys the file is missing** (as commented defaults under a labeled separator) and **never rewrites or reorders existing content** - so hand edits and chosen values are preserved and nothing is backed up because nothing is overwritten. Safe to re-run after an upgrade to top up newly added settings (`config.update_config`). First-run `vupai setup` writes the same annotated file (with the chosen journal/mic/hotkey keys uncommented).
 - `vupai setup` - interactive permission bootstrap: detects the terminal app from `TERM_PROGRAM`, probes each permission (which triggers the macOS prompts), then `open`s the exact Settings deep-link pane for any that are missing and prints the `tccutil reset` recovery command. **Cannot grant on the user's behalf** - macOS TCC requires a human click; setup removes the navigation, not the consent. Deep-link/app-detect/open helpers live in `permissions.py` (`terminal_app`, `fixes`, `open_settings_pane`), injectable for tests. **First run only** (no `config.toml` yet), it also prompts for journaling consent (`journal_enabled` + `journal_keep_audio`) and writes the full annotated config via `config.write_full_config` (the chosen journal keys uncommented, every other key commented at its default); once a config file exists the prompt is skipped so re-running to confirm permissions never re-asks. It **always** runs a re-runnable mic-selection step (`_prompt_mic_setup`; bare Enter keeps the current device) **and a re-runnable hotkey step** (`_prompt_hotkey_setup`; bare Enter / non-interactive stdin keeps the current keys).
 - `vupai _daemon` - hidden; the long-running daemon process (spawned detached, logs to `~/.config/vupai/daemon.log`)
 
@@ -63,7 +63,7 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 | `src/vupai/tmuxio.py` | thin exact-argv wrappers over the `tmux` CLI |
 | `src/vupai/feedback.py` | status to stdout / `display-message` on the target pane |
 | `src/vupai/permissions.py` | best-effort macOS permission probes + `hints` |
-| `src/vupai/config.py` | TOML config at `~/.config/vupai/config.toml` + defaults; `ANNOTATED_TEMPLATE` + `render_config` are the single source of truth for the generated file; `write_full_config` writes a fresh full annotated file (first-run `setup`; does NOT merge) and `regenerate_config` rewrites it (backing up to `.bak`, for `vupai config --init`); `set_mic_device` / `set_hotkey_config` MERGE keys in place via shared `_merge_scalar_keys` (preserve comments/other keys, uncomment a commented default in place) |
+| `src/vupai/config.py` | TOML config at `~/.config/vupai/config.toml` + defaults; `_FIELD_BLOCKS` (per-field doc + commented default) is the single source of truth, `ANNOTATED_TEMPLATE` is built from it and `render_config` uncomments chosen keys; `write_full_config` writes a fresh full annotated file (first-run `setup`; does NOT merge) and `update_config` additively appends only a file's missing key-blocks (for `vupai config --init`; never overwrites, no backup); `set_mic_device` / `set_hotkey_config` MERGE keys in place via shared `_merge_scalar_keys` (preserve comments/other keys, uncomment a commented default in place) |
 | `src/vupai/commands.py` | parse control-word utterances into `Command`s and execute them (create/macro/focus/swap/close/zoom/slash/broadcast); interpretation split from execution |
 | `src/vupai/journal.py` | append-only JSONL utterance trail (transcript + decision + outcome) at `~/.config/vupai/journal.jsonl`; opt-in ring-bounded audio retention for offline misfire replay |
 
@@ -244,12 +244,14 @@ dictation key keeps `alt_r` (muscle memory) and the system key defaults to `cmd_
 - Code comments in English. TDD with pytest; frequent small commits.
 - Conventional commit messages, **no Claude attribution / co-authored-by lines**.
   Never push to `master` without asking.
-- **Adding a `Config` field:** also add its doc block + commented default to
-  `ANNOTATED_TEMPLATE` in `config.py` (a scalar `# key = default` line, or a
-  commented `[table]` / array block for dict/set fields). The guard test
-  `test_template_covers_every_config_field` fails CI if a field is missing, so
-  the generated `config.toml` and `vupai config --init` stay complete. Scalar
-  keys that `setup` should uncomment flow through `render_config` /
+- **Adding a `Config` field:** also add a `(name, block)` entry to
+  `_FIELD_BLOCKS` in `config.py` (the block is the field's doc line(s) + its
+  commented default: a scalar `# key = default`, or a commented `[table]` /
+  array block for dict/set fields). `ANNOTATED_TEMPLATE` is built from
+  `_FIELD_BLOCKS`, so the generated file, `vupai config --init` (which appends
+  only missing blocks), and the drift guard `test_template_covers_every_config_field`
+  (fails CI on a missing field) all stay complete automatically. Scalar keys
+  that `setup` should uncomment flow through `render_config` /
   `_merge_scalar_keys`.
 
 ## Known limitations / deferred
