@@ -73,6 +73,15 @@ class Config:
     notify_enabled: bool = False
     notify_poll_interval: float = 2.0
     notify_capture_lines: int = 12
+    # Strip non-lexical filler tokens (um, uh, er, ah, eh, hmm, mm) from every
+    # transcript before commands/routing/dictation see it. On by default: the
+    # default set is non-lexical only, so removal is essentially risk-free, and
+    # the effect is visible in the journal (filtered_transcript). Add soft
+    # fillers (like, so, you know) at your own risk; none ship by default.
+    filler_filter: bool = True
+    filler_words: frozenset[str] = field(
+        default_factory=lambda: frozenset(
+            {"um", "uh", "er", "ah", "eh", "hmm", "mm"}))
 
 
 CONFIG_PATH = Path.home() / ".config" / "vupai" / "config.toml"
@@ -92,6 +101,11 @@ def load_config(path: Path | None = None) -> Config:
 
     known = {f.name for f in fields(Config)}
     kwargs = {key: value for key, value in data.items() if key in known}
+    # TOML has no set type: accept filler_words as a list and normalize to a
+    # lowercased frozenset matching the field type.
+    if "filler_words" in kwargs:
+        kwargs["filler_words"] = frozenset(
+            str(w).lower() for w in kwargs["filler_words"])
     return Config(**kwargs)
 
 

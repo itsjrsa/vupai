@@ -278,3 +278,21 @@ def test_inject_submit_delay_default_and_loadable(tmp_path: Path):
     p = tmp_path / "config.toml"
     p.write_text("inject_submit_delay = 0.0\n")
     assert load_config(p).inject_submit_delay == 0.0
+
+
+def test_filler_defaults():
+    from vupai.config import Config
+    cfg = Config()
+    assert cfg.filler_filter is True
+    assert cfg.filler_words == frozenset({"um", "uh", "er", "ah", "eh", "hmm", "mm"})
+
+
+def test_filler_words_loaded_from_toml_as_frozenset(tmp_path):
+    from vupai.config import load_config
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        'filler_filter = false\nfiller_words = ["UM", "Like"]\n', encoding="utf-8"
+    )
+    cfg = load_config(cfg_file)
+    assert cfg.filler_filter is False
+    assert cfg.filler_words == frozenset({"um", "like"})
