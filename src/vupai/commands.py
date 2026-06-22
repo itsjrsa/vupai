@@ -66,6 +66,16 @@ _LAYOUT_VERB_ALIASES = frozenset({"layouts"})
 # toks[0]-matched set. View-only action, so a miss is harmless (falls through to
 # dictation). "even" alone is intentionally absent (it would tie-break columns
 # vs rows); say the axis. Extend with a one-liner + a test.
+# tmux layout name -> the word used in the spoken-feedback message. Pinned so the
+# message wording is fixed, not re-derived. Mirrors the feedback-label column of
+# the design's vocabulary table.
+_LAYOUT_LABELS = {
+    "tiled": "grid",
+    "main-vertical": "main left",
+    "main-horizontal": "main top",
+    "even-horizontal": "columns",
+    "even-vertical": "rows",
+}
 _LAYOUTS: dict[str, tuple[str, bool]] = {
     "grid": ("tiled", False),
     "tile": ("tiled", False),
@@ -538,6 +548,27 @@ def _exec_unzoom(cmd: Command, registry, config, io) -> CommandResult:
     return CommandResult(True, "already unzoomed")
 
 
+def _exec_layout(cmd: Command, registry, config, io) -> CommandResult:
+    focused = registry.focused()
+    if focused is None:
+        return CommandResult(False, "no focused pane")
+    # Window-scoped. window_id is implicitly single-session (tmux @N ids are
+    # server-unique and a window belongs to one session), so no session filter
+    # is needed here, unlike the name-keyed bulk ops.
+    window = [p for p in registry.panes if p.window_id == focused.window_id]
+    if len(window) <= 1:
+        return CommandResult(True, "only one pane - nothing to arrange")
+    if cmd.main_focus:
+        # tmux promotes the lowest-index pane to the main slot; swap the focused
+        # pane there (detached, so it stays focused) before applying the layout.
+        main = min(window, key=lambda p: p.index)
+        if focused.id != main.id:
+            io.swap_pane(focused.id, main.id, detached=True)
+    # select-layout auto-unzooms, so no explicit unzoom is needed.
+    io.select_layout(focused.window_id, cmd.layout)
+    return CommandResult(True, f"layout {_LAYOUT_LABELS[cmd.layout]}")
+
+
 def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
     msgs: list[str] = []
     ok = True
@@ -639,6 +670,8 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_zoom(cmd, registry, config, io)
         if cmd.kind == "unzoom":
             return _exec_unzoom(cmd, registry, config, io)
+        if cmd.kind == "layout":
+            return _exec_layout(cmd, registry, config, io)
         if cmd.kind == "slash":
             return _exec_slash(cmd, registry, config, inject_fn)
         if cmd.kind == "broadcast":

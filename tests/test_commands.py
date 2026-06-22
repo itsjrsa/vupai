@@ -1031,3 +1031,81 @@ def test_parse_layout_names_need_the_lead_verb():
 def test_parse_layout_is_button_mode_only():
     # keyword mode has no command layer.
     assert _parse("layout grid") is None
+
+
+# --- layout executor tests ---------------------------------------------------
+
+def test_execute_layout_grid_no_swap():
+    panes = [_pane("%1", "nova", index=0, active=True), _pane("%2", "atlas", index=1)]
+    reg = FakeRegistry(panes, focused=panes[0])
+    io = FakeTmux()
+    res = execute_command(Command(kind="layout", layout="tiled", main_focus=False),
+                          reg, Config(), io=io)
+    assert res.ok and "layout" in res.message and "grid" in res.message
+    assert io.calls == [("select_layout", "@1", "tiled")]
+
+
+def test_execute_layout_main_left_swaps_focused_into_main_then_lays_out():
+    main = _pane("%1", "nova", index=0)
+    focused = _pane("%2", "atlas", index=1, active=True)
+    reg = FakeRegistry([main, focused], focused=focused)
+    io = FakeTmux()
+    res = execute_command(Command(kind="layout", layout="main-vertical", main_focus=True),
+                          reg, Config(), io=io)
+    assert res.ok and "main left" in res.message
+    # swap focused (%2) into the main slot (%1), detached, THEN select-layout.
+    assert io.calls == [("swap_pane", "%2", "%1", True),
+                        ("select_layout", "@1", "main-vertical")]
+
+
+def test_execute_layout_main_picks_lowest_index_with_gaps():
+    # Non-contiguous indices: the min-index pane (%a, index 2) is the main slot.
+    main = _pane("%a", "nova", index=2)
+    focused = _pane("%b", "atlas", index=5, active=True)
+    reg = FakeRegistry([focused, main], focused=focused)  # list order != index order
+    io = FakeTmux()
+    execute_command(Command(kind="layout", layout="main-vertical", main_focus=True),
+                    reg, Config(), io=io)
+    assert io.calls[0] == ("swap_pane", "%b", "%a", True)
+
+
+def test_execute_layout_main_focused_already_main_skips_swap():
+    focused = _pane("%1", "nova", index=0, active=True)
+    other = _pane("%2", "atlas", index=1)
+    reg = FakeRegistry([focused, other], focused=focused)
+    io = FakeTmux()
+    execute_command(Command(kind="layout", layout="main-horizontal", main_focus=True),
+                    reg, Config(), io=io)
+    assert io.calls == [("select_layout", "@1", "main-horizontal")]
+
+
+def test_execute_layout_single_pane_is_noop():
+    focused = _pane("%1", "nova", index=0, active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux()
+    res = execute_command(Command(kind="layout", layout="tiled", main_focus=False),
+                          reg, Config(), io=io)
+    assert res.ok and "nothing to arrange" in res.message
+    assert io.calls == []
+
+
+def test_execute_layout_only_counts_focused_window():
+    # Focused window @1 has one pane; window @2 has three. Must be a single-pane no-op.
+    focused = _pane("%1", "nova", window_id="@1", index=0, active=True)
+    others = [_pane("%2", "a", window_id="@2", index=0),
+              _pane("%3", "b", window_id="@2", index=1),
+              _pane("%4", "c", window_id="@2", index=2)]
+    reg = FakeRegistry([focused, *others], focused=focused)
+    io = FakeTmux()
+    res = execute_command(Command(kind="layout", layout="tiled", main_focus=False),
+                          reg, Config(), io=io)
+    assert res.ok and "nothing to arrange" in res.message
+    assert not any(c[0] == "select_layout" for c in io.calls)
+
+
+def test_execute_layout_no_focused_pane():
+    reg = FakeRegistry([_pane("%1", "nova", index=0)], focused=None)
+    io = FakeTmux()
+    res = execute_command(Command(kind="layout", layout="tiled", main_focus=False),
+                          reg, Config(), io=io)
+    assert res.ok is False and res.message == "no focused pane" and io.calls == []
