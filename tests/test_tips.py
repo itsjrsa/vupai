@@ -59,7 +59,9 @@ class _FakeIO:
 def test_rotator_tick_cycles_and_wraps():
     io = _FakeIO()
     rot = tips.TipRotator(["a", "b"], io=io)
-    rot.tick(); rot.tick(); rot.tick()
+    rot.tick()
+    rot.tick()
+    rot.tick()
     assert io.sent == ["a", "b", "a"]
 
 
