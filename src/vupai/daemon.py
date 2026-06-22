@@ -22,6 +22,7 @@ from .commands import (
 from .config import Config
 from .confirm import popup_confirm
 from .feedback import Feedback
+from .filler import strip_fillers
 from .hotkey import Hotkey, MultiHotkey
 from .injector import inject
 from .journal import Journal
@@ -202,6 +203,11 @@ class Daemon:
             text = self._transcriber.transcribe(wav, hints=hints)
             entry["transcribe_ms"] = round((time.monotonic() - _t0) * 1000)
             entry["transcript"] = text
+            if self._config.filler_filter:
+                cleaned = strip_fillers(text, self._config.filler_words)
+                if cleaned != text:
+                    entry["filtered_transcript"] = cleaned
+                text = cleaned
             if not text or not text.strip():
                 entry["decision"] = "empty"
                 entry["outcome"] = "no_transcript"

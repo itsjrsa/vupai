@@ -127,7 +127,7 @@ def make_registry(lines: list[str], focused: str | None) -> PaneRegistry:
 
 
 def make_daemon(tmp_path, *, transcript: str, lines: list[str], focused: str | None,
-                inject_ok: bool = True):
+                inject_ok: bool = True, filler_filter: bool = True):
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)  # non-trivial size
     recorder = FakeRecorder(wav)
@@ -153,7 +153,8 @@ def make_daemon(tmp_path, *, transcript: str, lines: list[str], focused: str | N
 
     # These helper-based tests drive the single-key (keyword) path directly via
     # on_press/on_release and the keyword Hotkey; button mode has its own tests.
-    daemon = Daemon(Config(addressing="keyword", inject_submit_delay=0.0),
+    daemon = Daemon(Config(addressing="keyword", inject_submit_delay=0.0,
+                           filler_filter=filler_filter),
                     recorder, transcriber, registry,
                     feedback, route_fn=route_fn, inject_fn=inject_fn,
                     async_fn=lambda fn, *a: fn(*a))  # run feedback inline for determinism
@@ -1283,3 +1284,50 @@ def test_journal_no_audio_entry_has_version_but_no_timing(tmp_path):
     assert e["decision"] == "no_audio"
     assert e["v"] == 1
     assert "transcribe_ms" not in e  # transcription never ran
+
+
+# ---------------------------------------------------------------------------
+# Task 3: filler filter hook in the daemon
+# ---------------------------------------------------------------------------
+
+def test_filler_stripped_before_routing(tmp_path):
+    # Leading filler "um" is removed before text reaches route/inject. The raw
+    # transcript is preserved in entry["transcript"]; the cleaned text is in
+    # entry["filtered_transcript"] and is what routing and injection see.
+    daemon, recorder, transcriber, feedback, route_calls, inject_calls = make_daemon(
+        tmp_path, transcript="um alpha run the tests", lines=[PANE_LINE], focused="%1")
+    daemon.on_press()
+    _release_and_process(daemon)
+
+    # route received the filler-stripped text (leading "um " removed -> capitalised)
+    assert route_calls, "expected at least one route call"
+    assert route_calls[0][0] == "Alpha run the tests"
+    # inject received the name-stripped remainder
+    assert inject_calls == [("%1", "run the tests", 2.0, 0.05)]
+
+
+def test_filler_filter_disabled_passthrough(tmp_path):
+    # With filler_filter=False the raw transcript, including the filler, reaches
+    # routing unchanged.
+    daemon, recorder, transcriber, feedback, route_calls, inject_calls = make_daemon(
+        tmp_path, transcript="um alpha run the tests", lines=[PANE_LINE],
+        focused="%1", filler_filter=False)
+    daemon.on_press()
+    _release_and_process(daemon)
+
+    # route received the unmodified transcript (filler NOT stripped)
+    assert route_calls, "expected at least one route call"
+    assert route_calls[0][0] == "um alpha run the tests"
+
+
+def test_all_filler_treated_as_empty(tmp_path):
+    # A transcript that collapses entirely to "" after filler stripping must
+    # follow the same "didn't catch that" path as a blank transcript.
+    daemon, recorder, transcriber, feedback, route_calls, inject_calls = make_daemon(
+        tmp_path, transcript="um uh hmm", lines=[PANE_LINE], focused="%1")
+    daemon.on_press()
+    _release_and_process(daemon)
+
+    assert inject_calls == []
+    assert route_calls == []
+    assert any("catch" in s.lower() for s in feedback.statuses)
