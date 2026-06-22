@@ -1,0 +1,10 @@
+# Code owners are auto-requested for review on matching paths.
+# Add teammates' GitHub handles as they join.
+# Docs: https://docs.github.com/articles/about-code-owners
+
+# Default owner for everything in the repo
+*       @itsjrsa
+
+# Example: scope ownership per area once the team grows
+# /src/vupai/    @itsjrsa @teammate
+# /tests/        @itsjrsa
