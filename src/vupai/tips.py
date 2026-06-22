@@ -116,3 +116,10 @@ class TipRotator:
         thread = self._thread
         if thread is not None:
             thread.join(timeout=2.0)
+            # Blank the tip so a stopped daemon doesn't leave a stale suggestion
+            # pinned in status-left; the #{@vupai_tip} format then collapses to
+            # the session/window list. Best-effort, like tick().
+            try:
+                self._io.set_tip("")
+            except Exception:
+                logger.debug("tip rotator clear-on-stop failed", exc_info=True)

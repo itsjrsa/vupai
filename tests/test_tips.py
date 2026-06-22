@@ -77,3 +77,20 @@ def test_rotator_empty_pool_is_noop():
     rot.start()  # must not start a thread on an empty pool
     assert io.sent == []
     rot.stop()
+
+
+def test_rotator_stop_clears_tip():
+    # A stopped daemon must not leave a stale "tip: ..." pinned in status-left.
+    io = _FakeIO()
+    rot = tips.TipRotator(["a", "b"], io=io)
+    rot.start()
+    rot.stop()
+    assert io.sent[-1] == ""  # the final write blanks the tip
+
+
+def test_rotator_stop_without_start_does_not_clear():
+    # Never started (e.g. empty pool) -> nothing was set, so nothing to clear.
+    io = _FakeIO()
+    rot = tips.TipRotator([], io=io)
+    rot.stop()  # must not raise
+    assert io.sent == []
