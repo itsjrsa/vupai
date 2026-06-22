@@ -22,6 +22,7 @@ PANE_FORMAT = "\t".join(
         "#{@vupai_name}",
         "#{pane_current_command}",
         "#{pane_active}",
+        "#{session_name}",
     ]
 )
 

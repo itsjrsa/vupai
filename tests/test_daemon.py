@@ -117,7 +117,7 @@ class FakeFeedback:
         self.statuses.append(f"warming:{downloading}")
 
 
-PANE_LINE = "\t".join(["%1", "@1", "main", "0", "alpha", "node", "1"])
+PANE_LINE = "\t".join(["%1", "@1", "main", "0", "alpha", "node", "1", "repo"])
 
 
 def make_registry(lines: list[str], focused: str | None) -> PaneRegistry:
@@ -273,8 +273,8 @@ def test_inject_failure_falls_back_to_focused(tmp_path):
     recorder = FakeRecorder(wav)
     transcriber = FakeTranscriber("nova run it")
     lines = [
-        "\t".join(["%1", "@1", "main", "0", "alpha", "node", "1"]),
-        "\t".join(["%9", "@1", "main", "1", "nova", "node", "0"]),
+        "\t".join(["%1", "@1", "main", "0", "alpha", "node", "1", "repo"]),
+        "\t".join(["%9", "@1", "main", "1", "nova", "node", "0", "repo"]),
     ]
     registry = make_registry(lines, "%1")  # focused = %1
     feedback = FakeFeedback()
@@ -625,8 +625,8 @@ def test_per_utterance_error_writes_no_lifecycle_marker(tmp_path, monkeypatch):
 
 def test_unnamed_pane_excluded_from_asr_hints(tmp_path):
     # A pane whose name == id (pseudo-title set by tmux) must not be included.
-    named_line = "\t".join(["%1", "@1", "main", "0", "alpha", "node", "1"])
-    unnamed_line = "\t".join(["%2", "@1", "main", "1", "%2", "zsh", "0"])
+    named_line = "\t".join(["%1", "@1", "main", "0", "alpha", "node", "1", "repo"])
+    unnamed_line = "\t".join(["%2", "@1", "main", "1", "%2", "zsh", "0", "repo"])
     daemon, _, transcriber, _, _, _ = make_daemon(
         tmp_path, transcript="alpha hi", lines=[named_line, unnamed_line], focused="%1")
     daemon.on_press()
@@ -936,8 +936,8 @@ def test_command_unknown_rejects_on_pane(tmp_path):
 
 def _close_lines():
     return [
-        "\t".join(["%1", "@1", "main", "0", "alpha", "claude", "1"]),
-        "\t".join(["%9", "@1", "main", "1", "nova", "claude", "0"]),
+        "\t".join(["%1", "@1", "main", "0", "alpha", "claude", "1", "repo"]),
+        "\t".join(["%9", "@1", "main", "1", "nova", "claude", "0", "repo"]),
     ]
 
 

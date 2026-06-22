@@ -4,11 +4,12 @@ from vupai.registry import Pane, PaneRegistry, parse_panes
 # Two windows. Window @0 ("main") has a named pane and an unnamed pane;
 # window @1 ("editor") has one active named pane. Fields are tab-separated
 # in PANE_FORMAT order:
-#   pane_id  window_id  window_name  pane_index  @vupai_name  pane_current_command  pane_active
+#   pane_id  window_id  window_name  pane_index  @vupai_name  pane_current_command
+#   pane_active  session_name
 SAMPLE = [
-    "%0\t@0\tmain\t0\tbackend\tclaude\t1",
-    "%1\t@0\tmain\t1\t\tzsh\t0",            # unnamed pane: @vupai_name unset (empty field)
-    "%2\t@1\teditor\t0\tnotes\tnvim\t1",
+    "%0\t@0\tmain\t0\tbackend\tclaude\t1\trepo",
+    "%1\t@0\tmain\t1\t\tzsh\t0\trepo",      # unnamed pane: @vupai_name unset (empty field)
+    "%2\t@1\teditor\t0\tnotes\tnvim\t1\trepo",
 ]
 
 
@@ -25,6 +26,7 @@ def test_parse_panes_fields():
         name="backend",
         command="claude",
         active=True,
+        session="repo",
     )
 
     # index is parsed to int, active "0" -> False
@@ -37,7 +39,7 @@ def test_parse_panes_fields():
 
 
 def test_parse_panes_skips_blank_lines():
-    lines = ["", "%0\t@0\tmain\t0\tbackend\tclaude\t1", "   "]
+    lines = ["", "%0\t@0\tmain\t0\tbackend\tclaude\t1\trepo", "   "]
     panes = parse_panes(lines)
     assert len(panes) == 1
     assert panes[0].id == "%0"
@@ -56,7 +58,7 @@ def test_refresh_replaces_previous_panes():
     reg = PaneRegistry(lister=lambda: state["lines"], focuser=lambda: None)
     reg.refresh()
     assert len(reg.panes) == 3
-    state["lines"] = ["%9\t@2\tnew\t0\tfresh\tbash\t1"]
+    state["lines"] = ["%9\t@2\tnew\t0\tfresh\tbash\t1\trepo"]
     reg.refresh()
     assert len(reg.panes) == 1
     assert reg.panes[0].id == "%9"

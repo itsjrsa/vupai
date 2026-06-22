@@ -4,9 +4,9 @@ from vupai.registry import PaneRegistry
 from vupai.tmuxio import TmuxError
 from vupai.watcher import PaneState, PaneWatcher, classify_state
 
-NAMED = "\t".join(["%1", "@1", "main", "0", "nova", "claude", "1"])
-NAMED2 = "\t".join(["%9", "@1", "main", "2", "sage", "claude", "0"])
-UNNAMED = "\t".join(["%2", "@1", "main", "1", "%2", "zsh", "0"])
+NAMED = "\t".join(["%1", "@1", "main", "0", "nova", "claude", "1", "repo"])
+NAMED2 = "\t".join(["%9", "@1", "main", "2", "sage", "claude", "0", "repo"])
+UNNAMED = "\t".join(["%2", "@1", "main", "1", "%2", "zsh", "0", "repo"])
 
 
 def _reg(lines):

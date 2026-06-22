@@ -58,17 +58,17 @@ def test_run_raises_tmuxerror_on_nonzero_with_stderr(monkeypatch):
 
 
 def test_list_panes_argv_and_splits_lines(monkeypatch):
-    fake = FakeRun(stdout="%1\t@1\twin\t0\tname\tzsh\t1\n%2\t@1\twin\t1\tn2\tnode\t0\n")
+    fake = FakeRun(stdout="%1\t@1\twin\t0\tname\tzsh\t1\trepo\n%2\t@1\twin\t1\tn2\tnode\t0\trepo\n")
     patch_run(monkeypatch, fake)
     lines = tmuxio.list_panes()
     assert fake.calls[0]["args"] == ["tmux", "list-panes", "-a", "-F", tmuxio.PANE_FORMAT]
-    assert lines == ["%1\t@1\twin\t0\tname\tzsh\t1", "%2\t@1\twin\t1\tn2\tnode\t0"]
+    assert lines == ["%1\t@1\twin\t0\tname\tzsh\t1\trepo", "%2\t@1\twin\t1\tn2\tnode\t0\trepo"]
 
 
 def test_list_panes_ignores_blank_lines(monkeypatch):
-    fake = FakeRun(stdout="%1\t@1\twin\t0\tname\tzsh\t1\n\n")
+    fake = FakeRun(stdout="%1\t@1\twin\t0\tname\tzsh\t1\trepo\n\n")
     patch_run(monkeypatch, fake)
-    assert tmuxio.list_panes() == ["%1\t@1\twin\t0\tname\tzsh\t1"]
+    assert tmuxio.list_panes() == ["%1\t@1\twin\t0\tname\tzsh\t1\trepo"]
 
 
 @dataclass

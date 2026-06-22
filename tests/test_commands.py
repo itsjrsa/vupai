@@ -52,9 +52,9 @@ class FakeRegistry:
         pass
 
 
-def _pane(id, name, window_id="@1", active=False):
+def _pane(id, name, window_id="@1", active=False, session="repo"):
     return Pane(id=id, window_id=window_id, window="main", index=0,
-                name=name, command="zsh", active=active)
+                name=name, command="zsh", active=active, session=session)
 
 
 def test_wrap_agent_command_drops_to_shell_on_exit():
@@ -578,6 +578,19 @@ def test_execute_close_others_no_focused():
     assert res.ok is False and io.calls == []
 
 
+def test_execute_close_others_spares_other_sessions():
+    # Server-wide registry, but close-all must stay in the focused session so it
+    # can't kill another repo's panes.
+    focused = _pane("%1", "nova", active=True, session="repoA")
+    panes = [focused, _pane("%2", "atlas", session="repoA"),
+             _pane("%3", "orion", session="repoB")]
+    reg = FakeRegistry(panes, focused=focused)
+    io = FakeTmux()
+    res = execute_command(Command(kind="close_others"), reg, Config(), io=io)
+    assert res.ok
+    assert io.calls == [("kill_pane", "%2")]  # %3 (repoB) untouched
+
+
 def test_execute_broadcast_injects_each_named_pane():
     panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas"),
              _pane("%3", "%3")]  # %3 unnamed -> skipped
@@ -595,10 +608,28 @@ def test_execute_broadcast_injects_each_named_pane():
 
 
 def test_execute_broadcast_no_named_agents():
-    reg = FakeRegistry([_pane("%1", "%1", active=True)])
+    focused = _pane("%1", "%1", active=True)
+    reg = FakeRegistry([focused], focused=focused)
     res = execute_command(Command(kind="broadcast", text="hi"), reg, Config(),
                           io=FakeTmux(), inject_fn=lambda *a, **k: True)
     assert res.ok is False
+
+
+def test_execute_broadcast_stays_in_focused_session():
+    focused = _pane("%1", "nova", active=True, session="repoA")
+    panes = [focused, _pane("%2", "atlas", session="repoA"),
+             _pane("%3", "orion", session="repoB")]
+    reg = FakeRegistry(panes, focused=focused)
+    sent = []
+
+    def fake_inject(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05):
+        sent.append((pane_id, text))
+        return True
+
+    res = execute_command(Command(kind="broadcast", text="go"),
+                          reg, Config(), io=FakeTmux(), inject_fn=fake_inject)
+    assert res.ok and "2/2" in res.message  # only repoA agents
+    assert sent == [("%1", "go"), ("%2", "go")]
 
 
 def test_execute_broadcast_empty_text():
@@ -838,10 +869,28 @@ def test_execute_slash_to_all_named_panes():
 
 
 def test_execute_slash_to_all_no_named_agents():
-    reg = FakeRegistry([_pane("%1", "%1", active=True)])
+    focused = _pane("%1", "%1", active=True)
+    reg = FakeRegistry([focused], focused=focused)
     res = execute_command(Command(kind="slash", text="/clear", to_all=True), reg,
                           Config(), io=FakeTmux(), inject_fn=lambda *a, **k: True)
     assert res.ok is False
+
+
+def test_execute_slash_to_all_stays_in_focused_session():
+    focused = _pane("%1", "nova", active=True, session="repoA")
+    panes = [focused, _pane("%2", "atlas", session="repoA"),
+             _pane("%3", "orion", session="repoB")]
+    reg = FakeRegistry(panes, focused=focused)
+    sent = []
+
+    def fake_inject(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05):
+        sent.append((pane_id, text))
+        return True
+
+    res = execute_command(Command(kind="slash", text="/clear", to_all=True),
+                          reg, Config(), io=FakeTmux(), inject_fn=fake_inject)
+    assert res.ok and "2/2" in res.message  # only repoA agents
+    assert sent == [("%1", "/clear"), ("%2", "/clear")]
 
 
 def test_execute_slash_by_name_injects_literal():

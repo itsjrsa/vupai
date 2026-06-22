@@ -15,6 +15,7 @@ class Pane:
     name: str        # voice name (@vupai_name); == id when unset (unnamed)
     command: str     # pane_current_command
     active: bool     # pane_active "1" -> True
+    session: str = ""  # session_name; the pane's owning session (per-repo)
 
 
 def parse_panes(lines: Iterable[str]) -> list[Pane]:
@@ -22,7 +23,7 @@ def parse_panes(lines: Iterable[str]) -> list[Pane]:
 
     Field order matches tmuxio.PANE_FORMAT:
       pane_id, window_id, window_name, pane_index, @vupai_name,
-      pane_current_command, pane_active
+      pane_current_command, pane_active, session_name
     The voice-name field is empty when the @vupai_name option is unset; we
     fall back to the pane id there so unnamed panes keep the name == id contract.
     Blank/whitespace-only lines are skipped.
@@ -32,10 +33,10 @@ def parse_panes(lines: Iterable[str]) -> list[Pane]:
         if not line.strip():
             continue
         parts = line.split("\t")
-        if len(parts) != 7:
+        if len(parts) != 8:
             # Malformed row (e.g. a tab inside a name); skip defensively.
             continue
-        pane_id, window_id, window, index, name, command, active = parts
+        pane_id, window_id, window, index, name, command, active, session = parts
         name = name or pane_id  # unset @vupai_name -> treat as unnamed
         panes.append(
             Pane(
@@ -46,6 +47,7 @@ def parse_panes(lines: Iterable[str]) -> list[Pane]:
                 name=name,
                 command=command,
                 active=active == "1",
+                session=session,
             )
         )
     return panes

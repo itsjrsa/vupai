@@ -435,7 +435,11 @@ def _exec_close_others(cmd: Command, registry, config, io) -> CommandResult:
     focused = registry.focused()
     if focused is None:
         return CommandResult(False, "no focused pane to keep")
-    victims = [p for p in registry.panes if p.id != focused.id]
+    # Scope to the focused pane's session: the registry is server-wide
+    # (list-panes -a, for name routing), but "close all/others" must stay inside
+    # the current repo's session so it can't kill another repo's panes.
+    victims = [p for p in registry.panes
+               if p.id != focused.id and p.session == focused.session]
     if not victims:
         return CommandResult(False, "no other panes to close")
     for p in victims:
@@ -505,7 +509,13 @@ def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
 def _exec_broadcast(cmd: Command, registry, config, inject_fn) -> CommandResult:
     if not cmd.text.strip():
         return CommandResult(False, "nothing to broadcast")
-    targets = [p for p in registry.panes if p.name != p.id]
+    focused = registry.focused()
+    if focused is None:
+        return CommandResult(False, "no focused pane to scope the broadcast")
+    # Stay inside the focused session (see _exec_close_others): broadcast hits
+    # this repo's agents, not every agent on the server.
+    targets = [p for p in registry.panes
+               if p.name != p.id and p.session == focused.session]
     if not targets:
         return CommandResult(False, "no named agents to broadcast to")
     ok = 0
@@ -524,7 +534,13 @@ def _inject(inject_fn, pane_id, text, config) -> bool:
 def _exec_slash(cmd: Command, registry, config, inject_fn) -> CommandResult:
     literal = cmd.text
     if cmd.to_all:
-        targets = [p for p in registry.panes if p.name != p.id]
+        focused = registry.focused()
+        if focused is None:
+            return CommandResult(False, "no focused pane to scope the command")
+        # Session-scoped like broadcast/close-others: a slash to "all" targets
+        # this repo's agents, not the whole server.
+        targets = [p for p in registry.panes
+                   if p.name != p.id and p.session == focused.session]
         if not targets:
             return CommandResult(False, "no named agents")
         ok = sum(1 for p in targets if _inject(inject_fn, p.id, literal, config))
