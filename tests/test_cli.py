@@ -76,6 +76,10 @@ class FakeTmux:
 
     def run(self, args, *, stdin=None) -> str:
         self.calls.append(("run", tuple(args)))
+        # new-session is invoked with -P -F '#{pane_id}', so it prints the new
+        # pane id; ensure_up captures it to label the initial pane's program.
+        if args and args[0] == "new-session":
+            return "%0\n"
         return ""
 
 
@@ -193,7 +197,8 @@ def test_up_starts_server_when_down(monkeypatch, tmp_path):
     name = cli._resolve_session_name(None)
     cwd = cli.os.getcwd()
     run_calls = [c for c in ft.calls if c[0] == "run"]
-    assert ["new-session", "-d", "-s", name, "-c", cwd] in [list(c[1]) for c in run_calls]
+    assert ["new-session", "-d", "-P", "-F", "#{pane_id}",
+            "-s", name, "-c", cwd] in [list(c[1]) for c in run_calls]
     assert all(c[1][0] != "tmux" for c in run_calls)  # run() prepends tmux itself
 
 
@@ -212,7 +217,8 @@ def test_up_opens_initial_pane_on_agent_when_installed(monkeypatch, tmp_path):
     cwd = cli.os.getcwd()
     run_calls = [list(c[1]) for c in ft.calls if c[0] == "run"]
     # The agent is wrapped so the pane drops to a shell when it exits.
-    assert ["new-session", "-d", "-s", name, "-c", cwd,
+    assert ["new-session", "-d", "-P", "-F", "#{pane_id}",
+            "-s", name, "-c", cwd,
             "claude; exec ${SHELL:-/bin/sh} -i"] in run_calls
 
 
@@ -231,7 +237,8 @@ def test_up_falls_back_to_shell_when_agent_missing(monkeypatch, tmp_path, capsys
     name = cli._resolve_session_name(None)
     cwd = cli.os.getcwd()
     run_calls = [list(c[1]) for c in ft.calls if c[0] == "run"]
-    assert ["new-session", "-d", "-s", name, "-c", cwd] in run_calls  # no trailing program
+    assert ["new-session", "-d", "-P", "-F", "#{pane_id}",
+            "-s", name, "-c", cwd] in run_calls  # no trailing program
     assert "not found on PATH" in capsys.readouterr().out
 
 
@@ -278,7 +285,8 @@ def test_attach_named_creates_and_attaches(monkeypatch, tmp_path):
     assert rc == 0
     run_calls = [list(c[1]) for c in ft.calls if c[0] == "run"]
     cwd = cli.os.getcwd()
-    assert ["new-session", "-d", "-s", "backend", "-c", cwd] in run_calls
+    assert ["new-session", "-d", "-P", "-F", "#{pane_id}",
+            "-s", "backend", "-c", cwd] in run_calls
     assert ("attach", "backend") in ft.calls
 
 
@@ -322,7 +330,8 @@ def test_new_creates_when_absent(monkeypatch, tmp_path):
     rc = cli.main(["new", "backend"])
     assert rc == 0
     run_calls = [list(c[1]) for c in ft.calls if c[0] == "run"]
-    assert any(c[:4] == ["new-session", "-d", "-s", "backend"] for c in run_calls)
+    assert any(c[:7] == ["new-session", "-d", "-P", "-F", "#{pane_id}",
+                         "-s", "backend"] for c in run_calls)
     assert ("attach", "backend") in ft.calls
 
 

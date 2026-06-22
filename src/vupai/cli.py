@@ -277,7 +277,11 @@ def ensure_up(session: str | None = None) -> str:
         # again. `-c cwd` opens the session in the invoking directory; open the
         # initial pane on the agent (agent-first), falling back to a shell if it
         # isn't installed.
-        argv = ["new-session", "-d", "-s", name, "-c", os.getcwd()]
+        # -P -F prints the new session's initial pane id so we can target it
+        # exactly below. A bare "=name" is a valid *session* target but not a
+        # *pane* target, so `set -p -t =name` raises "no such pane".
+        argv = ["new-session", "-d", "-P", "-F", "#{pane_id}",
+                "-s", name, "-c", os.getcwd()]
         prog = _initial_pane_command(cfg)
         if prog:
             # Single arg: tmux runs it through the shell, so the wrapper's
@@ -286,10 +290,10 @@ def ensure_up(session: str | None = None) -> str:
         elif cfg.pane_command:
             print(f"'{cfg.pane_command}' not found on PATH - opening a shell "
                   "instead. Install it or set pane_command in the config.")
-        tmuxio.run(argv)
+        pane_id = tmuxio.run(argv).strip()
         # Label the initial pane's program too (created panes get this in
-        # _exec_create). "=name" exact-matches the new session's active pane.
-        tmuxio.set_pane_program(f"={name}", program_label(prog))
+        # _exec_create), targeting the captured pane id.
+        tmuxio.set_pane_program(pane_id, program_label(prog))
     tmuxio.enable_pane_titles()
     tmuxio.set_terminal_title()  # terminal tab reads "vupai - <session>"
     tmuxio.set_base_index()  # 1-based windows/panes so "focus two" matches the display
