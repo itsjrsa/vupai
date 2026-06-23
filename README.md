@@ -175,6 +175,8 @@ control word. Run `vupai voice-commands` for a cheat sheet tailored to your conf
 - *"focus nova"* → focus the **nova** pane (also: *"switch to / go to …"*).
 - *"swap nova and atlas"* → swap two named panes.
 - *"close nova"* → close a pane.
+- *"board"* / *"open board"* → open the **supervision board** pane (one per session;
+  repeating it focuses the existing board).
 - *"clear"* / *"clear nova"* / *"clear all"* → send a **slash command** (`/clear`)
   to the focused pane, a named pane, or every named agent. Extend the spoken verbs
   via `slash_commands` in the config.
@@ -196,9 +198,20 @@ control word. Run `vupai voice-commands` for a cheat sheet tailored to your conf
 | `vupai name <name> [pane]` | Label a pane (defaults to focused; rejects confusable names) |
 | `vupai autoname [pane]` | Assign the next free callsign to a pane (idempotent; used by the auto-name hooks) |
 | `vupai status` | Show panes, daemon status, and permission state |
+| `vupai board` | Open a supervision-board pane summarizing what each agent pane is doing |
 | `vupai mic [index\|name]` | List input devices, or pin one for speech (`vupai mic default` to unpin); `reload` to apply |
 | `vupai voice-commands` | Print the spoken-command cheat sheet for your config |
 | `vupai doctor` | Check permissions and print fix steps |
+
+### Supervision board
+
+`vupai board` splits a dedicated pane (right, ~40%) that shows, per named agent
+pane, a one-line summary of its main conclusion or pending action — handy when
+several panes each drive an agent on a different part of a project. It works with
+any agentic tool, not just Claude Code: pane activity is detected from terminal
+output churn, and the summarizer is a swappable command. To keep it cheap,
+summaries are produced only when a pane *settles* (finishes a burst of work),
+skipped when nothing changed, and throttled per pane. Close the pane to stop it.
 
 The push-to-talk daemon runs as a **detached background process** under your
 terminal app (not inside tmux — that's required for the global hotkey to work).
@@ -224,6 +237,8 @@ pane_command = "claude"                           # default program for voice-cr
 confirm_destructive = true                        # y/n popup before close / close-others / broadcast
 confirm_timeout_s = 8.0                            # popup auto-cancels after this (s)
 confirm_create_threshold = 8                      # also pop the confirm for "create N panes" when N >= this (set high to disable)
+board_summarizer_cmd = "claude -p --model claude-haiku-4-5"  # `vupai board` summarizer; swap for codex/gemini/ollama. Haiku keeps cost low
+board_min_summary_interval = 30.0                 # per-pane floor (s) between board summaries; bounds cost
 
 [programs]                                        # spoken token -> argv ("" = plain shell)
 claude = "claude"

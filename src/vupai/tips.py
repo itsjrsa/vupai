@@ -73,6 +73,7 @@ def build_tips(cfg) -> list[str]:
             "zoom nova",
             f"{_CLOSE_VERBS[0]} nova",
             "swap nova and atlas",
+            "open board",
         ]
         commands += [f"{verb} all" for verb in sorted(cfg.slash_commands)]
         commands += list(cfg.macros)

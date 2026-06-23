@@ -137,6 +137,50 @@ def set_pane_program(pane_id: str, label: str) -> None:
     run(["set", "-p", "-t", pane_id, "@vupai_program", label])
 
 
+def pane_program(pane_id: str) -> str:
+    """Read back a pane's @vupai_program label (the program vupai launched).
+
+    Empty when unset (plain shell, or a pane vupai did not create). Used by the
+    board to pick per-tool state markers; `-q` keeps an unset option from raising.
+    """
+    try:
+        return run(["show", "-pqv", "-t", pane_id, "@vupai_program"]).strip()
+    except TmuxError:
+        return ""
+
+
+def mark_board_pane(pane_id: str) -> None:
+    """Tag a pane as the supervision board so it can be excluded from watching."""
+    run(["set", "-p", "-t", pane_id, "@vupai_board", "1"])
+
+
+def pane_session(pane_id: str) -> str:
+    """Session name owning `pane_id` (empty string when it can't be resolved)."""
+    try:
+        return run(["display-message", "-p", "-t", pane_id, "#{session_name}"]).strip()
+    except TmuxError:
+        return ""
+
+
+def find_board_pane(session: str) -> str | None:
+    """Pane id of an existing supervision board in `session`, else None.
+
+    Used to keep `vupai board` from opening a second board in a session (two
+    boards would summarize each other's frames). Reads the @vupai_board tag set
+    by mark_board_pane.
+    """
+    fmt = "\t".join(["#{@vupai_board}", "#{session_name}", "#{pane_id}"])
+    try:
+        out = run(["list-panes", "-a", "-F", fmt])
+    except TmuxError:
+        return None
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[0] == "1" and parts[1] == session:
+            return parts[2]
+    return None
+
+
 def enable_pane_titles() -> None:
     run(["set", "-g", "pane-border-status", "top"])
     # Three segments, each shown only when present: voice name (bold), program,
@@ -437,12 +481,20 @@ def has_session(name: str) -> bool:
     return True
 
 
-def split_window(target: str, program: str) -> str:
+def split_window(target: str, program: str, *,
+                 horizontal: bool = False, size: str | None = None) -> str:
     """Split `target` (window or pane id); return the new pane id.
 
     Empty `program` omits the command so tmux launches the default shell.
+    `horizontal=True` (`-h`) splits left/right instead of top/bottom; `size`
+    (e.g. "40%") sets the new pane's extent (`-l`). The program stays last so it
+    is parsed as the pane command, not a flag value.
     """
     args = ["split-window", "-P", "-F", "#{pane_id}", "-t", target]
+    if horizontal:
+        args.append("-h")
+    if size:
+        args += ["-l", size]
     if program:
         args.append(program)
     return run(args).strip()
