@@ -292,6 +292,18 @@ class Daemon:
                     candidates=tuple(route_obj.candidates))
                 return
 
+            # System (button command) key: accept only commands (handled above)
+            # or an utterance that addresses a pane BY NAME/NUMBER. An unaddressed
+            # utterance lands on the focus fallback - verbatim-to-focused is the
+            # dictation key's job, so swallow it here instead of typing it into the
+            # focused pane (the misfire that made the system key "accept everything").
+            if mode == "system" and route_obj.fallback:
+                entry["outcome"] = "not_addressed"
+                self._feedback.reject(
+                    "not a command - name a pane or use the dictation key",
+                    self._hud_pane())
+                return
+
             if route_obj.pane_id is None:
                 entry["outcome"] = "no_target"
                 self._feedback.reject("no target", self._hud_pane())

@@ -155,7 +155,9 @@ Invariants) and talks to tmux purely via the CLI.
   the `hotkey` (dictation) injects verbatim into the focused pane (no parse, no
   name routing), and the `command_hotkey` (system, default Right-Command) runs the
   command layer with `addressing="button"` (no control word; a non-command falls
-  through to route+inject and is never swallowed as `unknown`). `keyword` is the
+  through to name/number routing, but an **unaddressed** utterance — one that hits
+  the focus fallback — is rejected, not injected, so the system key never duplicates
+  the dictation key's verbatim-to-focused write). `keyword` is the
   legacy single-PTT-key mode and **has no command layer** - only the spoken
   `broadcast_word` leads; everything else falls through to the router (name
   addressing) or verbatim focus dictation. The daemon threads a per-utterance
@@ -178,7 +180,11 @@ Invariants) and talks to tmux purely via the CLI.
 - **Command layer runs before the router.** `daemon._process` calls `handle_command`
   after transcribe; in button mode the system key's utterance is parsed as a command
   (or broadcast), executed by vupai and never injected. A non-command falls through
-  to route+inject (never swallowed as `unknown`). Interpretation (`parse_command`) is
+  to the router and injects **only when it addresses a pane by name/number**; an
+  unaddressed system-key utterance (focus fallback, `Route.fallback`) is rejected
+  (`outcome="not_addressed"`), since verbatim-to-focused is the dictation key's job.
+  `keyword` mode keeps the focus fallback (it has no command layer). Interpretation
+  (`parse_command`) is
   separate from execution (`execute_command`); the `Command` dataclass is the seam for
   a future local-LLM interpreter (rules-first, deferred, not built).
 - **Layout names are name-phrases, never lead verbs.** `layout <name>`

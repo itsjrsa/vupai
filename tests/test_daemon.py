@@ -1106,6 +1106,34 @@ def test_button_system_non_command_routes(tmp_path):
     assert inject_calls == [("%1", "hi there", 2.0, 0.05)]   # name stripped by route
 
 
+def test_button_system_unaddressed_rejected_not_injected(tmp_path):
+    # System key + non-command + no name match -> focus fallback. The system key
+    # must NOT type it into the focused pane (that's the dictation key's job);
+    # it rejects instead.
+    daemon, _, _, feedback, route_calls, inject_calls = make_daemon(
+        tmp_path, transcript="i think we should refactor",
+        lines=[PANE_LINE], focused="%1")
+    w = tmp_path / "s.wav"
+    w.write_bytes(b"\x00" * 5000)
+    daemon._process(w, "system")
+    assert route_calls                                        # routing was tried
+    assert inject_calls == []                                  # nothing typed
+    assert feedback.rejects
+    assert "dictation" in feedback.rejects[-1][0].lower()
+
+
+def test_keyword_unaddressed_still_focus_fallback(tmp_path):
+    # keyword mode has no command layer and relies on focus fallback by design,
+    # so the system-key guard must not touch it.
+    daemon, _, _, feedback, route_calls, inject_calls = make_daemon(
+        tmp_path, transcript="i think we should refactor",
+        lines=[PANE_LINE], focused="%1")
+    w = tmp_path / "k.wav"
+    w.write_bytes(b"\x00" * 5000)
+    daemon._process(w, "keyword")
+    assert inject_calls == [("%1", "i think we should refactor", 2.0, 0.05)]
+
+
 def test_button_dictation_injects_verbatim_to_focused(tmp_path):
     daemon, _, _, feedback, route_calls, inject_calls = make_daemon(
         tmp_path, transcript="nova computer create two panes",
