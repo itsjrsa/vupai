@@ -193,7 +193,9 @@ Invariants) and talks to tmux purely via the CLI.
   as the token(s) AFTER the verb. Never add a layout name to a `toks[0]`-matched
   set. Focus-aware main (`main-vertical`/`main-horizontal`) swaps the focused pane
   into the lowest-index "main" slot with `swap-pane -d` (keeps focus), then
-  `select-layout` (which auto-unzooms).
+  `select-layout` (which auto-unzooms). The `vupai voice-commands` cheat sheet
+  (`cli.py` `_voice_commands_text`) lists `layout <name>` with the canonical names
+  only (not aliases); keep that row in sync when the command set changes.
 - **Bulk "all" ops are session-scoped.** The registry is server-wide (`list-panes -a`,
   callsigns unique across the server) so name-addressed commands route across repos -
   but `close` all/others, `broadcast`, and slash-to-`all` filter to the **focused pane's
