@@ -175,6 +175,8 @@ control word. Run `vupai voice-commands` for a cheat sheet tailored to your conf
 - *"focus nova"* → focus the **nova** pane (also: *"switch to / go to …"*).
 - *"swap nova and atlas"* → swap two named panes.
 - *"close nova"* → close a pane.
+- *"board"* / *"open board"* → open the **supervision board** pane (one per session;
+  repeating it focuses the existing board).
 - *"clear"* / *"clear nova"* / *"clear all"* → send a **slash command** (`/clear`)
   to the focused pane, a named pane, or every named agent. Extend the spoken verbs
   via `slash_commands` in the config.

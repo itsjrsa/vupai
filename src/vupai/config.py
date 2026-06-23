@@ -95,7 +95,7 @@ class Config:
     board_summarizer_cmd: str = "claude -p --model claude-haiku-4-5"
     board_poll_interval: float = 2.0
     board_min_summary_interval: float = 30.0
-    board_summary_timeout_s: float = 12.0
+    board_summary_timeout_s: float = 20.0
     # Strip non-lexical filler tokens (um, uh, er, ah, eh, hmm, mm) from every
     # transcript before commands/routing/dictation see it. On by default: the
     # default set is non-lexical only, so removal is essentially risk-free, and
@@ -278,7 +278,8 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# board_min_summary_interval = 30.0\n'),
     ("board_summary_timeout_s",
      '# Hard timeout (seconds) for one summarizer invocation before falling back.\n'
-     '# board_summary_timeout_s = 12.0\n'),
+     '# (`claude -p` cold-starts a CLI per call, so keep this generous.)\n'
+     '# board_summary_timeout_s = 20.0\n'),
     ("filler_filter",
      '# Strip non-lexical filler tokens before commands/routing/dictation.\n'
      '# filler_filter = true\n'),

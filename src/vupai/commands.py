@@ -12,7 +12,7 @@ import shlex
 import shutil
 from dataclasses import dataclass
 
-from vupai import tmuxio
+from vupai import board, tmuxio
 from vupai.injector import inject
 from vupai.router import (
     _peel_fillers,
@@ -199,7 +199,8 @@ MAX_CREATE_COUNT = 30
 
 @dataclass(frozen=True)
 class Command:
-    # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|slash|broadcast|unknown
+    # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|board|slash|
+    # broadcast|unknown
     kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
@@ -328,6 +329,22 @@ def _parse_layout(toks: list[str]) -> Command | None:
     return Command(kind="layout", layout=layout, main_focus=main_focus)
 
 
+# Lead verbs that may precede "board" ("open board", "create board", "show
+# board"). Bare "board" works too. The create verbs already fail _parse_create
+# on "<verb> board" (no count follows), so they fall through to here cleanly.
+_BOARD_LEAD = frozenset(_CREATE_VERBS) | {"show"}
+
+
+def _parse_board(toks: list[str]) -> Command | None:
+    """`board` / `<open|create|show> board` -> open the supervision board."""
+    rest = [t for t in toks if t != "the"]
+    if rest == ["board"]:
+        return Command(kind="board")
+    if len(rest) == 2 and rest[1] == "board" and rest[0] in _BOARD_LEAD:
+        return Command(kind="board")
+    return None
+
+
 def _parse_slash(toks: list[str], slash_commands: dict[str, str]) -> Command | None:
     """`<verb> [target]` where verb is a configured slash command.
 
@@ -357,7 +374,7 @@ def _parse_body(body: str, macros: dict[str, list[str]],
     toks = _tokens(body)
     return (_parse_create(toks, programs) or _parse_close(toks)
             or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks)
-            or _parse_layout(toks)
+            or _parse_layout(toks) or _parse_board(toks)
             or _parse_slash(toks, slash_commands))
 
 
@@ -569,6 +586,16 @@ def _exec_layout(cmd: Command, registry, config, io) -> CommandResult:
     return CommandResult(True, f"layout {_LAYOUT_LABELS[cmd.layout]}")
 
 
+def _exec_board(cmd: Command, registry, config, io) -> CommandResult:
+    focused = registry.focused()
+    if focused is None:
+        return CommandResult(False, "no focused pane to attach the board to")
+    # open_board is one-per-session: it focuses an existing board instead of
+    # splitting a second one. Both outcomes are a success for the speaker.
+    _, message = board.open_board(focused.id, focused.session, io=io)
+    return CommandResult(True, message)
+
+
 def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
     msgs: list[str] = []
     ok = True
@@ -672,6 +699,8 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_unzoom(cmd, registry, config, io)
         if cmd.kind == "layout":
             return _exec_layout(cmd, registry, config, io)
+        if cmd.kind == "board":
+            return _exec_board(cmd, registry, config, io)
         if cmd.kind == "slash":
             return _exec_slash(cmd, registry, config, inject_fn)
         if cmd.kind == "broadcast":

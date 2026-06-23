@@ -1,6 +1,17 @@
 import subprocess
 
-from vupai.summarize import Summary, build_prompt, summarize
+from vupai.summarize import Summary, build_prompt, denoise, summarize
+
+# A realistic idle Claude Code pane tail: a poem, a duration line, the input box
+# with a queued follow-up, and the footer chrome at the very bottom.
+CLAUDE_TAIL = (
+    "till the terminal hushes and waits for the end.\n"
+    "\n"
+    "✻ Churned for 5s\n"
+    "─────\n"
+    "› make it a haiku\n"
+    "►► auto mode on (shift+tab to cycle) · ← for agents /rc"
+)
 
 
 def _runner(stdout="", returncode=0, *, capture=None):
@@ -110,7 +121,34 @@ def test_non_claude_command_pipeline_has_no_claude_coupling():
 def test_build_prompt_contains_instruction_and_tail():
     p = build_prompt("THE TAIL")
     assert "THE TAIL" in p
-    assert "ONE line" in p
+    assert "ONE short line" in p
+
+
+def test_denoise_strips_chrome_keeps_work():
+    out = denoise(CLAUDE_TAIL)
+    # work and the pending request survive
+    assert "waits for the end." in out
+    assert "make it a haiku" in out
+    # chrome is gone
+    assert "auto mode on" not in out
+    assert "shift+tab" not in out
+    assert "Churned for 5s" not in out
+    assert "─────" not in out
+
+
+def test_build_prompt_excludes_footer_chrome():
+    p = build_prompt(CLAUDE_TAIL)
+    assert "auto mode on" not in p
+    assert "make it a haiku" in p
+
+
+def test_fallback_skips_chrome_and_picks_real_line():
+    # Summarizer fails -> fallback must not echo the footer; it picks the last
+    # real line (the queued request), not "auto mode on ...".
+    s = summarize(CLAUDE_TAIL, cmd="claude -p", runner=_runner("", returncode=1))
+    assert s.source == "fallback"
+    assert "auto mode on" not in s.text
+    assert s.text == "make it a haiku"
 
 
 def test_fallback_no_output():

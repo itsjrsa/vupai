@@ -94,9 +94,9 @@ def render_frame(tracks, session: str, clock: str) -> str:
         glyph = _GLYPHS.get(t.state, _GLYPHS[PaneState.UNKNOWN])
         label = _STATE_LABEL.get(t.state, "...")
         out.append(f" {glyph} {t.callsign:<8} {t.program:<8} {label}")
-        if t.summary:
-            out.append(f"     {t.summary}")
-        out.append("")
+        # No blank spacer between panes: keep the board compact so every pane
+        # fits in a short board pane (a taller frame scrolls the top pane off).
+        out.append(f"     {t.summary}" if t.summary else "")
     return "\n".join(out)
 
 
@@ -120,7 +120,7 @@ class Board:
                  now=time.monotonic, poll_interval: float = 2.0,
                  min_summary_interval: float = 30.0,
                  summarizer_cmd: str = _DEFAULT_SUMMARIZER,
-                 summary_timeout: float = 12.0,
+                 summary_timeout: float = 20.0,
                  capture_lines: int = _CAPTURE_LINES, tail_bytes: int = _TAIL_BYTES,
                  max_concurrent: int = _MAX_CONCURRENT) -> None:
         self._registry = registry
@@ -353,3 +353,28 @@ def _default_program(pane) -> str:
     except Exception:
         prog = ""
     return prog or pane.command
+
+
+def _self_cmd() -> str:
+    """How to re-invoke this CLI from a tmux pane (absolute interpreter)."""
+    return f"{sys.executable} -m vupai"
+
+
+def open_board(target_pane: str, session: str, *, io=tmuxio,
+               self_cmd: str | None = None) -> tuple[bool, str]:
+    """Split a supervision-board pane off `target_pane`. Returns (opened, message).
+
+    One board per session: if `session` already has a board pane (the
+    @vupai_board tag), focus it and return (False, ...) rather than splitting a
+    second one (two boards would summarize each other's frames). Shared by the
+    `vupai board` CLI command and the spoken "board" verb.
+    """
+    existing = io.find_board_pane(session) if session else None
+    if existing is not None:
+        io.select_pane(existing)
+        return False, "board already open in this session"
+    inner = f"{self_cmd or _self_cmd()} _board"
+    pane_id = io.split_window(target_pane, inner, horizontal=True, size="40%")
+    io.set_pane_name(pane_id, "board")  # cosmetic; the board excludes itself by id
+    io.mark_board_pane(pane_id)
+    return True, "opened board"

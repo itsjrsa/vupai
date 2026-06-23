@@ -4,14 +4,21 @@ from vupai.registry import Pane
 
 
 class FakeTmux:
-    def __init__(self, new_ids=(), zoomed=False):
+    def __init__(self, new_ids=(), zoomed=False, board_pane=None):
         self.calls = []
         self._ids = list(new_ids)
         self._zoomed = zoomed
+        self._board_pane = board_pane
 
-    def split_window(self, target, program):
+    def split_window(self, target, program, *, horizontal=False, size=None):
         self.calls.append(("split_window", target, program))
         return self._ids.pop(0)
+
+    def find_board_pane(self, session):
+        return self._board_pane
+
+    def mark_board_pane(self, pane_id):
+        self.calls.append(("mark_board_pane", pane_id))
 
     def select_layout(self, target, layout):
         self.calls.append(("select_layout", target, layout))
@@ -1036,6 +1043,57 @@ def test_parse_layout_names_need_the_lead_verb():
 def test_parse_layout_is_button_mode_only():
     # keyword mode has no command layer.
     assert _parse("layout grid") is None
+
+
+# --- board -------------------------------------------------------------------
+
+def test_parse_board_bare_and_lead_verbs():
+    for phrase in ("board", "open board", "create board", "show board",
+                   "make board", "new board", "the board", "open the board"):
+        c = _parse_btn(phrase)
+        assert c == Command(kind="board"), phrase
+
+
+def test_parse_board_requires_the_board_noun():
+    # A lead verb without "board" is not a board command (create needs a count;
+    # bare "show" is dictation).
+    assert _parse_btn("show") is None
+    assert _parse_btn("open the nova") is None  # -> not a board command
+
+
+def test_parse_board_is_button_mode_only():
+    assert _parse("board") is None
+
+
+def test_exec_board_opens_pane_off_focused():
+    focused = _pane("%0", "nova", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux(new_ids=["%7"])
+    res = handle_command("open board", reg, Config(), io=io,
+                         inject_fn=lambda *a, **k: True, addressing="button")
+    assert res is not None and res.ok
+    splits = [c for c in io.calls if c[0] == "split_window"]
+    assert len(splits) == 1 and splits[0][2].endswith("_board")
+    assert ("mark_board_pane", "%7") in io.calls
+    assert ("set_pane_name", "%7", "board") in io.calls
+
+
+def test_exec_board_focuses_existing_instead_of_second_split():
+    focused = _pane("%0", "nova", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux(board_pane="%5")          # a board already exists in the session
+    res = handle_command("board", reg, Config(), io=io,
+                         inject_fn=lambda *a, **k: True, addressing="button")
+    assert res is not None and res.ok
+    assert [c for c in io.calls if c[0] == "split_window"] == []
+    assert ("select_pane", "%5") in io.calls
+
+
+def test_exec_board_no_focused_pane():
+    reg = FakeRegistry([], focused=None)
+    res = handle_command("board", reg, Config(), io=FakeTmux(),
+                         inject_fn=lambda *a, **k: True, addressing="button")
+    assert res is not None and res.ok is False
 
 
 # --- layout executor tests ---------------------------------------------------

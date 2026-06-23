@@ -15,7 +15,7 @@ from pathlib import Path
 
 from vupai import audio, tmuxio
 from vupai.asr import ParakeetTranscriber, model_cached
-from vupai.board import Board
+from vupai.board import Board, open_board
 from vupai.commands import (
     _CLOSE_VERBS,
     _CREATE_VERBS,
@@ -977,6 +977,7 @@ def _voice_commands_text(cfg: Config) -> str:
         "  zoom [name]                  zoom a pane (also: maximize / full screen)",
         "  unzoom                       restore layout (also: minimize / restore)",
         "  layout <name>                rearrange the window: grid / left / top / columns / rows",
+        "  board                        open the supervision board (also: open / show board)",
         "  <slash> [name|all]           send a slash command (focused / named / all)",
         f'      slash: {slash_verbs}   e.g. "clear all" -> /clear to every agent',
         "",
@@ -1073,22 +1074,14 @@ def _cmd_board(args: argparse.Namespace) -> int:
     if target is None:
         print("No tmux session yet - run `vupai up` (or attach) first.")
         return 1
-    # One board per session: a second board would summarize the first's frames
-    # (and vice versa), burning summarizer tokens. Focus the existing one instead.
     session = tmuxio.pane_session(target)
-    existing = tmuxio.find_board_pane(session) if session else None
-    if existing:
-        tmuxio.select_pane(existing)
-        print("Supervision board already open in this session.")
-        return 0
-    inner = f"{_self_cmd()} _board"
     try:
-        pane_id = tmuxio.split_window(target, inner, horizontal=True, size="40%")
-        tmuxio.set_pane_name(pane_id, "board")  # cosmetic; board excludes by id
-        tmuxio.mark_board_pane(pane_id)
+        opened, _ = open_board(target, session, io=tmuxio, self_cmd=_self_cmd())
     except TmuxError as exc:
         print(f"Could not open the board pane: {exc}")
         return 1
+    if not opened:
+        print("Supervision board already open in this session.")
     return 0
 
 
