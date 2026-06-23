@@ -974,6 +974,7 @@ def _voice_commands_text(cfg: Config) -> str:
         "  close the others             close every pane but the focused one",
         "  zoom [name]                  zoom a pane (also: maximize / full screen)",
         "  unzoom                       restore layout (also: minimize / restore)",
+        "  layout <name>                rearrange the window: grid / left / top / columns / rows",
         "  <slash> [name|all]           send a slash command (focused / named / all)",
         f'      slash: {slash_verbs}   e.g. "clear all" -> /clear to every agent',
         "",

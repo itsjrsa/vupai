@@ -1130,6 +1130,7 @@ def test_voice_commands_text_lists_verbs_and_words():
     for verb in (*_CREATE_VERBS, *_CLOSE_VERBS):
         assert verb in text
     assert "focus" in text and "swap" in text
+    assert "layout" in text  # layout command is documented
     # Config-driven broadcast word.
     assert "everyone" in text
 
