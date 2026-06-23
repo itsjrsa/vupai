@@ -83,6 +83,19 @@ class Config:
     notify_enabled: bool = False
     notify_poll_interval: float = 2.0
     notify_capture_lines: int = 12
+    # Supervision board (see board.py): a dedicated tmux pane that summarizes,
+    # per agent pane, the main conclusion / pending action. Launch manually with
+    # `vupai board`; board_enabled is reserved for a future auto-open on
+    # `vupai up`. Summaries are edge-triggered (only when a pane settles), so
+    # cost stays low. board_summarizer_cmd is swappable (e.g. "codex exec",
+    # "gemini -p", "ollama run <model>") and degrades to a non-LLM last-line
+    # summary when the command is absent or fails. The default uses Haiku, since
+    # a one-line glance summary does not need a high-tier model.
+    board_enabled: bool = False
+    board_summarizer_cmd: str = "claude -p --model claude-haiku-4-5"
+    board_poll_interval: float = 2.0
+    board_min_summary_interval: float = 30.0
+    board_summary_timeout_s: float = 12.0
     # Strip non-lexical filler tokens (um, uh, er, ah, eh, hmm, mm) from every
     # transcript before commands/routing/dictation see it. On by default: the
     # default set is non-lexical only, so removal is essentially risk-free, and
@@ -246,6 +259,26 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
     ("notify_capture_lines",
      "# How many lines of each pane's tail to classify busy/idle.\n"
      '# notify_capture_lines = 12\n'),
+    ("board_enabled",
+     '# Supervision board: a dedicated tmux pane summarizing each agent pane.\n'
+     '# Reserved for a future auto-open on `vupai up`; launch manually with\n'
+     '# `vupai board` regardless.\n'
+     '# board_enabled = false\n'),
+    ("board_summarizer_cmd",
+     '# Command that turns a pane\'s scrollback tail into a one-line summary.\n'
+     '# Swappable: "codex exec", "gemini -p", "ollama run <model>", etc. The\n'
+     '# prompt rides as the final argument; the last non-blank stdout line is the\n'
+     '# summary. Degrades to a non-LLM last-line summary if absent or it fails.\n'
+     '# board_summarizer_cmd = "claude -p --model claude-haiku-4-5"\n'),
+    ("board_poll_interval",
+     '# Board tick cadence (seconds).\n'
+     '# board_poll_interval = 2.0\n'),
+    ("board_min_summary_interval",
+     '# Per-pane floor (seconds) between summaries; bounds worst-case spend.\n'
+     '# board_min_summary_interval = 30.0\n'),
+    ("board_summary_timeout_s",
+     '# Hard timeout (seconds) for one summarizer invocation before falling back.\n'
+     '# board_summary_timeout_s = 12.0\n'),
     ("filler_filter",
      '# Strip non-lexical filler tokens before commands/routing/dictation.\n'
      '# filler_filter = true\n'),

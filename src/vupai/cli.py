@@ -15,6 +15,7 @@ from pathlib import Path
 
 from vupai import audio, tmuxio
 from vupai.asr import ParakeetTranscriber, model_cached
+from vupai.board import Board
 from vupai.commands import (
     _CLOSE_VERBS,
     _CREATE_VERBS,
@@ -482,6 +483,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         print(f"notify: enabled (poll {cfg.notify_poll_interval}s)")
     else:
         print("notify: disabled")
+    print(f"board: run `vupai board` (summarizer: {cfg.board_summarizer_cmd})")
     status = check_permissions()
     print(
         f"permissions: microphone={status.microphone} "
@@ -1057,6 +1059,76 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Supervision board
+# ---------------------------------------------------------------------------
+
+def _cmd_board(args: argparse.Namespace) -> int:
+    """`vupai board`: split a dedicated pane that summarizes the agent panes.
+
+    Splits to the right (~40% width) of the focused pane and launches the hidden
+    `_board` render loop there. The board excludes itself; close the pane to stop
+    it. Manual-launch only in v1.
+    """
+    target = tmuxio.focused_pane_id()
+    if target is None:
+        print("No tmux session yet - run `vupai up` (or attach) first.")
+        return 1
+    # One board per session: a second board would summarize the first's frames
+    # (and vice versa), burning summarizer tokens. Focus the existing one instead.
+    session = tmuxio.pane_session(target)
+    existing = tmuxio.find_board_pane(session) if session else None
+    if existing:
+        tmuxio.select_pane(existing)
+        print("Supervision board already open in this session.")
+        return 0
+    inner = f"{_self_cmd()} _board"
+    try:
+        pane_id = tmuxio.split_window(target, inner, horizontal=True, size="40%")
+        tmuxio.set_pane_name(pane_id, "board")  # cosmetic; board excludes by id
+        tmuxio.mark_board_pane(pane_id)
+    except TmuxError as exc:
+        print(f"Could not open the board pane: {exc}")
+        return 1
+    return 0
+
+
+def _cmd_board_render(args: argparse.Namespace) -> int:
+    """Hidden `_board`: the in-pane render loop (foreground process of its pane).
+
+    Mirrors `_cmd_daemon`'s signal handling: SIGTERM/SIGINT -> a clean stop, then
+    restore the prior handlers. Kills its own pane on exit so `vupai down` / a
+    manual stop tears the board down cleanly.
+    """
+    cfg = load_config()
+    board = Board(
+        PaneRegistry(),
+        summarizer_cmd=cfg.board_summarizer_cmd,
+        summary_timeout=cfg.board_summary_timeout_s,
+        poll_interval=cfg.board_poll_interval,
+        min_summary_interval=cfg.board_min_summary_interval,
+    )
+
+    def _shutdown(signum, frame):
+        board.stop()
+
+    previous: dict = {}
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            previous[sig] = signal.signal(sig, _shutdown)
+        board.run()
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+        own = os.environ.get("TMUX_PANE")
+        if own:
+            try:
+                tmuxio.kill_pane(own)
+            except TmuxError:
+                pass
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
 
@@ -1136,12 +1208,20 @@ def build_parser() -> argparse.ArgumentParser:
         "voice-commands", help="print the spoken-command cheat sheet"
     ).set_defaults(func=_cmd_voice_commands)
 
-    # Hidden: internal entrypoint the voice window runs; not shown in --help.
-    # Registered directly in the name map rather than via add_parser so it
-    # never appears in format_help() output.
+    sub.add_parser(
+        "board", help="open a pane summarizing what each agent pane is doing"
+    ).set_defaults(func=_cmd_board)
+
+    # Hidden: internal entrypoints run inside their own panes; not shown in
+    # --help. Registered directly in the name map rather than via add_parser so
+    # they never appear in format_help() output.
     hidden = argparse.ArgumentParser(prog="vupai _daemon")
     hidden.set_defaults(func=_cmd_daemon, command="_daemon")
     sub._name_parser_map["_daemon"] = hidden
+
+    hidden_board = argparse.ArgumentParser(prog="vupai _board")
+    hidden_board.set_defaults(func=_cmd_board_render, command="_board")
+    sub._name_parser_map["_board"] = hidden_board
 
     return parser
 

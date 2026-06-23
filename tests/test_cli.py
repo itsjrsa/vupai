@@ -12,6 +12,7 @@ class FakeTmux:
         self._server = server
         self._focused = focused
         self._inside_tmux = inside_tmux
+        self._board_pane = None        # set to a pane id to simulate an open board
         self.calls: list[tuple] = []
         self.daemon_spawns: list = []
 
@@ -73,6 +74,22 @@ class FakeTmux:
 
     def focused_pane_id(self):
         return self._focused
+
+    def split_window(self, target, program, *, horizontal=False, size=None):
+        self.calls.append(("split_window", target, program, horizontal, size))
+        return "%7"
+
+    def mark_board_pane(self, pane_id):
+        self.calls.append(("mark_board_pane", pane_id))
+
+    def pane_session(self, pane_id):
+        return "repo"
+
+    def find_board_pane(self, session):
+        return self._board_pane
+
+    def select_pane(self, pane_id):
+        self.calls.append(("select_pane", pane_id))
 
     def run(self, args, *, stdin=None) -> str:
         self.calls.append(("run", tuple(args)))
@@ -1175,7 +1192,7 @@ def test_voice_commands_prints(fake_env, monkeypatch, capsys):
 @pytest.mark.parametrize("argv", [
     [], ["up"], ["down"], ["reload"], ["status"], ["doctor"], ["voice-commands"],
     ["name", "x"], ["name", "x", "%3"], ["autoname"], ["autoname", "%3"],
-    ["keys"], ["_daemon"],
+    ["keys"], ["board"], ["_daemon"], ["_board"],
 ])
 def test_parser_accepts_all_subcommands(argv):
     parser = cli.build_parser()
@@ -1187,6 +1204,40 @@ def test_daemon_subcommand_is_hidden_in_help():
     parser = cli.build_parser()
     help_text = parser.format_help()
     assert "_daemon" not in help_text   # hidden, though still parseable (above)
+    assert "_board" not in help_text    # hidden too
+    assert "board" in help_text         # but the public `board` is listed
+
+
+def test_board_opens_pane_against_focused(fake_env):
+    ft, _ = fake_env
+    rc = cli.main(["board"])
+    assert rc == 0
+    splits = [c for c in ft.calls if c[0] == "split_window"]
+    assert len(splits) == 1
+    target, program, horizontal, size = splits[0][1:]
+    assert target == "%1"               # split the focused pane
+    assert program.endswith("_board")   # launches the hidden render loop
+    assert horizontal is True and size == "40%"
+    assert ("mark_board_pane", "%7") in ft.calls
+    assert ("set_pane_name", "%7", "board") in ft.calls
+
+
+def test_board_errors_without_focused_pane(fake_env, monkeypatch, capsys):
+    ft, _ = fake_env
+    monkeypatch.setattr(ft, "_focused", None)   # focused_pane_id() -> None
+    rc = cli.main(["board"])
+    assert rc == 1
+    assert "vupai up" in capsys.readouterr().out
+
+
+def test_board_does_not_open_second_board_in_session(fake_env, monkeypatch, capsys):
+    ft, _ = fake_env
+    monkeypatch.setattr(ft, "_board_pane", "%5")   # a board already exists
+    rc = cli.main(["board"])
+    assert rc == 0
+    assert [c for c in ft.calls if c[0] == "split_window"] == []  # no second split
+    assert ("select_pane", "%5") in ft.calls                      # focuses the existing one
+    assert "already open" in capsys.readouterr().out
 
 
 def test_prompt_yes_no_default_on_empty():

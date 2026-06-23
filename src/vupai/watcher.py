@@ -17,7 +17,6 @@ one version-fragile surface and is isolated in `classify_state` for that reason.
 """
 from __future__ import annotations
 
-import enum
 import logging
 import subprocess
 import threading
@@ -25,30 +24,14 @@ import time
 
 from vupai import tmuxio
 
+# PaneState and the marker classifier moved to panestate.py (shared with the
+# supervision board). Re-exported here so existing importers (and tests) that do
+# `from vupai.watcher import PaneState, classify_state` keep working unchanged.
+from vupai.panestate import PaneState, classify_state
+
 logger = logging.getLogger(__name__)
 
-
-class PaneState(enum.Enum):
-    WORKING = "working"   # the agent is generating (busy)
-    IDLE = "idle"         # back at the prompt, ready for input
-    UNKNOWN = "unknown"   # can't tell from the captured tail -> never notify
-
-
-# Heuristic anchors in Claude Code's TUI. FRAGILE across versions - the entire
-# version risk is concentrated here so a UI change is a one-edit fix. WORKING
-# wins over IDLE (both can momentarily appear during a redraw).
-_WORKING_MARKERS = ("esc to interrupt",)
-_IDLE_MARKERS = ("? for shortcuts",)
-
-
-def classify_state(tail_text: str) -> PaneState:
-    """Classify a pane's captured tail. Pure (no IO) and fixture-tested."""
-    low = tail_text.lower()
-    if any(m in low for m in _WORKING_MARKERS):
-        return PaneState.WORKING
-    if any(m in low for m in _IDLE_MARKERS):
-        return PaneState.IDLE
-    return PaneState.UNKNOWN
+__all__ = ["PaneState", "PaneWatcher", "classify_state"]
 
 
 def _osascript_quote(text: str) -> str:
