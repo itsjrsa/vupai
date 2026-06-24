@@ -487,3 +487,13 @@ def test_tts_overrides(tmp_path: Path) -> None:
     cfg = load_config(p)
     assert cfg.tts_enabled is False
     assert cfg.tts_cmd == "say -v Daniel"
+
+
+def test_read_max_sentences_defaults_to_two():
+    from vupai.config import Config
+    assert Config().read_max_sentences == 2
+
+
+def test_read_max_sentences_in_annotated_template():
+    from vupai.config import ANNOTATED_TEMPLATE
+    assert "read_max_sentences" in ANNOTATED_TEMPLATE

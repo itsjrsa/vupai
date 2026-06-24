@@ -143,6 +143,7 @@ class Config:
     # or the Ollama adapter); a buffering command (plain `claude -p`) still works,
     # it just speaks once at the end. Off -> the original whole-reply-at-once path.
     tts_stream: bool = True
+    read_max_sentences: int = 2
     # Silence (ms) inserted before a create's success ack ("sage is up") so it
     # doesn't tread on the heels of the present-tense intent ("opening an agent")
     # spoken a split-second earlier. The two are separate, non-awaited `say`
@@ -372,6 +373,11 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# default streaming summarizer (or the Ollama adapter); a buffering command\n'
      '# (plain claude -p) still works, it just speaks once at the end.\n'
      '# tts_stream = true\n'),
+    ("read_max_sentences",
+     "# read_max_sentences: how many sentences a spoken `read` of a single pane\n"
+     "# speaks before it stops (the streamed talk-back length cap). Lower = terser.\n"
+     "# Does not apply to `read board`, whose length tracks the agent count.\n"
+     '# read_max_sentences = 2\n'),
     ("tts_intent_gap_ms",
      '# Silence (ms) before a create\'s "<name> is up" ack so it doesn\'t run into\n'
      '# the "opening an agent" intent spoken a moment earlier. macOS `say` only;\n'
