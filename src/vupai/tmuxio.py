@@ -255,19 +255,24 @@ def enable_pane_titles() -> None:
     # command...", keeping the program visible even after the agent overwrites
     # pane_title with a conversation summary. Missing segments collapse cleanly:
     # name-only -> "sage · ✳ ...", program-only -> "claude · ✳ ...".
-    # No explicit colors in the format: text inherits the border style, so the
-    # whole title is teal on the active pane and gray on the rest - always
-    # cohesive. The active pane renders its ENTIRE title bold (name + program +
-    # summary as one teal block); unfocused panes bold only the callsign so the
-    # name still leads. Branch on #{?pane_active,<focused>,<unfocused>}.
+    # Callsign + program render together as a solid "chip" (a padded block with
+    # its own background, e.g. " ember · claude ") so the title reads as a label
+    # band distinct from the content below it - tmux has no real content padding,
+    # so the bg block is what gives the title separation. Chip color tracks focus:
+    # dark-teal chip on the active pane, dark-gray on the rest. After the chip,
+    # #[default] restores the border style (teal active / gray inactive) for the
+    # summary; the active branch re-bolds it so the whole focused title stays
+    # bold. Plain-shell panes (no callsign) fall back to program + summary with no
+    # chip. Note: commas inside #[...] would be read as conditional separators, so
+    # each attribute is its own #[...]. Branch on #{?pane_active,<focused>,<rest>}.
     run(["set", "-g", "pane-border-format",
          "#{?pane_active,"
-         "#[bold]#{?@vupai_name,#{@vupai_name} · ,}"
-         "#{?@vupai_program,#{@vupai_program} · ,}"
-         "#{pane_title},"
-         "#{?@vupai_name,#[bold]#{@vupai_name}#[nobold] · ,}"
-         "#{?@vupai_program,#{@vupai_program} · ,}"
-         "#{pane_title}}"])
+         "#[bold]#{?@vupai_name,"
+         "#[bg=colour30]#[fg=colour231] #{@vupai_name}#{?@vupai_program, · #{@vupai_program},} #[default]#[bold] · #{pane_title},"
+         "#{?@vupai_program,#{@vupai_program} · ,}#{pane_title}},"
+         "#{?@vupai_name,"
+         "#[bg=colour238]#[fg=colour253]#[bold] #{@vupai_name}#{?@vupai_program, · #{@vupai_program},} #[default] · #{pane_title},"
+         "#{?@vupai_program,#{@vupai_program} · ,}#{pane_title}}}"])
     # Border colors: dim every inactive edge, then light the focused pane's
     # border (and its title row) with a soft teal accent so the active pane
     # reads at a glance without clashing with the yellow/green status accents.

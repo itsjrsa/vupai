@@ -229,12 +229,12 @@ def test_enable_pane_titles_runs_both_set_commands(monkeypatch):
     assert fake.calls[2]["args"] == [
         "tmux", "set", "-g", "pane-border-format",
         "#{?pane_active,"
-        "#[bold]#{?@vupai_name,#{@vupai_name} · ,}"
-        "#{?@vupai_program,#{@vupai_program} · ,}"
-        "#{pane_title},"
-        "#{?@vupai_name,#[bold]#{@vupai_name}#[nobold] · ,}"
-        "#{?@vupai_program,#{@vupai_program} · ,}"
-        "#{pane_title}}",
+        "#[bold]#{?@vupai_name,"
+        "#[bg=colour30]#[fg=colour231] #{@vupai_name}#{?@vupai_program, · #{@vupai_program},} #[default]#[bold] · #{pane_title},"
+        "#{?@vupai_program,#{@vupai_program} · ,}#{pane_title}},"
+        "#{?@vupai_name,"
+        "#[bg=colour238]#[fg=colour253]#[bold] #{@vupai_name}#{?@vupai_program, · #{@vupai_program},} #[default] · #{pane_title},"
+        "#{?@vupai_program,#{@vupai_program} · ,}#{pane_title}}}",
     ]
 
 
