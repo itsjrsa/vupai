@@ -1550,22 +1550,50 @@ def _capture_writes(monkeypatch):
     return saved
 
 
+# PTT_KEYS indices used below: 0 alt_r, 1 alt, 2 cmd_r, 3 cmd, 4 ctrl_r,
+# 5 ctrl, 6 f13, 7 f14. A menu index / key name / 'p' toggles a key in the
+# running selection; "done" (or bare Enter) finishes the action.
+
+
 def test_keys_prompt_menu_index_button(fake_env, monkeypatch, tmp_path):
     saved = _capture_writes(monkeypatch)
     cfgpath = tmp_path / "missing.toml"
-    # addressing: keep (button); dictation idx 4 -> ctrl_r; command idx 2 -> cmd_r
-    cli._prompt_hotkey_setup(reader=_reader(["", "4", "2"]), config_path=cfgpath)
+    # addressing keep (button); dictation idx 4 -> ctrl_r; command idx 2 -> cmd_r
+    cli._prompt_hotkey_setup(
+        reader=_reader(["", "4", "done", "2", "done"]), config_path=cfgpath)
     assert saved == {
-        "addressing": "button", "hotkey": "ctrl_r", "command_hotkey": "cmd_r"}
+        "addressing": "button", "hotkey": ["ctrl_r"],
+        "command_hotkey": ["cmd_r"]}
+
+
+def test_keys_prompt_multiple_keys_per_action(fake_env, monkeypatch, tmp_path):
+    saved = _capture_writes(monkeypatch)
+    cfgpath = tmp_path / "missing.toml"
+    # dictation: ctrl_r (4) + f13 (6); command: cmd_r (2) + f14 (7)
+    cli._prompt_hotkey_setup(
+        reader=_reader(["", "4", "6", "done", "2", "7", "done"]),
+        config_path=cfgpath)
+    assert saved["hotkey"] == ["ctrl_r", "f13"]
+    assert saved["command_hotkey"] == ["cmd_r", "f14"]
+
+
+def test_keys_prompt_toggle_removes_key(fake_env, monkeypatch, tmp_path):
+    saved = _capture_writes(monkeypatch)
+    cfgpath = tmp_path / "missing.toml"
+    # dictation: add f13 (6), add ctrl_r (4), toggle f13 (6) off -> ctrl_r only
+    cli._prompt_hotkey_setup(
+        reader=_reader(["", "6", "4", "6", "done", "2", "done"]),
+        config_path=cfgpath)
+    assert saved["hotkey"] == ["ctrl_r"]
 
 
 def test_keys_prompt_exact_name(fake_env, monkeypatch, tmp_path):
     saved = _capture_writes(monkeypatch)
     cfgpath = tmp_path / "missing.toml"
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "f13", "f14"]), config_path=cfgpath)
-    assert saved["hotkey"] == "f13"
-    assert saved["command_hotkey"] == "f14"
+        reader=_reader(["", "f13", "done", "f14", "done"]), config_path=cfgpath)
+    assert saved["hotkey"] == ["f13"]
+    assert saved["command_hotkey"] == ["f14"]
 
 
 def test_keys_prompt_capture_press_a_key(fake_env, monkeypatch, tmp_path):
@@ -1573,11 +1601,24 @@ def test_keys_prompt_capture_press_a_key(fake_env, monkeypatch, tmp_path):
     cfgpath = tmp_path / "missing.toml"
     captures = iter(["ctrl_r", "cmd_r"])
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "p", "p"]),
+        reader=_reader(["", "p", "done", "p", "done"]),
         capture=lambda *a, **k: next(captures),
         config_path=cfgpath)
-    assert saved["hotkey"] == "ctrl_r"
-    assert saved["command_hotkey"] == "cmd_r"
+    assert saved["hotkey"] == ["ctrl_r"]
+    assert saved["command_hotkey"] == ["cmd_r"]
+
+
+def test_keys_prompt_press_is_add_only(fake_env, monkeypatch, tmp_path):
+    saved = _capture_writes(monkeypatch)
+    cfgpath = tmp_path / "missing.toml"
+    # Press ctrl_r twice: the second press is a no-op (not a toggle-off), so the
+    # key stays selected. command: cmd_r.
+    cli._prompt_hotkey_setup(
+        reader=_reader(["", "p", "p", "done", "2", "done"]),
+        capture=lambda *a, **k: "ctrl_r",
+        config_path=cfgpath)
+    assert saved["hotkey"] == ["ctrl_r"]
+    assert saved["command_hotkey"] == ["cmd_r"]
 
 
 def test_keys_prompt_bare_enter_keeps_current(fake_env, monkeypatch, tmp_path):
@@ -1585,29 +1626,32 @@ def test_keys_prompt_bare_enter_keeps_current(fake_env, monkeypatch, tmp_path):
     monkeypatch.setattr(
         cli, "set_hotkey_config", lambda *, path=None, **kw: wrote.append(kw))
     cfgpath = tmp_path / "missing.toml"  # defaults: button/alt_r/cmd_r
+    # addressing keep; finish each action without changes
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "", ""]), config_path=cfgpath)
+        reader=_reader(["", "done", "done"]), config_path=cfgpath)
     assert wrote == []  # nothing changed -> no write
 
 
 def test_keys_prompt_invalid_then_valid(fake_env, monkeypatch, tmp_path):
     saved = _capture_writes(monkeypatch)
     cfgpath = tmp_path / "missing.toml"
-    # dictation: junk then idx 4 (ctrl_r); command: idx 2 (cmd_r)
+    # dictation: junk (ignored) then idx 4 (ctrl_r); command: idx 2 (cmd_r)
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "nope", "4", "2"]), config_path=cfgpath)
-    assert saved["hotkey"] == "ctrl_r"
-    assert saved["command_hotkey"] == "cmd_r"
+        reader=_reader(["", "nope", "4", "done", "2", "done"]),
+        config_path=cfgpath)
+    assert saved["hotkey"] == ["ctrl_r"]
+    assert saved["command_hotkey"] == ["cmd_r"]
 
 
-def test_keys_prompt_collision_reasks_command(fake_env, monkeypatch, tmp_path):
+def test_keys_prompt_collision_excluded_from_command(fake_env, monkeypatch, tmp_path):
     saved = _capture_writes(monkeypatch)
     cfgpath = tmp_path / "missing.toml"
-    # dictation idx 4 (ctrl_r); command idx 4 (ctrl_r, collides) then idx 2 (cmd_r)
+    # dictation ctrl_r (4); command tries ctrl_r (4, excluded) then cmd_r (2)
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "4", "4", "2"]), config_path=cfgpath)
-    assert saved["hotkey"] == "ctrl_r"
-    assert saved["command_hotkey"] == "cmd_r"
+        reader=_reader(["", "4", "done", "4", "2", "done"]),
+        config_path=cfgpath)
+    assert saved["hotkey"] == ["ctrl_r"]
+    assert saved["command_hotkey"] == ["cmd_r"]
 
 
 def test_keys_prompt_keyword_mode(fake_env, monkeypatch, tmp_path):
@@ -1615,11 +1659,11 @@ def test_keys_prompt_keyword_mode(fake_env, monkeypatch, tmp_path):
     cfgpath = tmp_path / "missing.toml"
     # addressing 2 -> keyword; dictation idx 4 -> ctrl_r; no command prompt
     cli._prompt_hotkey_setup(
-        reader=_reader(["2", "4"]), config_path=cfgpath)
+        reader=_reader(["2", "4", "done"]), config_path=cfgpath)
     assert saved["addressing"] == "keyword"
-    assert saved["hotkey"] == "ctrl_r"
+    assert saved["hotkey"] == ["ctrl_r"]
     # command key preserved from current config (default cmd_r)
-    assert saved["command_hotkey"] == "cmd_r"
+    assert saved["command_hotkey"] == ["cmd_r"]
 
 
 def test_cmd_keys_prints_current_then_prompts(fake_env, monkeypatch, capsys):
@@ -1665,7 +1709,7 @@ def test_cmd_config_init_appends_missing_without_backup(
     # the missing keys are reported as added
     assert not (tmp_path / "config.toml.bak").exists()
     assert "Added" in out and "journal_enabled" in out
-    assert load_config(p).hotkey == "f13"
+    assert load_config(p).hotkey == ("f13",)
 
 
 def test_cmd_config_init_noop_when_complete(tmp_path, monkeypatch, capsys):

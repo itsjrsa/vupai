@@ -548,29 +548,46 @@ class Daemon:
         return ok
 
     def _make_hotkey(self):
-        """Pick the listener for the configured addressing mode. Button mode
-        needs two distinct, valid keys; on any misconfiguration fall back to a
-        single keyword Hotkey so the daemon still works as push-to-talk."""
+        """Build the push-to-talk listener for the configured addressing mode.
+
+        Both hotkey fields are tuples of pynput key names (see config); any key
+        in a list triggers that action. Button mode binds every dictation key to
+        the dictation callbacks and every system key to the command callbacks on
+        one MultiHotkey. On any misconfiguration (overlapping keys, an empty
+        list, or an unknown key name) it falls back to a keyword-mode listener
+        over the dictation keys so the daemon still works as push-to-talk."""
+        dict_keys = self._config.hotkey or ("alt_r",)
         if self._config.addressing == "button":
-            dict_key = self._config.hotkey
-            sys_key = self._config.command_hotkey
-            if dict_key == sys_key:
+            sys_keys = self._config.command_hotkey
+            overlap = set(dict_keys) & set(sys_keys)
+            if not sys_keys or overlap:
                 self._feedback.error(
-                    "addressing=button needs distinct hotkey/command_hotkey - "
-                    "falling back to keyword mode")
+                    "addressing=button needs non-empty, non-overlapping "
+                    "hotkey/command_hotkey - falling back to keyword mode")
             else:
                 try:
-                    return MultiHotkey([
-                        (dict_key, lambda: self._on_press("dictation"),
-                         lambda: self._on_release("dictation")),
-                        (sys_key, lambda: self._on_press("system"),
-                         lambda: self._on_release("system")),
-                    ])
+                    bindings = [
+                        (k, lambda: self._on_press("dictation"),
+                         lambda: self._on_release("dictation"))
+                        for k in dict_keys
+                    ] + [
+                        (k, lambda: self._on_press("system"),
+                         lambda: self._on_release("system"))
+                        for k in sys_keys
+                    ]
+                    return MultiHotkey(bindings)
                 except AttributeError:
                     self._feedback.error(
-                        f"unknown key name in config (hotkey={dict_key!r}, "
-                        f"command_hotkey={sys_key!r}) - falling back to keyword mode")
-        return Hotkey(self._config.hotkey, self.on_press, self.on_release)
+                        f"unknown key name in config (hotkey={dict_keys!r}, "
+                        f"command_hotkey={sys_keys!r}) - falling back to keyword mode")
+        try:
+            return MultiHotkey(
+                [(k, self.on_press, self.on_release) for k in dict_keys])
+        except AttributeError:
+            self._feedback.error(
+                f"unknown key name in config (hotkey={dict_keys!r}) - "
+                "using the default key")
+            return MultiHotkey([("alt_r", self.on_press, self.on_release)])
 
     def run(self) -> None:
         # warm() establishes MLX's thread-local GPU stream on THIS (main) thread;

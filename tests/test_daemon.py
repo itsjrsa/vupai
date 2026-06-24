@@ -353,7 +353,7 @@ def test_run_stops_recorder_still_recording_on_shutdown(tmp_path, monkeypatch):
             ...
 
     import vupai.daemon as dmod
-    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    monkeypatch.setattr(dmod, "MultiHotkey", FakeHotkey)
     daemon.stop()                         # pre-arm a clean shutdown
     daemon.run()
     assert recorder.is_recording is False
@@ -367,11 +367,10 @@ def test_run_warms_and_starts_hotkey(tmp_path, monkeypatch):
     started: list[str] = []
     instances: list = []
 
-    class FakeHotkey:
-        def __init__(self, key_name, on_press, on_release):
-            started.append(key_name)
-            self.on_press = on_press
-            self.on_release = on_release
+    class FakeMulti:
+        def __init__(self, bindings):
+            self.bindings = bindings
+            started.append("built")
             instances.append(self)
 
         def start(self):
@@ -381,17 +380,20 @@ def test_run_warms_and_starts_hotkey(tmp_path, monkeypatch):
             started.append("stop")
 
     import vupai.daemon as dmod
-    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    monkeypatch.setattr(dmod, "MultiHotkey", FakeMulti)
     # Pre-arm shutdown so the consumer loop exits immediately and run() returns.
     daemon.stop()
 
     daemon.run()
     assert transcriber.warmed == 1          # warmed on the main (run) thread
-    assert "alt_r" in started and "start" in started
+    assert "start" in started
     assert "stop" in started                # run()'s finally stops the hotkey
+    bindings = instances[0].bindings
+    keys = [b[0] for b in bindings]
+    assert keys == ["alt_r"]                 # keyword mode binds the dictation key
     # the listener received the daemon's real bound callbacks (wiring proof)
-    assert instances[0].on_press == daemon.on_press
-    assert instances[0].on_release == daemon.on_release
+    assert bindings[0][1] == daemon.on_press
+    assert bindings[0][2] == daemon.on_release
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +429,7 @@ def _run_once_with_fake_hotkey(daemon, monkeypatch) -> None:
             ...
 
     import vupai.daemon as dmod
-    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    monkeypatch.setattr(dmod, "MultiHotkey", FakeHotkey)
     daemon.stop()
     daemon.run()
 
@@ -518,7 +520,7 @@ def test_run_writes_ready_after_warm_and_stopped_on_exit(tmp_path, monkeypatch):
         order.append(f"state:{phase}")
 
     import vupai.daemon as dmod
-    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    monkeypatch.setattr(dmod, "MultiHotkey", FakeHotkey)
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
     d = Daemon(Config(addressing="keyword"), FakeRecorder(wav), Tx(),
@@ -553,7 +555,7 @@ def test_run_starts_and_stops_watcher(tmp_path, monkeypatch):
             ...
 
     import vupai.daemon as dmod
-    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    monkeypatch.setattr(dmod, "MultiHotkey", FakeHotkey)
     fw = FakeWatcher()
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
@@ -578,7 +580,7 @@ def test_run_without_state_writer_does_not_crash(tmp_path, monkeypatch):
             ...
 
     import vupai.daemon as dmod
-    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    monkeypatch.setattr(dmod, "MultiHotkey", FakeHotkey)
     daemon, _, _, _, _, _ = make_daemon(
         tmp_path, transcript="hi", lines=[PANE_LINE], focused="%1")
     daemon.stop()
@@ -607,7 +609,7 @@ def test_per_utterance_error_writes_no_lifecycle_marker(tmp_path, monkeypatch):
 
     phases: list[str] = []
     import vupai.daemon as dmod
-    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    monkeypatch.setattr(dmod, "MultiHotkey", FakeHotkey)
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
     d = Daemon(Config(addressing="keyword"), FakeRecorder(wav), Tx(),
@@ -1352,34 +1354,69 @@ def test_run_button_builds_multihotkey(tmp_path, monkeypatch):
     assert "alt_r" in keys and "cmd_r" in keys
 
 
-def test_run_button_duplicate_keys_falls_back(tmp_path, monkeypatch):
-    cfg = Config()
-    object.__setattr__(cfg, "addressing", "button")
-    object.__setattr__(cfg, "command_hotkey", "alt_r")   # same as the dictation key
+class _FakeMulti:
+    """Capture the bindings a MultiHotkey is built with."""
+    last: dict = {}
+
+    def __init__(self, bindings):
+        type(self).last = {"bindings": bindings}
+
+    def start(self):
+        ...
+
+    def stop(self):
+        ...
+
+
+def test_run_button_multiple_keys_per_action(tmp_path, monkeypatch):
+    cfg = Config(addressing="button", hotkey=["alt_r", "f13"],
+                 command_hotkey=["cmd_r", "f14"])
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber("hi"),
+               make_registry([PANE_LINE], "%1"), FakeFeedback())
+
+    import vupai.daemon as dmod
+    monkeypatch.setattr(dmod, "MultiHotkey", _FakeMulti)
+    d.stop()
+    d.run()
+    keys = [b[0] for b in _FakeMulti.last["bindings"]]
+    assert set(keys) == {"alt_r", "f13", "cmd_r", "f14"}
+
+
+def test_run_button_overlapping_keys_falls_back(tmp_path, monkeypatch):
+    # A key shared by both actions is ambiguous: fall back to keyword mode over
+    # the dictation keys and tell the user why.
+    cfg = Config(addressing="button", hotkey=["alt_r", "f13"],
+                 command_hotkey=["alt_r"])
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
     feedback = FakeFeedback()
     d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber("hi"),
                make_registry([PANE_LINE], "%1"), feedback)
 
-    used = []
-
-    class FakeHotkey:
-        def __init__(self, key, on_press, on_release):
-            used.append(key)
-
-        def start(self):
-            ...
-
-        def stop(self):
-            ...
-
     import vupai.daemon as dmod
-    monkeypatch.setattr(dmod, "Hotkey", FakeHotkey)
+    monkeypatch.setattr(dmod, "MultiHotkey", _FakeMulti)
     d.stop()
     d.run()
-    assert used == ["alt_r"]                    # fell back to a single keyword Hotkey
-    assert feedback.errors                       # told the user why
+    keys = [b[0] for b in _FakeMulti.last["bindings"]]
+    assert keys == ["alt_r", "f13"]              # keyword fallback over hotkeys
+    assert feedback.errors                        # told the user why
+
+
+def test_run_keyword_multiple_keys(tmp_path, monkeypatch):
+    cfg = Config(addressing="keyword", hotkey=["alt_r", "f13"])
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber("hi"),
+               make_registry([PANE_LINE], "%1"), FakeFeedback())
+
+    import vupai.daemon as dmod
+    monkeypatch.setattr(dmod, "MultiHotkey", _FakeMulti)
+    d.stop()
+    d.run()
+    keys = [b[0] for b in _FakeMulti.last["bindings"]]
+    assert keys == ["alt_r", "f13"]
 
 
 class _RecordingJournal:

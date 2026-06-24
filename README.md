@@ -231,9 +231,9 @@ It logs to `~/.config/vupai/daemon.log` and survives detach/reattach.
 Optional TOML at `~/.config/vupai/config.toml` (every field has a default):
 
 ```toml
-hotkey = "alt_r"                                  # pynput key name; alt_r = Right-Option (dictation key in button mode)
+hotkey = ["alt_r"]                                # pynput key name(s); alt_r = Right-Option (dictation key in button mode). List several to bind aliases across keyboards
 addressing = "button"                             # "button" (two keys, default) | "keyword" (one key, no command layer)
-command_hotkey = "cmd_r"                          # button mode: the "system" key (Right-Command)
+command_hotkey = ["cmd_r"]                         # button mode: the "system" key(s) (Right-Command). Also a list of alternatives
 broadcast_word = "everyone"                       # leading word that injects to all named agents
 model_id = "mlx-community/parakeet-tdt-0.6b-v2"   # English-only (v3 is multilingual and drifts to Russian on short clips)
 sample_rate = 16000
@@ -268,7 +268,9 @@ compact = "/compact"
 dictation key (`hotkey`) types your words verbatim into the focused pane, while the
 system key (`command_hotkey`) interprets them as a command, a broadcast, or a
 name-addressed message ("nova, are you there?"). The key is the control signal, so
-no spoken control word is needed. `keyword` mode is the legacy single-key mode: it
+no spoken control word is needed. Each key field is a list, so you can bind several
+keys to the same action (any one triggers it) and keep one config that works across
+keyboards with different layouts. `keyword` mode is the legacy single-key mode: it
 has no command layer - only the `broadcast_word` ("everyone ...") leads; everything
 else is name-addressed or dictated verbatim to the focused pane.
 

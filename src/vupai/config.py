@@ -8,11 +8,29 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 
+def _as_key_tuple(value: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """Normalize a hotkey field to a deduped tuple of pynput key names.
+
+    Accepts a single string (the historical form) or a list/tuple of strings
+    (the multi-key form). Order is preserved; duplicates and blanks are dropped.
+    """
+    names = [value] if isinstance(value, str) else list(value)
+    out: list[str] = []
+    for name in names:
+        name = str(name).strip()
+        if name and name not in out:
+            out.append(name)
+    return tuple(out)
+
+
 @dataclass(frozen=True)
 class Config:
-    hotkey: str = "alt_r"                 # pynput Key name; alt_r = Right-Option
+    # pynput Key name(s) for the push-to-talk dictation key. A bare string or a
+    # list of alternatives; normalized to a deduped tuple. alt_r = Right-Option.
+    hotkey: str | list[str] | tuple[str, ...] = ("alt_r",)
     addressing: str = "button"            # "button" (two-key, default) | "keyword"
-    command_hotkey: str = "cmd_r"         # button mode: the system key (Right-Command)
+    # button mode: the system/command key(s). Same str-or-list shape as hotkey.
+    command_hotkey: str | list[str] | tuple[str, ...] = ("cmd_r",)
     # English-only; v3 multilingual drifts to Russian on short audio.
     model_id: str = "mlx-community/parakeet-tdt-0.6b-v2"
     sample_rate: int = 16000
@@ -122,6 +140,14 @@ class Config:
     # through tmux's run-shell command strings.
     tmux_socket: str = "vupai"
 
+    def __post_init__(self) -> None:
+        # Coerce hotkey fields to deduped tuples regardless of how the Config was
+        # built (defaults, direct construction with a string/list, or load_config),
+        # so every consumer sees the same tuple shape.
+        object.__setattr__(self, "hotkey", _as_key_tuple(self.hotkey))
+        object.__setattr__(
+            self, "command_hotkey", _as_key_tuple(self.command_hotkey))
+
 
 CONFIG_PATH = Path.home() / ".config" / "vupai" / "config.toml"
 
@@ -169,15 +195,18 @@ _TEMPLATE_HEADER = (
 # appends only the blocks a file is missing. Adding a Config field => add a block.
 _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
     ("hotkey",
-     '# pynput Key name for the push-to-talk dictation key. alt_r = Right-Option.\n'
-     '# hotkey = "alt_r"\n'),
+     '# pynput Key name(s) for the push-to-talk dictation key. alt_r = Right-Option.\n'
+     '# A single key or a list of alternatives (any one triggers dictation), handy\n'
+     '# when you swap between keyboards with different layouts.\n'
+     '# hotkey = ["alt_r"]\n'),
     ("addressing",
      '# Addressing mode: "button" (two-key default) or "keyword" (legacy single key,\n'
      '# no command layer).\n'
      '# addressing = "button"\n'),
     ("command_hotkey",
-     '# button mode only: the system/command key that runs the command layer.\n'
-     '# command_hotkey = "cmd_r"\n'),
+     '# button mode only: the system/command key(s) that run the command layer.\n'
+     '# A single key or a list of alternatives, same shape as hotkey.\n'
+     '# command_hotkey = ["cmd_r"]\n'),
     ("model_id",
      '# ASR model id. English-only; the v3 multilingual model drifts to Russian on\n'
      '# short audio.\n'
@@ -422,17 +451,32 @@ def _escape_toml(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _merge_scalar_keys(updates: dict[str, str], *, path: Path | None) -> Path:
-    """Merge `key = "value"` string assignments into config.toml in place.
+def _format_toml(value: str | list[str] | tuple[str, ...]) -> str:
+    """Render a config value as a TOML right-hand side.
+
+    A string becomes a quoted scalar; a list/tuple becomes an inline array of
+    quoted strings. Every element is TOML-escaped.
+    """
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(f'"{_escape_toml(str(v))}"' for v in value) + "]"
+    return f'"{_escape_toml(str(value))}"'
+
+
+def _merge_scalar_keys(
+    updates: dict[str, str | list[str] | tuple[str, ...]], *,
+    path: Path | None,
+) -> Path:
+    """Merge `key = value` assignments into config.toml in place.
 
     Replaces each existing assignment (preserving comments and every other key)
     or appends it if absent, creating a starter file when none exists. `updates`
-    maps config key name -> raw string value; values are TOML-escaped here.
+    maps config key name -> a string (quoted scalar) or a list/tuple (TOML
+    array); values are formatted and escaped here.
     """
     target = path if path is not None else CONFIG_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     new_lines = {
-        key: f'{key} = "{_escape_toml(val)}"' for key, val in updates.items()
+        key: f"{key} = {_format_toml(val)}" for key, val in updates.items()
     }
     matchers = {
         key: re.compile(rf"^\s*#?\s*{re.escape(key)}\s*=") for key in updates
@@ -472,15 +516,18 @@ def set_mic_device(name: str, *, path: Path | None = None) -> Path:
 
 
 def set_hotkey_config(
-    *, addressing: str, hotkey: str, command_hotkey: str,
+    *, addressing: str,
+    hotkey: str | list[str] | tuple[str, ...],
+    command_hotkey: str | list[str] | tuple[str, ...],
     path: Path | None = None,
 ) -> Path:
     """Persist the trigger-key selection (addressing mode + PTT keys).
 
     Merges `addressing`, `hotkey`, and `command_hotkey` into config.toml in
     place (preserving comments and every other key), creating a starter file
-    when none exists. Mirrors `set_mic_device`; written by `vupai keys` and the
-    `vupai setup` hotkey step.
+    when none exists. `hotkey`/`command_hotkey` accept a single key name or a
+    list of alternatives; lists are written as TOML arrays. Mirrors
+    `set_mic_device`; written by `vupai keys` and the `vupai setup` hotkey step.
     """
     return _merge_scalar_keys(
         {

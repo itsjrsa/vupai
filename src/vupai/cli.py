@@ -828,50 +828,82 @@ def _prompt_addressing(current: str, reader) -> str:
     return current
 
 
-def _select_ptt_key(label: str, current: str, *, reader, capture,
-                    exclude: str | None = None) -> str | None:
-    """Interactive picker for one push-to-talk key.
+def _fmt_keys(keys) -> str:
+    """Render a hotkey tuple/list as a comma-joined string for display."""
+    return ", ".join(keys) if keys else "(none)"
 
-    Renders the curated PTT_KEYS menu (marking `current`) and accepts a list
-    index, an exact pynput key name, `p` to press a key (live capture), or bare
-    Enter to keep `current` (returns None). Re-prompts on invalid input or a
-    collision with `exclude`.
+
+def _resolve_named_key(token: str) -> str | None:
+    """Map a menu index or exact key name to a pynput key name.
+
+    Does NOT handle press-capture ('p') - the caller does that. Prints a hint
+    and returns None on anything invalid.
     """
-    while True:
-        print(f"\n{label}:")
-        for i, (name, friendly) in enumerate(PTT_KEYS):
-            mark = "*" if name == current else " "
-            print(f"  {mark} {i}  {friendly} ({name})")
-        print("    p  press a key")
-        try:
-            answer = reader(f"  Choice [keep {current}]: ").strip()
-        except (EOFError, OSError):
+    if token.isdigit():
+        idx = int(token)
+        if not 0 <= idx < len(PTT_KEYS):
+            print(f"  No key at index {idx} (have 0..{len(PTT_KEYS) - 1}).")
             return None
-        if not answer:
-            return None
+        return PTT_KEYS[idx][0]
+    if valid_key(token):
+        return token
+    print(f"  {token!r} is not a known key name. Try again.")
+    return None
 
+
+def _select_ptt_keys(label: str, current, *, reader, capture,
+                     exclude: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Interactive multi-key picker for one push-to-talk action.
+
+    The menu is printed once; the loop then shows only the running selection so
+    repeated entries don't redraw the whole list. A menu index or exact key name
+    toggles that key (add, or remove if already chosen); `p` press-captures a key
+    and adds it (never removes - re-pressing an already-chosen key is a no-op).
+    `done` or bare Enter finishes. Any key in `exclude` (reserved by the other
+    action) is refused so the two actions never share a key. Finishing with an
+    empty selection keeps `current` unchanged.
+    """
+    chosen: list[str] = []
+    exclude_set = set(exclude)
+
+    print(f"\n{label}:")
+    print(f"  configured: {_fmt_keys(current)}")
+    for i, (name, friendly) in enumerate(PTT_KEYS):
+        print(f"  {i:>2}  {friendly} ({name})")
+    print("  Enter a number or key name to add/remove, 'p' to press a key, "
+          "or Enter when done.")
+
+    while True:
+        print(f"  selection: {_fmt_keys(chosen)}")
+        try:
+            answer = reader("  Keys [done]: ").strip()
+        except (EOFError, OSError):
+            break
+        if not answer or answer.lower() == "done":
+            break
         if answer.lower() == "p":
             print("  Press the key you want to hold...")
-            chosen = capture()
-            if not chosen:
+            key = capture()
+            if not key:
                 print("  No key captured. Try again.")
                 continue
-        elif answer.isdigit():
-            idx = int(answer)
-            if not 0 <= idx < len(PTT_KEYS):
-                print(f"  No key at index {idx} (have 0..{len(PTT_KEYS) - 1}).")
-                continue
-            chosen = PTT_KEYS[idx][0]
-        elif valid_key(answer):
-            chosen = answer
+            if key in chosen:
+                print(f"  {key} is already selected.")
+            elif key in exclude_set:
+                print(f"  {key} is used by the other action; pick another.")
+            else:
+                chosen.append(key)
+            continue
+        key = _resolve_named_key(answer)
+        if key is None:
+            continue
+        if key in chosen:
+            chosen.remove(key)
+        elif key in exclude_set:
+            print(f"  {key} is used by the other action; pick another.")
         else:
-            print(f"  {answer!r} is not a known key name. Try again.")
-            continue
-
-        if exclude is not None and chosen == exclude:
-            print(f"  {chosen} is already the dictation key; pick another.")
-            continue
-        return chosen
+            chosen.append(key)
+    return tuple(dict.fromkeys(chosen)) if chosen else tuple(current)
 
 
 def _prompt_hotkey_setup(*, reader=None, capture=None,
@@ -888,34 +920,28 @@ def _prompt_hotkey_setup(*, reader=None, capture=None,
     print("\nTrigger keys (push-to-talk):")
     mode = _prompt_addressing(cfg.addressing, reader)
 
-    dictation = _select_ptt_key(
-        "Dictation key (hold to talk to the focused pane)", cfg.hotkey,
+    hotkey = _select_ptt_keys(
+        "Dictation keys (hold to talk to the focused pane)", cfg.hotkey,
         reader=reader, capture=capture)
-    hotkey = dictation if dictation is not None else cfg.hotkey
 
     command = cfg.command_hotkey
     if mode == "button":
-        picked = _select_ptt_key(
-            "Command key (commands, broadcast, addressing by name)",
+        command = _select_ptt_keys(
+            "Command keys (commands, broadcast, addressing by name)",
             cfg.command_hotkey, reader=reader, capture=capture, exclude=hotkey)
-        command = picked if picked is not None else cfg.command_hotkey
-        if command == hotkey:
-            print("  Command key must differ from the dictation key. "
-                  "Keeping current keys.")
-            return
 
     if (mode, hotkey, command) == (
             cfg.addressing, cfg.hotkey, cfg.command_hotkey):
         return  # nothing changed
 
     set_hotkey_config(
-        addressing=mode, hotkey=hotkey, command_hotkey=command,
+        addressing=mode, hotkey=list(hotkey), command_hotkey=list(command),
         path=config_path)
     if mode == "button":
-        print(f"  Keys set: dictation={hotkey}, command={command} "
-              "(button mode).")
+        print(f"  Keys set: dictation={_fmt_keys(hotkey)}, "
+              f"command={_fmt_keys(command)} (button mode).")
     else:
-        print(f"  Key set: dictation={hotkey} (keyword mode).")
+        print(f"  Keys set: dictation={_fmt_keys(hotkey)} (keyword mode).")
     if _daemon_running():
         print("  Run `vupai reload` for the daemon to pick it up.")
 
@@ -945,9 +971,9 @@ def _cmd_keys(args: argparse.Namespace) -> int:
     """Show the current trigger keys, then run the interactive picker."""
     cfg = load_config()
     print(f"Addressing: {cfg.addressing}")
-    print(f"  dictation key: {cfg.hotkey}")
+    print(f"  dictation key(s): {_fmt_keys(cfg.hotkey)}")
     if cfg.addressing == "button":
-        print(f"  command key:   {cfg.command_hotkey}")
+        print(f"  command key(s):   {_fmt_keys(cfg.command_hotkey)}")
     _prompt_hotkey_setup()
     return 0
 
@@ -1017,7 +1043,7 @@ def _voice_commands_text(cfg: Config) -> str:
         # Keyword mode is a single key with no command layer: dictation, name
         # addressing, and broadcast only. Commands live on the button system key.
         lines += [
-            f"Addressing mode: keyword (hold {cfg.hotkey}, then speak)",
+            f"Addressing mode: keyword (hold {_fmt_keys(cfg.hotkey)}, then speak)",
             "  no command layer here - switch to button mode for commands",
             "",
             f"Broadcast: {cfg.broadcast_word} <message>   send <message> to every named agent",
@@ -1031,8 +1057,9 @@ def _voice_commands_text(cfg: Config) -> str:
 
     lines += [
         "Addressing mode: button (hold a key, then speak)",
-        f"  system key    ({cfg.command_hotkey}): a command, broadcast, or an agent by name",
-        f"  dictation key ({cfg.hotkey}): typed verbatim into the focused pane",
+        f"  system key    ({_fmt_keys(cfg.command_hotkey)}): a command, "
+        "broadcast, or an agent by name",
+        f"  dictation key ({_fmt_keys(cfg.hotkey)}): typed verbatim into the focused pane",
         "",
         "Commands (hold the system key, then speak):",
         "  create <n> panes [program]   spin up n auto-named panes, tiled",

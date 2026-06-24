@@ -18,7 +18,7 @@ from vupai.config import (
 def test_defaults_when_no_file(tmp_path: Path) -> None:
     cfg = load_config(tmp_path / "does_not_exist.toml")
     assert isinstance(cfg, Config)
-    assert cfg.hotkey == "alt_r"
+    assert cfg.hotkey == ("alt_r",)
     assert cfg.model_id == "mlx-community/parakeet-tdt-0.6b-v2"
     assert cfg.sample_rate == 16000
     assert cfg.fuzzy_cutoff == 82
@@ -49,7 +49,7 @@ def test_overrides_selected_fields(tmp_path: Path) -> None:
         'cc = "main"\n'
     )
     cfg = load_config(p)
-    assert cfg.hotkey == "ctrl_r"
+    assert cfg.hotkey == ("ctrl_r",)
     assert cfg.fuzzy_cutoff == 90
     assert cfg.poll_interval == 1.5
     assert cfg.aliases == {"claude": "main", "cc": "main"}
@@ -66,7 +66,7 @@ def test_unknown_keys_ignored(tmp_path: Path) -> None:
         "another_unknown = 123\n"
     )
     cfg = load_config(p)
-    assert cfg.hotkey == "alt_l"
+    assert cfg.hotkey == ("alt_l",)
     assert not hasattr(cfg, "bogus_key")
     assert cfg == Config(hotkey="alt_l")
 
@@ -79,6 +79,45 @@ def test_config_is_frozen() -> None:
         assert "FrozenInstanceError" in type(exc).__name__
     else:
         raise AssertionError("Config should be frozen")
+
+
+def test_hotkey_defaults_are_tuples() -> None:
+    c = Config()
+    assert c.hotkey == ("alt_r",)
+    assert c.command_hotkey == ("cmd_r",)
+
+
+def test_hotkey_string_normalized_to_tuple() -> None:
+    c = Config(hotkey="ctrl_r", command_hotkey="cmd")
+    assert c.hotkey == ("ctrl_r",)
+    assert c.command_hotkey == ("cmd",)
+
+
+def test_hotkey_list_normalized_to_tuple() -> None:
+    c = Config(hotkey=["alt_r", "f13"], command_hotkey=["cmd_r", "f14"])
+    assert c.hotkey == ("alt_r", "f13")
+    assert c.command_hotkey == ("cmd_r", "f14")
+
+
+def test_hotkey_dedup_preserves_order() -> None:
+    c = Config(hotkey=["alt_r", "f13", "alt_r"])
+    assert c.hotkey == ("alt_r", "f13")
+
+
+def test_load_config_hotkey_array(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('hotkey = ["alt_r", "f13"]\ncommand_hotkey = ["cmd_r"]\n')
+    c = load_config(p)
+    assert c.hotkey == ("alt_r", "f13")
+    assert c.command_hotkey == ("cmd_r",)
+
+
+def test_load_config_hotkey_scalar_still_works(tmp_path: Path) -> None:
+    # Backward compatibility: a pre-existing scalar config keeps loading.
+    p = tmp_path / "config.toml"
+    p.write_text('hotkey = "ctrl_r"\n')
+    c = load_config(p)
+    assert c.hotkey == ("ctrl_r",)
 
 
 def test_command_defaults() -> None:
@@ -145,7 +184,7 @@ def test_write_full_config_roundtrips(tmp_path: Path) -> None:
     assert "# hotkey = " in p.read_text(encoding="utf-8")
     # untouched keys keep defaults
     assert c.journal_audio_retention == 500
-    assert c.hotkey == "alt_r"
+    assert c.hotkey == ("alt_r",)
 
 
 def test_update_config_creates_full_file_when_absent(tmp_path: Path) -> None:
@@ -176,7 +215,7 @@ def test_update_config_appends_only_missing_keys(tmp_path: Path) -> None:
     assert "# --- keys added by `vupai config --init` ---" in text
     # the chosen value survives; newly added keys load at their defaults
     c = load_config(p)
-    assert c.hotkey == "f13"
+    assert c.hotkey == ("f13",)
     assert c.journal_enabled is True
     assert c.confirm_create_threshold == 8
 
@@ -262,7 +301,7 @@ def test_set_mic_device_uncomments_in_place(tmp_path):
 def test_addressing_defaults() -> None:
     c = Config()
     assert c.addressing == "button"
-    assert c.command_hotkey == "cmd_r"
+    assert c.command_hotkey == ("cmd_r",)
 
 
 def test_loads_addressing_config(tmp_path: Path) -> None:
@@ -270,28 +309,41 @@ def test_loads_addressing_config(tmp_path: Path) -> None:
     p.write_text('addressing = "button"\ncommand_hotkey = "ctrl_r"\n')
     c = load_config(p)
     assert c.addressing == "button"
-    assert c.command_hotkey == "ctrl_r"
+    assert c.command_hotkey == ("ctrl_r",)
 
 
 def test_set_hotkey_config_creates_file(tmp_path: Path) -> None:
     p = tmp_path / "nested" / "config.toml"
     out = set_hotkey_config(
-        addressing="button", hotkey="alt_r", command_hotkey="cmd", path=p)
+        addressing="button", hotkey=["alt_r"], command_hotkey=["cmd"], path=p)
     assert out == p
     c = load_config(p)
     assert c.addressing == "button"
-    assert c.hotkey == "alt_r"
-    assert c.command_hotkey == "cmd"
+    assert c.hotkey == ("alt_r",)
+    assert c.command_hotkey == ("cmd",)
+
+
+def test_set_hotkey_config_writes_arrays(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    set_hotkey_config(
+        addressing="button", hotkey=["alt_r", "f13"],
+        command_hotkey=["cmd_r", "f14"], path=p)
+    text = p.read_text()
+    assert 'hotkey = ["alt_r", "f13"]' in text
+    assert 'command_hotkey = ["cmd_r", "f14"]' in text
+    c = load_config(p)
+    assert c.hotkey == ("alt_r", "f13")
+    assert c.command_hotkey == ("cmd_r", "f14")
 
 
 def test_set_hotkey_config_merges_preserving_other_keys(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
     set_mic_device("USB Mic", path=p)
     set_hotkey_config(
-        addressing="button", hotkey="f13", command_hotkey="cmd_r", path=p)
+        addressing="button", hotkey=["f13"], command_hotkey=["cmd_r"], path=p)
     c = load_config(p)
-    assert c.hotkey == "f13"
-    assert c.command_hotkey == "cmd_r"
+    assert c.hotkey == ("f13",)
+    assert c.command_hotkey == ("cmd_r",)
     # mic pin written earlier survives the merge
     assert c.mic_device == "USB Mic"
     assert "# vupai config" in p.read_text()
@@ -300,12 +352,13 @@ def test_set_hotkey_config_merges_preserving_other_keys(tmp_path: Path) -> None:
 def test_set_hotkey_config_replaces_existing_values(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
     set_hotkey_config(
-        addressing="button", hotkey="alt_r", command_hotkey="cmd_r", path=p)
+        addressing="button", hotkey=["alt_r"], command_hotkey=["cmd_r"], path=p)
     set_hotkey_config(
-        addressing="keyword", hotkey="ctrl_r", command_hotkey="cmd_r", path=p)
+        addressing="keyword", hotkey=["ctrl_r"], command_hotkey=["cmd_r"],
+        path=p)
     c = load_config(p)
     assert c.addressing == "keyword"
-    assert c.hotkey == "ctrl_r"
+    assert c.hotkey == ("ctrl_r",)
     text = p.read_text()
     assert text.count("hotkey =") == 2  # hotkey + command_hotkey, no dupes
     assert text.count("addressing =") == 1
@@ -415,7 +468,7 @@ def test_render_config_uncomments_named_scalar_keys(tmp_path):
     assert c.mic_device == "USB Mic"
     # untouched keys stay at defaults (still commented)
     assert c.journal_keep_audio is False
-    assert c.hotkey == "alt_r"
+    assert c.hotkey == ("alt_r",)
 
 
 def test_render_config_empty_active_equals_template():

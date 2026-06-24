@@ -60,7 +60,8 @@ def build_tips(cfg) -> list[str]:
     macros, and programs); keyword mode has no command layer, so only the
     broadcast and usage hints appear.
     """
-    talk_key = cfg.command_hotkey if cfg.addressing == "button" else cfg.hotkey
+    keys = cfg.command_hotkey if cfg.addressing == "button" else cfg.hotkey
+    talk_key = keys[0] if keys else "?"   # show the primary key in tips
     hints = [
         f"hold {talk_key} to talk",
         "set status_tips=false to hide these",
