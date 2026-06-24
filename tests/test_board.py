@@ -343,6 +343,17 @@ def test_collect_statuses_empty_panes_is_empty():
     assert _statuses([], {}) == []
 
 
+def test_collect_statuses_on_status_fires_in_pane_order():
+    # The streaming "read board" hook: on_status is called per pane, in pane
+    # order, as each summary lands - while the return value stays the full list.
+    panes = [_pane("%1", "nova"), _pane("%2", "atlas")]
+    frames = {"%1": ["esc to interrupt"], "%2": ["? for shortcuts"]}
+    seen = []
+    statuses = _statuses(panes, frames, on_status=lambda st: seen.append(st.callsign))
+    assert seen == ["nova", "atlas"]
+    assert [s.callsign for s in statuses] == ["nova", "atlas"]
+
+
 def test_speak_statuses_digest_format():
     from vupai.board import PaneStatus, speak_statuses
     out = speak_statuses([

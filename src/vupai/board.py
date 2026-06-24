@@ -383,7 +383,8 @@ def collect_statuses(panes, *, summarize_fn, capture_fn=tmuxio.capture_pane,
                      program_resolver=_default_program, settle_pause: float = 0.6,
                      sleep=time.sleep, capture_lines: int = _CAPTURE_LINES,
                      tail_bytes: int = _TAIL_BYTES,
-                     max_workers: int = _MAX_CONCURRENT) -> list[PaneStatus]:
+                     max_workers: int = _MAX_CONCURRENT,
+                     on_status=None) -> list[PaneStatus]:
     """Snapshot each pane's state + a one-line summary on demand, no board pane.
 
     Mirrors Board.tick without its polling thread: two captures `settle_pause`
@@ -427,37 +428,55 @@ def collect_statuses(panes, *, summarize_fn, capture_fn=tmuxio.capture_pane,
             logger.debug("read-board summarizer failed", exc_info=True)
             return None
 
-    if pending:
-        with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
-            summaries = list(ex.map(lambda item: _summ(item[4]), pending))
-    else:
-        summaries = []
-
     out: list[PaneStatus] = []
-    for (p, program, state, needs, _tail), summary in zip(pending, summaries):
-        text = summary.text if summary is not None else ""
-        # A summarizer that detected a pending question latches NEEDS even if the
-        # single-frame heuristic above missed it (e.g. the prompt scrolled).
-        needs = needs or (summary.needs_input if summary is not None else False)
-        st = PaneState.NEEDS_INPUT if needs else state
-        out.append(PaneStatus(p.name, program, st, text, needs))
+    if pending:
+        # Summaries run concurrently, but results are consumed in PANE order so a
+        # streaming `on_status` (the spoken `read board`) speaks agents in order:
+        # agent k is voiced the moment its summary lands, while later agents are
+        # still being summarized. `out` is still the full ordered list.
+        with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
+            futures = [ex.submit(_summ, item[4]) for item in pending]
+            for (p, program, state, needs, _tail), fut in zip(pending, futures):
+                summary = fut.result()
+                text = summary.text if summary is not None else ""
+                # A summarizer that detected a pending question latches NEEDS even
+                # if the single-frame heuristic missed it (e.g. the prompt scrolled).
+                needs = needs or (summary.needs_input if summary is not None else False)
+                st = PaneState.NEEDS_INPUT if needs else state
+                status = PaneStatus(p.name, program, st, text, needs)
+                if on_status is not None:
+                    try:
+                        on_status(status)
+                    except Exception:
+                        logger.debug("read-board on_status sink raised", exc_info=True)
+                out.append(status)
     return out
+
+
+def status_header(n: int) -> str:
+    """The board digest's opening line: "N agents on the board."."""
+    return f"{n} agent{'s' if n != 1 else ''} on the board."
+
+
+def status_clause(s) -> str:
+    """One agent's spoken clause: callsign, program, state, then summary.
+
+    Terminated so agents don't run together when a one-line summary lacks end
+    punctuation ("...the board atlas, claude..."); this is also the sentence
+    boundary the streaming SentenceSpeaker splits on.
+    """
+    label = _STATE_LABEL.get(s.state, "unknown")
+    head = f"{s.callsign}, {s.program}, {label}" if s.program else f"{s.callsign}, {label}"
+    clause = f"{head}: {s.summary}" if s.summary else head
+    return clause if clause.endswith((".", "!", "?")) else clause + "."
 
 
 def speak_statuses(statuses) -> str:
     """One spoken digest of every agent: callsign, program, state, then summary."""
     if not statuses:
         return "No agents to report."
-    n = len(statuses)
-    parts = [f"{n} agent{'s' if n != 1 else ''} on the board."]
-    for s in statuses:
-        label = _STATE_LABEL.get(s.state, "unknown")
-        head = f"{s.callsign}, {s.program}, {label}" if s.program else f"{s.callsign}, {label}"
-        clause = f"{head}: {s.summary}" if s.summary else head
-        # Terminate each clause so agents don't run together when a one-line
-        # summary lacks end punctuation ("...the board atlas, claude...").
-        parts.append(clause if clause.endswith((".", "!", "?")) else clause + ".")
-    return " ".join(parts)
+    return " ".join([status_header(len(statuses))]
+                    + [status_clause(s) for s in statuses])
 
 
 def _self_cmd() -> str:

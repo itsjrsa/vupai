@@ -1653,3 +1653,63 @@ def test_execute_read_streaming_disabled_uses_oneshot_summarizer():
     assert res.ok and res.message == "nova: one shot summary"
     assert spoken == ["nova: one shot summary"]
     assert streamed == []  # stream_fn never consulted
+
+
+# --- read board: streaming path ---------------------------------------------
+
+def test_execute_read_board_streaming_speaks_header_then_each_agent(monkeypatch):
+    import vupai.commands as cmds
+    from vupai.board import PaneStatus
+    from vupai.panestate import PaneState
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    sts = [PaneStatus("nova", "claude", PaneState.WORKING, "fixing the parser", False),
+           PaneStatus("atlas", "claude", PaneState.NEEDS_INPUT, "approve deploy?", True)]
+
+    def fake_collect(panes_arg, *, summarize_fn, on_status=None, **kw):
+        out = []
+        for s in sts:  # simulate summaries landing in pane order
+            if on_status is not None:
+                on_status(s)
+            out.append(s)
+        return out
+
+    monkeypatch.setattr(cmds.board, "collect_statuses", fake_collect)
+    spoken = []
+    res = execute_command(
+        Command(kind="read", to_all=True), reg, Config(), io=FakeTmux(),
+        speak_fn=lambda t: spoken.append(t))
+    assert res.ok
+    assert "2 agents on the board." in res.message
+    # Header is voiced first, then each agent clause in order, as they land.
+    assert spoken == [
+        "2 agents on the board.",
+        "nova, claude, working: fixing the parser.",
+        "atlas, claude, needs input: approve deploy?",
+    ]
+
+
+def test_execute_read_board_streaming_no_agents_is_reported():
+    focused = _pane("%1", "%1", active=True)  # unnamed: not an agent
+    reg = FakeRegistry([focused], focused=focused)
+    spoken = []
+    res = execute_command(
+        Command(kind="read", to_all=True), reg, Config(), io=FakeTmux(),
+        speak_fn=lambda t: spoken.append(t))
+    assert res.ok and res.message == "No agents to report."
+    assert spoken == ["No agents to report."]
+
+
+def test_execute_read_board_streaming_failure_is_reported_not_raised(monkeypatch):
+    import vupai.commands as cmds
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+
+    def boom(*a, **k):
+        raise RuntimeError("collect exploded")
+
+    monkeypatch.setattr(cmds.board, "collect_statuses", boom)
+    res = execute_command(
+        Command(kind="read", to_all=True), reg, Config(), io=FakeTmux(),
+        speak_fn=lambda t: None)
+    assert not res.ok and "couldn't read the board" in res.message
