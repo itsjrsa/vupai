@@ -180,10 +180,19 @@ class Config:
 CONFIG_PATH = Path.home() / ".config" / "vupai" / "config.toml"
 
 
+def _warn(message: str) -> None:
+    """Surface a non-fatal config problem on stderr (daemon stderr -> DAEMON_LOG)."""
+    print(f"vupai: config warning: {message}", file=sys.stderr)
+
+
 def load_config(path: Path | None = None) -> Config:
     """Load config from TOML; missing file or keys fall back to defaults.
 
-    Unknown keys in the file are ignored.
+    Unknown keys are ignored but warned about: a scalar placed after a `[table]`
+    header silently becomes a nested key (e.g. a top-level `confirm_destructive`
+    appended below `[programs]` parses as `programs.confirm_destructive` and is
+    lost). Warning on unknown top-level keys, and on non-string values inside the
+    `[programs]` map (whose contract is token -> argv string), catches that.
     """
     target = path if path is not None else CONFIG_PATH
     if not target.exists():
@@ -193,6 +202,17 @@ def load_config(path: Path | None = None) -> Config:
         data = tomllib.load(fh)
 
     known = {f.name for f in fields(Config)}
+    for key in data:
+        if key not in known:
+            _warn(f"unknown key '{key}' ignored "
+                  "(misplaced under a [table] header, or a typo?)")
+    programs = data.get("programs")
+    if isinstance(programs, dict):
+        for key, value in programs.items():
+            if not isinstance(value, str):
+                _warn(f"[programs] entry '{key}' = {value!r} is not a string; "
+                      "a top-level key landing under [programs] is ignored - "
+                      "move it above the [programs] header")
     kwargs = {key: value for key, value in data.items() if key in known}
     # TOML has no set type: accept filler_words as a list and normalize to a
     # lowercased frozenset matching the field type.

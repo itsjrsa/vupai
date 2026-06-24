@@ -58,7 +58,7 @@ def test_overrides_selected_fields(tmp_path: Path) -> None:
     assert cfg.sample_rate == 16000
 
 
-def test_unknown_keys_ignored(tmp_path: Path) -> None:
+def test_unknown_keys_ignored(tmp_path: Path, capsys) -> None:
     p = tmp_path / "config.toml"
     p.write_text(
         'hotkey = "alt_l"\n'
@@ -69,6 +69,25 @@ def test_unknown_keys_ignored(tmp_path: Path) -> None:
     assert cfg.hotkey == ("alt_l",)
     assert not hasattr(cfg, "bogus_key")
     assert cfg == Config(hotkey="alt_l")
+    err = capsys.readouterr().err
+    assert "unknown key 'bogus_key'" in err
+    assert "unknown key 'another_unknown'" in err
+
+
+def test_misplaced_key_under_programs_warns(tmp_path: Path, capsys) -> None:
+    # A top-level scalar appended after [programs] silently nests; the non-string
+    # value is the tell. Loading still succeeds (the master switch keeps default).
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[programs]\n"
+        'claude = "claude"\n'
+        "confirm_destructive = false\n"
+    )
+    cfg = load_config(p)
+    assert cfg.confirm_destructive is True  # default, not the misplaced false
+    err = capsys.readouterr().err
+    assert "confirm_destructive" in err
+    assert "[programs]" in err
 
 
 def test_config_is_frozen() -> None:

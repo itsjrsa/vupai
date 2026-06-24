@@ -572,8 +572,15 @@ def split_window(target: str, program: str, *,
     `horizontal=True` (`-h`) splits left/right instead of top/bottom; `size`
     (e.g. "40%") sets the new pane's extent (`-l`). The program stays last so it
     is parsed as the pane command, not a flag value.
+
+    `-c "#{pane_current_path}"` pins the new pane to the SOURCE pane's directory.
+    Without it, tmux inherits the cwd of the process issuing the split, i.e. the
+    long-lived daemon - whose cwd is arbitrary (often ~/.config/vupai), not the
+    project. The format is resolved against `target`, so a window target uses
+    its active pane's path and a pane target uses its own.
     """
-    args = ["split-window", "-P", "-F", "#{pane_id}", "-t", target]
+    args = ["split-window", "-P", "-F", "#{pane_id}",
+            "-c", "#{pane_current_path}", "-t", target]
     if horizontal:
         args.append("-h")
     if size:

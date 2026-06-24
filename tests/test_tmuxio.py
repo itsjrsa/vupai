@@ -518,7 +518,8 @@ def test_split_window_argv_returns_pane_id(monkeypatch):
     new_id = tmuxio.split_window("@1", "claude")
     assert new_id == "%9"
     assert fake.calls[0]["args"] == [
-        "tmux", "split-window", "-P", "-F", "#{pane_id}", "-t", "@1", "claude",
+        "tmux", "split-window", "-P", "-F", "#{pane_id}",
+        "-c", "#{pane_current_path}", "-t", "@1", "claude",
     ]
 
 
@@ -527,7 +528,8 @@ def test_split_window_empty_program_omits_arg(monkeypatch):
     patch_run(monkeypatch, fake)
     tmuxio.split_window("@1", "")
     assert fake.calls[0]["args"] == [
-        "tmux", "split-window", "-P", "-F", "#{pane_id}", "-t", "@1",
+        "tmux", "split-window", "-P", "-F", "#{pane_id}",
+        "-c", "#{pane_current_path}", "-t", "@1",
     ]
 
 
