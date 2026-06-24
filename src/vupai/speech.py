@@ -86,9 +86,18 @@ class SentenceSpeaker:
     too. Best-effort throughout: a failed utterance is skipped, never raised.
     """
 
-    def __init__(self, speak_one, *, join_on_close: bool = True):
+    def __init__(self, speak_one, *, join_on_close: bool = True,
+                 cancel: "threading.Event | None" = None,
+                 max_sentences: int | None = None):
         self._speak_one = speak_one
         self._join = join_on_close
+        # A shared cancel signal (the daemon sets it on barge-in). Default to a
+        # private, never-set Event so the un-cancelled path behaves as before.
+        self._cancel = cancel if cancel is not None else threading.Event()
+        # Length cap: enqueue at most this many sentences, drop the rest. None =
+        # uncapped (the board digest, whose length tracks the agent count).
+        self._max = max_sentences
+        self._count = 0
         self._buf = ""
         self._q: queue.Queue = queue.Queue()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -104,6 +113,8 @@ class SentenceSpeaker:
             item = self._q.get()
             if item is None:  # sentinel: drain done
                 return
+            if self._cancel.is_set():
+                continue  # interrupted: drain the queue without speaking
             try:
                 proc = self._speak_one(item)
             except Exception:
@@ -111,27 +122,45 @@ class SentenceSpeaker:
                 proc = None
             if proc is not None:
                 try:
-                    proc.wait()  # serialize: no overlapping audio
+                    proc.wait()  # serialize: no overlapping audio. A barge-in
+                    # terminates this proc (daemon._silence), so wait() returns.
                 except Exception:
                     pass
 
     def feed(self, text: str) -> None:
-        """Append streamed text; enqueue any complete sentences it completes."""
-        if not text:
+        """Append streamed text; enqueue any complete sentences it completes.
+
+        No-op once cancelled. Stops enqueuing once `max_sentences` is reached and
+        drops the buffered remainder so a chatty model can't run past the cap.
+        """
+        if self._cancel.is_set() or not text:
+            return
+        if self._max is not None and self._count >= self._max:
+            self._buf = ""
             return
         self._buf += text
         sentences, self._buf = split_sentences(self._buf)
         for s in sentences:
+            if self._max is not None and self._count >= self._max:
+                self._buf = ""  # cap hit mid-flush: drop the tail
+                return
             self._ensure_started()
             self._q.put(s)
+            self._count += 1
 
     def close(self) -> None:
-        """Flush the trailing fragment, then wait for playback to finish."""
+        """Flush the trailing fragment, then wait for playback to finish.
+
+        A cancelled or capped-out speaker flushes nothing (the remainder is past
+        the budget or explicitly interrupted), but still drains the worker.
+        """
         remainder = self._buf.strip()
         self._buf = ""
-        if remainder:
+        capped = self._max is not None and self._count >= self._max
+        if remainder and not self._cancel.is_set() and not capped:
             self._ensure_started()
             self._q.put(remainder)
+            self._count += 1
         if self._started:
             self._q.put(None)
             if self._join:

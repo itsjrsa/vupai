@@ -1,4 +1,5 @@
 import subprocess
+import threading
 
 from vupai.speech import SentenceSpeaker, speak, split_sentences
 
@@ -157,3 +158,40 @@ def test_sentence_speaker_swallows_speak_one_errors():
     sp = SentenceSpeaker(boom)
     sp.feed("boom now. ")
     sp.close()  # best-effort: the error is swallowed
+
+
+def test_sentence_speaker_caps_at_max_sentences():
+    spoken = []
+    sp = SentenceSpeaker(_capturing_speak_one(spoken), max_sentences=2)
+    sp.feed("One. Two. Three. Four. ")
+    sp.close()
+    assert spoken == ["One.", "Two."]  # third and fourth dropped by the cap
+
+
+def test_sentence_speaker_cap_drops_trailing_fragment_on_close():
+    spoken = []
+    sp = SentenceSpeaker(_capturing_speak_one(spoken), max_sentences=1)
+    sp.feed("Only one. and then a fragment")
+    sp.close()
+    assert spoken == ["Only one."]  # fragment past the cap is not flushed
+
+
+def test_sentence_speaker_cancelled_feed_is_a_noop():
+    spoken = []
+    ev = threading.Event()
+    ev.set()
+    sp = SentenceSpeaker(_capturing_speak_one(spoken), cancel=ev)
+    sp.feed("Should not speak. ")
+    sp.close()
+    assert spoken == []  # cancelled before any feed: nothing spoken
+
+
+def test_sentence_speaker_cancel_midstream_stops_following_sentences():
+    spoken = []
+    ev = threading.Event()
+    sp = SentenceSpeaker(_capturing_speak_one(spoken), cancel=ev)
+    sp.feed("First. ")   # may or may not have played yet
+    ev.set()             # interrupt
+    sp.feed("Second. ")  # cancelled: must not enqueue
+    sp.close()
+    assert "Second." not in spoken
