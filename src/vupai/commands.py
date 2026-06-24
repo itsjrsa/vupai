@@ -200,7 +200,7 @@ MAX_CREATE_COUNT = 30
 @dataclass(frozen=True)
 class Command:
     # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|board|read|
-    # talkback|slash|broadcast|unknown
+    # talkback|stop|slash|broadcast|unknown
     kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
@@ -401,6 +401,28 @@ def _parse_talkback(toks: list[str]) -> Command | None:
     return None
 
 
+# Transient "I've heard enough" - silences in-flight talk-back WITHOUT muting
+# future speech (that is `mute`/`unmute`). Kept strictly disjoint from
+# _TALKBACK_OFF so a stop never flips the persistent switch. Whole-utterance
+# match, like talkback, so common words never shadow a pane action.
+_TRANSIENT_STOP = frozenset({
+    "stop", "stop it", "enough", "that's enough", "thats enough", "that's all",
+    "thats all", "cancel", "never mind", "nevermind", "skip", "okay enough",
+    "ok enough",
+})
+
+
+def _parse_stop(toks: list[str]) -> Command | None:
+    """A transient `stop`/`enough`/`cancel` (and synonyms) -> silence talk-back.
+
+    Distinct from `mute`: it never touches the persistent talk-back switch; the
+    daemon just terminates whatever is currently speaking. None if no match."""
+    phrase = " ".join(t for t in toks if t not in ("the", "please"))
+    if phrase in _TRANSIENT_STOP:
+        return Command(kind="stop")
+    return None
+
+
 def _parse_slash(toks: list[str], slash_commands: dict[str, str]) -> Command | None:
     """`<verb> [target]` where verb is a configured slash command.
 
@@ -434,6 +456,7 @@ def _parse_body(body: str, macros: dict[str, list[str]],
     return (_parse_create(toks, programs) or _parse_close(toks)
             or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks)
             or _parse_layout(toks) or _parse_board(toks) or _parse_talkback(toks)
+            or _parse_stop(toks)
             or _parse_slash(toks, slash_commands) or _parse_read(toks))
 
 
@@ -1048,6 +1071,10 @@ def execute_command(cmd: Command, registry, config, *,
             # has no spoken twin - by the time it would speak, talk-back is muted.
             return CommandResult(True, talkback_message(cmd.enable),
                                  spoken="talk back on" if cmd.enable else "")
+        if cmd.kind == "stop":
+            # The actual silencing happens on the daemon (it owns the in-flight
+            # speech handles); this is the status/result for direct callers.
+            return CommandResult(True, "stopped")
         if cmd.kind == "read":
             return _exec_read(cmd, registry, config, io, capture_fn=capture_fn,
                               summarize_fn=summarize_fn, speak_fn=speak_fn,

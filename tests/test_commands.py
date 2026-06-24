@@ -1,3 +1,5 @@
+import pytest
+
 from vupai.commands import Command, execute_command, handle_command, parse_command
 from vupai.config import Config
 from vupai.registry import Pane
@@ -1741,3 +1743,35 @@ def test_exec_read_stream_applies_cap_and_cancel():
     assert res.ok
     # label "nova: " rides into the first sentence; cap=2 stops after two.
     assert spoken == ["nova: A.", "B."]
+
+
+# ---------------------------------------------------------------------------
+# Task 6: transient stop command
+# ---------------------------------------------------------------------------
+
+def _parse_stop_helper(text):
+    return parse_command(
+        text, broadcast_word="all", macros={}, programs={},
+        slash_commands={}, addressing="button")
+
+
+@pytest.mark.parametrize("phrase", [
+    "stop", "enough", "that's enough", "thats enough", "cancel",
+    "never mind", "nevermind", "skip", "stop it", "that's all", "thats all",
+])
+def test_stop_words_parse_to_stop(phrase):
+    cmd = _parse_stop_helper(phrase)
+    assert cmd is not None and cmd.kind == "stop"
+
+
+@pytest.mark.parametrize("phrase", ["mute", "quiet", "hush", "stop talking", "stop reading"])
+def test_mute_words_still_parse_to_talkback_off(phrase):
+    cmd = _parse_stop_helper(phrase)
+    assert cmd is not None and cmd.kind == "talkback" and cmd.enable is False
+
+
+def test_execute_stop_returns_stopped():
+    from vupai.commands import Command, execute_command
+    from vupai.config import Config
+    res = execute_command(Command(kind="stop"), registry=None, config=Config())
+    assert res.ok and res.message == "stopped"
