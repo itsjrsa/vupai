@@ -146,6 +146,13 @@ class Daemon:
         # by the "mute"/"unmute" voice command. A plain bool: written on the main
         # thread, read on the read worker - atomic enough in CPython, no lock.
         self._talkback = config.tts_enabled
+        # Barge-in plumbing. _read_cancel is the active streaming read's cancel
+        # Event (set on barge-in -> the SentenceSpeaker drains silently and the
+        # summarizer subprocess is killed). _last_ack is the most recent spoken
+        # process handle (an ack or a read sentence, since both go through
+        # _speak); terminating it cuts the currently-playing `say` mid-sentence.
+        self._read_cancel: "threading.Event | None" = None
+        self._last_ack = None
         self._journal = journal if journal is not None else Journal.from_config(config)
         self._hotkey: Hotkey | MultiHotkey | None = None
         self._stop_event = threading.Event()
@@ -158,6 +165,10 @@ class Daemon:
         self._jobs: queue.Queue = queue.Queue(maxsize=8)
 
     def _on_press(self, mode: str) -> None:
+        # Barge-in: the instant the user presses to speak, stop talking. Besides
+        # the natural feel, it stops `say` audio bleeding into the mic and
+        # polluting the transcript. Cheap (Event.set + terminate); safe here.
+        self._silence()
         if self._recorder.is_recording:
             return  # another key already holds the mic; ignore
         self._active_mode = mode
@@ -298,6 +309,9 @@ class Daemon:
                     # silent (it's already muted). No tmux mutation, no confirm gate.
                     self._talkback = cmd.enable
                     self._run_command(cmd, entry)
+                    return
+                if cmd.kind == "stop":
+                    self._handle_stop(cmd, entry)
                     return
                 # Voice the present-tense intent NOW, before the (popup-gated, often
                 # slow) execution, so feedback is immediate - but only for the
@@ -441,9 +455,11 @@ class Daemon:
         entry["decision"] = "command"
         entry["command"] = "read " + (cmd.name or "(focused)")
         entry["outcome"] = "dispatched"
-        self._async_fn(self._run_read, cmd)
+        cancel = threading.Event()
+        self._read_cancel = cancel
+        self._async_fn(self._run_read, cmd, cancel)
 
-    def _run_read(self, cmd: Command) -> None:
+    def _run_read(self, cmd: Command, cancel: "threading.Event | None" = None) -> None:
         """Worker body for a read: resolve + summarize + speak via execute_fn, on a
         fresh registry, then surface the spoken line.
 
@@ -461,7 +477,7 @@ class Daemon:
         try:
             result = self._execute_fn(
                 cmd, registry, self._config, inject_fn=self._inject_fn,
-                speak_fn=self._speak)
+                speak_fn=self._speak, cancel=cancel)
             if result.ok:
                 self._feedback.status(result.message)
             else:
@@ -512,17 +528,50 @@ class Daemon:
 
         Best-effort and non-blocking (speech.speak fires `say` and returns at once),
         so this is safe on the main thread. Shared by command acks and the read
-        worker, so the "mute"/"unmute" toggle covers both from one switch. Returns
-        the process handle (or None when muted/failed) so the read worker's
-        SentenceSpeaker can serialize streamed sentences on it; ack callers ignore
-        it. Muting mid-stream simply starts returning None, silencing the rest."""
+        worker (every streamed sentence flows through here), so the "mute"/"unmute"
+        toggle covers both AND _silence can terminate whatever is currently playing
+        via the stored handle. Returns the process handle (or None when muted/failed)
+        so the read worker's SentenceSpeaker serializes streamed sentences on it."""
         if not self._talkback or not self._config.tts_cmd:
             return None
         try:
-            return speech.speak(text, cmd=self._config.tts_cmd)
+            handle = speech.speak(text, cmd=self._config.tts_cmd)
         except Exception:
             logger.debug("talk-back speak failed", exc_info=True)
             return None
+        self._last_ack = handle
+        return handle
+
+    def _silence(self) -> None:
+        """Cut all in-flight talk-back: cancel the streaming read and terminate
+        the currently-playing utterance. Cheap and listener-thread-safe (only an
+        Event.set and a Popen.terminate), so it is safe to call from _on_press.
+        Best-effort: a missing or already-finished handle is a no-op. Does NOT
+        touch the persistent _talkback switch - this is transient."""
+        ev = self._read_cancel
+        if ev is not None:
+            try:
+                ev.set()
+            except Exception:
+                pass
+        handle = self._last_ack
+        if handle is not None:
+            try:
+                handle.terminate()
+            except Exception:
+                pass
+
+    def _handle_stop(self, cmd: Command, entry: dict) -> None:
+        """Transient barge-in word: silence in-flight talk-back, mute nothing.
+
+        The press that carried this utterance already silenced (see _on_press);
+        this also covers the case where speech started between press and parse,
+        and records the outcome. No tmux mutation, no confirm gate, no speech."""
+        self._silence()
+        entry["decision"] = "command"
+        entry["command"] = "stop"
+        entry["outcome"] = "ok"
+        self._feedback.status("stopped")
 
     def _hud_pane(self) -> str | None:
         """The pane to show HUD overlays on: the focused pane, or None."""

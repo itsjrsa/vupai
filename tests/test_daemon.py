@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import threading
 from pathlib import Path
 
 import pytest
@@ -1798,3 +1799,46 @@ def test_read_worker_swallows_execute_exception(tmp_path):
     # (only the pre-transcribe "working" indicator, never a read status/reject).
     assert feedback.statuses == ["working"]
     assert not feedback.rejects
+
+
+# ---------------------------------------------------------------------------
+# Task 7: _silence, barge-in on key-down, and stop-command handling
+# ---------------------------------------------------------------------------
+
+
+def test_on_press_silences_inflight_speech(tmp_path):
+    # Build a daemon using the standard make_daemon helper with minimal fakes.
+    daemon, _, _, _, _, _ = make_daemon(
+        tmp_path, transcript="", lines=[PANE_LINE], focused="%1"
+    )
+
+    ev = threading.Event()
+    daemon._read_cancel = ev
+
+    class _H:
+        def __init__(self): self.terminated = False
+        def terminate(self): self.terminated = True
+
+    handle = _H()
+    daemon._last_ack = handle
+
+    daemon._on_press("system")
+
+    assert ev.is_set(), "read-cancel Event must be set by _silence on key-down"
+    assert handle.terminated, "in-flight say handle must be terminated on key-down"
+
+
+def test_stop_command_silences_without_muting(tmp_path):
+    daemon, _, _, _, _, _ = make_daemon(
+        tmp_path, transcript="", lines=[PANE_LINE], focused="%1"
+    )
+    daemon._talkback = True
+    ev = threading.Event()
+    daemon._read_cancel = ev
+
+    entry: dict = {}
+    daemon._handle_stop(Command(kind="stop"), entry)
+
+    assert ev.is_set(), "_handle_stop must set the read-cancel Event"
+    assert daemon._talkback is True, "_handle_stop must not touch the persistent mute"
+    assert entry["outcome"] == "ok"
