@@ -108,7 +108,10 @@ class Config:
     # cost stays low. board_summarizer_cmd is swappable (e.g. "codex exec",
     # "gemini -p", "ollama run <model>") and degrades to a non-LLM last-line
     # summary when the command is absent or fails. The default uses Haiku, since
-    # a one-line glance summary does not need a high-tier model.
+    # a one-line glance summary does not need a high-tier model. To offload onto
+    # a (remote) Ollama box and skip the ~3s `claude -p` CLI cold-start per call,
+    # point it at scripts/ollama_summarize.py (keeps the model warm via
+    # keep_alive=-1); see that file's header and board_summarizer_cmd below.
     board_enabled: bool = False
     board_summarizer_cmd: str = "claude -p --model claude-haiku-4-5"
     board_poll_interval: float = 2.0
@@ -314,7 +317,9 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# Swappable: "codex exec", "gemini -p", "ollama run <model>", etc. The\n'
      '# prompt rides as the final argument; the last non-blank stdout line is the\n'
      '# summary. Degrades to a non-LLM last-line summary if absent or it fails.\n'
-     '# board_summarizer_cmd = "claude -p --model claude-haiku-4-5"\n'),
+     '# board_summarizer_cmd = "claude -p --model claude-haiku-4-5"\n'
+     '# Remote Ollama (no local CLI cold-start; model can live on another host):\n'
+     '# board_summarizer_cmd = "python3 /abs/path/scripts/ollama_summarize.py --host http://BOX:11434 --model qwen2.5:7b"\n'),
     ("board_poll_interval",
      '# Board tick cadence (seconds).\n'
      '# board_poll_interval = 2.0\n'),
@@ -323,7 +328,8 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# board_min_summary_interval = 30.0\n'),
     ("board_summary_timeout_s",
      '# Hard timeout (seconds) for one summarizer invocation before falling back.\n'
-     '# (`claude -p` cold-starts a CLI per call, so keep this generous.)\n'
+     '# (`claude -p` cold-starts a CLI per call, and a remote Ollama pays a model\n'
+     '# load on its first call after eviction, so keep this generous.)\n'
      '# board_summary_timeout_s = 20.0\n'),
     ("tts_enabled",
      '# Speak the "read <name>" command\'s summary aloud. On by default (the\n'

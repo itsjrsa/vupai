@@ -247,6 +247,8 @@ confirm_destructive = true                        # y/n popup before close / clo
 confirm_timeout_s = 8.0                            # popup auto-cancels after this (s)
 confirm_create_threshold = 8                      # also pop the confirm for "create N panes" when N >= this (set high to disable)
 board_summarizer_cmd = "claude -p --model claude-haiku-4-5"  # `vupai board` summarizer; swap for codex/gemini/ollama. Haiku keeps cost low
+# Offload to a (remote) Ollama box, skipping the ~3s `claude -p` CLI cold-start per call:
+# board_summarizer_cmd = "python3 /abs/path/scripts/ollama_summarize.py --host http://BOX:11434 --model qwen2.5:7b"
 board_min_summary_interval = 30.0                 # per-pane floor (s) between board summaries; bounds cost
 
 [programs]                                        # spoken token -> argv ("" = plain shell)
