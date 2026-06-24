@@ -1217,7 +1217,8 @@ def test_execute_read_named_pane_summarizes_and_speaks():
     res = execute_command(
         Command(kind="read", name="atlas"), reg, Config(), io=FakeTmux(),
         capture_fn=lambda pid: captured.append(pid) or "scrollback",
-        summarize_fn=lambda tail: _summary("ran the suite, all green"),
+        title_fn=lambda pid: "",
+        summarize_fn=lambda tail, _title: _summary("ran the suite, all green"),
         speak_fn=lambda text: spoken.append(text))
     assert res.ok
     assert captured == ["%2"]  # ...but the NAMED pane is read, not the focused one
@@ -1231,8 +1232,8 @@ def test_execute_read_bare_reads_focused_pane():
     spoken = []
     res = execute_command(
         Command(kind="read", name=""), reg, Config(), io=FakeTmux(),
-        capture_fn=lambda pid: "nova tail",
-        summarize_fn=lambda tail: _summary("waiting for input", needs_input=True),
+        capture_fn=lambda pid: "nova tail", title_fn=lambda pid: "",
+        summarize_fn=lambda tail, _title: _summary("waiting for input", needs_input=True),
         speak_fn=lambda t: spoken.append(t))
     assert res.ok and res.message == "nova: waiting for input"
     assert spoken == ["nova: waiting for input"]
@@ -1244,8 +1245,8 @@ def test_execute_read_unnamed_focused_pane_has_no_prefix():
     spoken = []
     res = execute_command(
         Command(kind="read", name=""), reg, Config(), io=FakeTmux(),
-        capture_fn=lambda pid: "shell tail",
-        summarize_fn=lambda tail: _summary("idle shell"),
+        capture_fn=lambda pid: "shell tail", title_fn=lambda pid: "",
+        summarize_fn=lambda tail, _title: _summary("idle shell"),
         speak_fn=lambda t: spoken.append(t))
     assert res.ok and res.message == "idle shell"  # no "<label>: " prefix
     assert spoken == ["idle shell"]
@@ -1255,7 +1256,7 @@ def test_execute_read_unknown_pane():
     reg = FakeRegistry([_pane("%1", "nova", active=True)], focused=None)
     res = execute_command(
         Command(kind="read", name="ghost"), reg, Config(), io=FakeTmux(),
-        capture_fn=lambda pid: "x", summarize_fn=lambda tail: _summary("x"),
+        capture_fn=lambda pid: "x", summarize_fn=lambda tail, _title: _summary("x"),
         speak_fn=lambda t: None)
     assert not res.ok and "no pane named ghost" in res.message
 
@@ -1264,7 +1265,7 @@ def test_execute_read_no_focused_pane():
     reg = FakeRegistry([], focused=None)
     res = execute_command(
         Command(kind="read", name=""), reg, Config(), io=FakeTmux(),
-        capture_fn=lambda pid: "x", summarize_fn=lambda tail: _summary("x"),
+        capture_fn=lambda pid: "x", summarize_fn=lambda tail, _title: _summary("x"),
         speak_fn=lambda t: None)
     assert not res.ok and "no focused pane" in res.message
 
@@ -1278,7 +1279,7 @@ def test_execute_read_capture_failure_is_reported_not_raised():
 
     res = execute_command(
         Command(kind="read", name="nova"), reg, Config(), io=FakeTmux(),
-        capture_fn=boom, summarize_fn=lambda tail: _summary("x"),
+        capture_fn=boom, summarize_fn=lambda tail, _title: _summary("x"),
         speak_fn=lambda t: None)
     assert not res.ok and "couldn't read nova" in res.message
 
@@ -1292,7 +1293,7 @@ def test_execute_read_ambiguous_names(monkeypatch):
         lambda *a, **k: NameMatch(None, None, 83.0, ("nova", "norma")))
     res = execute_command(
         Command(kind="read", name="nor"), reg, Config(), io=FakeTmux(),
-        capture_fn=lambda pid: "x", summarize_fn=lambda tail: _summary("x"),
+        capture_fn=lambda pid: "x", summarize_fn=lambda tail, _title: _summary("x"),
         speak_fn=lambda t: None)
     assert not res.ok and "ambiguous" in res.message and "nova" in res.message
 
@@ -1307,8 +1308,8 @@ def test_execute_read_tts_disabled_returns_summary_but_stays_silent(monkeypatch)
     reg = FakeRegistry(panes, focused=panes[0])
     res = execute_command(
         Command(kind="read", name="nova"), reg, Config(tts_enabled=False),
-        io=FakeTmux(), capture_fn=lambda pid: "tail",
-        summarize_fn=lambda tail: _summary("done"))
+        io=FakeTmux(), capture_fn=lambda pid: "tail", title_fn=lambda pid: "",
+        summarize_fn=lambda tail, _title: _summary("done"))
     assert res.ok and res.message == "nova: done"
     assert spawned == []
 
@@ -1351,12 +1352,13 @@ def test_execute_read_summarize_failure_is_reported_not_raised():
     panes = [_pane("%1", "nova", active=True)]
     reg = FakeRegistry(panes, focused=panes[0])
 
-    def boom(tail):
+    def boom(tail, _title):
         raise RuntimeError("summarizer exploded")
 
     res = execute_command(
         Command(kind="read", name="nova"), reg, Config(), io=FakeTmux(),
-        capture_fn=lambda pid: "tail", summarize_fn=boom, speak_fn=lambda t: None)
+        capture_fn=lambda pid: "tail", title_fn=lambda pid: "", summarize_fn=boom,
+        speak_fn=lambda t: None)
     assert not res.ok and "couldn't read nova" in res.message
 
 
@@ -1371,20 +1373,42 @@ def test_execute_read_speak_failure_is_swallowed_summary_survives():
 
     res = execute_command(
         Command(kind="read", name="nova"), reg, Config(), io=FakeTmux(),
-        capture_fn=lambda pid: "tail",
-        summarize_fn=lambda tail: _summary("all green"), speak_fn=boom)
+        capture_fn=lambda pid: "tail", title_fn=lambda pid: "",
+        summarize_fn=lambda tail, _title: _summary("all green"), speak_fn=boom)
     assert res.ok and res.message == "nova: all green"
 
 
-def test_default_summarizer_threads_config(monkeypatch):
+def test_default_summarizer_threads_config_and_title(monkeypatch):
+    # The read-back default uses the richer summarize_read, threading the board
+    # summarizer command/timeout AND the pane title through to it.
     from vupai.commands import _default_summarizer
     calls = []
     monkeypatch.setattr(
-        "vupai.summarize.summarize",
-        lambda tail, *, cmd, timeout: calls.append((tail, cmd, timeout)) or _summary("x"))
+        "vupai.summarize.summarize_read",
+        lambda tail, *, cmd, timeout, title: calls.append((tail, cmd, timeout, title))
+        or _summary("x"))
     cfg = Config(board_summarizer_cmd="codex exec", board_summary_timeout_s=12.0)
-    _default_summarizer(cfg)("the tail")
-    assert calls == [("the tail", "codex exec", 12.0)]
+    _default_summarizer(cfg)("the tail", "Fix the parser")
+    assert calls == [("the tail", "codex exec", 12.0, "Fix the parser")]
+
+
+def test_execute_read_passes_pane_title_to_summarizer():
+    # The pane title (what the pane is about) is fetched and handed to the
+    # summarizer for context.
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+    seen = {}
+
+    def summarize_fn(tail, title):
+        seen["title"] = title
+        return _summary("done")
+
+    res = execute_command(
+        Command(kind="read", name="nova"), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: "tail", title_fn=lambda pid: "Add voice read-back",
+        summarize_fn=summarize_fn, speak_fn=lambda t: None)
+    assert res.ok
+    assert seen["title"] == "Add voice read-back"
 
 
 def test_bound_tail_byte_limit_keeps_end_and_is_utf8_safe():

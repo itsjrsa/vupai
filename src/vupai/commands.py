@@ -636,10 +636,11 @@ def _bound_tail(text: str) -> str:
 
 
 def _default_summarizer(config):
-    """Reuse the board's summarizer config for the spoken read-back."""
-    return lambda tail: summarize.summarize(
+    """Spoken read-back summary: richer than the board line and grounded in the
+    pane title; reuses the board summarizer command + timeout."""
+    return lambda tail, title: summarize.summarize_read(
         tail, cmd=config.board_summarizer_cmd,
-        timeout=config.board_summary_timeout_s)
+        timeout=config.board_summary_timeout_s, title=title)
 
 
 def _default_speaker(config):
@@ -649,17 +650,19 @@ def _default_speaker(config):
     return lambda text: speech.speak(text, cmd=config.tts_cmd)
 
 
-def _exec_read(cmd: Command, registry, config, io, *,
-               capture_fn=None, summarize_fn=None, speak_fn=None) -> CommandResult:
+def _exec_read(cmd: Command, registry, config, io, *, capture_fn=None,
+               summarize_fn=None, speak_fn=None, title_fn=None) -> CommandResult:
     """Resolve a pane (named, else focused), summarize its tail, speak it.
 
     Read-only: it captures + summarizes + speaks, never injects or mutates tmux,
     so it is safe to run on a background thread (the daemon does, off the main
-    pipeline). The summary reuses the board summarizer; the spoken line is also
-    the CommandResult message, so it surfaces on the status line even with TTS
-    off. Collaborators are injected for the unit suite (no real CLI / no audio).
+    pipeline). The summary is grounded in the pane title (what the pane is about);
+    the spoken line is also the CommandResult message, so it surfaces on the status
+    line even with TTS off. Collaborators are injected for the unit suite (no real
+    CLI / no audio). summarize_fn takes (tail, title).
     """
     capture_fn = capture_fn or tmuxio.capture_pane
+    title_fn = title_fn or tmuxio.pane_title
     summarize_fn = summarize_fn or _default_summarizer(config)
     speak_fn = speak_fn or _default_speaker(config)
     if cmd.name:
@@ -678,12 +681,12 @@ def _exec_read(cmd: Command, registry, config, io, *,
         # An unnamed focused pane (name == id) speaks without a callsign prefix.
         label = focused.name if focused.name != focused.id else ""
     try:
-        text = capture_fn(pane_id)
-        summary = summarize_fn(_bound_tail(text))
+        tail = _bound_tail(capture_fn(pane_id))
+        summary = summarize_fn(tail, title_fn(pane_id))
     except Exception:
         # Read is read-only and runs on a worker thread (daemon._run_read), so it
         # must never raise. The default capture/summarize degrade internally; this
-        # also guards a custom summarize_fn that raises.
+        # also guards a custom summarize_fn/title_fn that raises.
         return CommandResult(False, f"couldn't read {label or 'the focused pane'}")
     spoken = f"{label}: {summary.text}" if label else summary.text
     try:
@@ -778,10 +781,10 @@ def _exec_slash(cmd: Command, registry, config, inject_fn) -> CommandResult:
 def execute_command(cmd: Command, registry, config, *,
                     io=tmuxio, inject_fn=inject,
                     capture_fn=None, summarize_fn=None,
-                    speak_fn=None) -> CommandResult:
-    # capture_fn/summarize_fn/speak_fn are read-command seams (None -> built from
-    # config); only the read path consumes them. Mirrors the inject_fn seam, which
-    # only the slash/broadcast paths consume.
+                    speak_fn=None, title_fn=None) -> CommandResult:
+    # capture_fn/summarize_fn/speak_fn/title_fn are read-command seams (None ->
+    # built from config); only the read path consumes them. Mirrors the inject_fn
+    # seam, which only the slash/broadcast paths consume.
     try:
         if cmd.kind == "create":
             return _exec_create(cmd, registry, config, io)
@@ -805,7 +808,8 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_board(cmd, registry, config, io)
         if cmd.kind == "read":
             return _exec_read(cmd, registry, config, io, capture_fn=capture_fn,
-                              summarize_fn=summarize_fn, speak_fn=speak_fn)
+                              summarize_fn=summarize_fn, speak_fn=speak_fn,
+                              title_fn=title_fn)
         if cmd.kind == "slash":
             return _exec_slash(cmd, registry, config, inject_fn)
         if cmd.kind == "broadcast":
