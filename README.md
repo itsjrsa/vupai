@@ -43,6 +43,8 @@ hold Right-Option → record (sox) → transcribe (Parakeet) → route → paste
 > [!IMPORTANT]
 > vupai is **macOS Apple-Silicon only**: it depends on Apple MLX for on-device
 > speech, plus two Homebrew binaries. It will not run on Linux or Intel Macs.
+> On an unsupported host the CLI fails fast with a clear message instead of a
+> stray import error, and `parakeet-mlx` is skipped at install time.
 
 - macOS on **Apple Silicon** (M-series), macOS 13.5+ (developed on macOS 26).
 - [`tmux`](https://github.com/tmux/tmux) and [`sox`](https://sox.sourceforge.net/):
