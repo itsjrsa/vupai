@@ -1,3 +1,4 @@
+import os
 import sys
 
 import pytest
@@ -8,10 +9,15 @@ from vupai import cli
 class FakeTmux:
     """In-memory stand-in for the tmuxio module."""
 
-    def __init__(self, *, server=True, focused="%1", inside_tmux=False):
+    def __init__(self, *, server=True, focused="%1", inside_tmux=False,
+                 inside_vupai=True, footprint=False):
         self._server = server
         self._focused = focused
         self._inside_tmux = inside_tmux
+        # When inside tmux, is it vupai's own server (switch-client) or the
+        # user's other tmux (cross-socket attach)? Defaults to vupai's.
+        self._inside_vupai = inside_vupai
+        self._footprint = footprint
         self._board_pane = None        # set to a pane id to simulate an open board
         self.calls: list[tuple] = []
         self.daemon_spawns: list = []
@@ -50,6 +56,18 @@ class FakeTmux:
 
     def inside_tmux(self) -> bool:
         return self._inside_tmux
+
+    def socket_env_prefix(self) -> str:
+        return ""
+
+    def inside_vupai_server(self) -> bool:
+        return self._inside_tmux and self._inside_vupai
+
+    def default_server_footprint(self) -> bool:
+        return self._footprint
+
+    def cleanup_default_server(self) -> None:
+        self.calls.append(("cleanup_default_server",))
 
     def attach(self, target: str | None = None) -> None:
         self.calls.append(("attach", target))
@@ -106,6 +124,8 @@ def fake_env(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "tmuxio", ft)
     pidfile = tmp_path / "daemon.pid"
     monkeypatch.setattr(cli, "PIDFILE", pidfile)
+    # Keep the one-shot migration probe off the real home dir.
+    monkeypatch.setattr(cli, "MIGRATE_SENTINEL", tmp_path / ".migrated")
     # Pretend a config already exists so `setup`'s first-run journal prompt is a
     # no-op (it must never block on stdin in the unit suite).
     cfg = tmp_path / "config.toml"
@@ -317,14 +337,27 @@ def test_attach_existing_session_skips_create(fake_env):
     assert ("attach", "backend") in ft.calls
 
 
-def test_attach_inside_tmux_switches_client(fake_env):
-    # From inside a pane `attach` would nest, so the client is switched instead.
+def test_attach_inside_vupai_server_switches_client(fake_env):
+    # Inside vupai's OWN server, attach would nest, so switch the client instead.
     ft, _ = fake_env
     ft._inside_tmux = True
+    ft._inside_vupai = True
     rc = cli.main(["attach", "backend"])
     assert rc == 0
     assert ("switch_client", "backend") in ft.calls
     assert not any(c[0] == "attach" for c in ft.calls)
+
+
+def test_attach_inside_foreign_tmux_attaches(fake_env):
+    # Inside the user's OTHER tmux, switch-client can't cross servers, so vupai
+    # does a cross-socket attach into its own server rather than switch.
+    ft, _ = fake_env
+    ft._inside_tmux = True
+    ft._inside_vupai = False
+    rc = cli.main(["attach", "backend"])
+    assert rc == 0
+    assert ("attach", "backend") in ft.calls
+    assert not any(c[0] == "switch_client" for c in ft.calls)
 
 
 def test_new_errors_when_session_exists(fake_env, capsys):
@@ -411,8 +444,8 @@ def test_default_reload_inside_tmux_skips_attach(fake_env, monkeypatch, capsys):
 
     assert rc == 0
     assert ft.daemon_spawns == [True]  # daemon still respawned
-    assert not any(c[0] == "attach" for c in ft.calls)  # but no nesting attach
-    assert "nesting" in capsys.readouterr().out
+    assert not any(c[0] == "attach" for c in ft.calls)  # but no same-server nesting
+    assert "staying" in capsys.readouterr().out.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -1190,7 +1223,8 @@ def test_voice_commands_prints(fake_env, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("argv", [
-    [], ["up"], ["down"], ["reload"], ["status"], ["doctor"], ["voice-commands"],
+    [], ["up"], ["down"], ["reload"], ["cleanup"], ["status"], ["doctor"],
+    ["voice-commands"],
     ["name", "x"], ["name", "x", "%3"], ["autoname"], ["autoname", "%3"],
     ["keys"], ["board"], ["_daemon"], ["_board"],
 ])
@@ -1198,6 +1232,48 @@ def test_parser_accepts_all_subcommands(argv):
     parser = cli.build_parser()
     ns = parser.parse_args(argv)
     assert callable(ns.func)
+
+
+def test_cleanup_reverts_default_server(fake_env, capsys):
+    # `vupai cleanup` reverts vupai's globals on the user's DEFAULT tmux server.
+    ft, _ = fake_env
+    rc = cli.main(["cleanup"])
+    assert rc == 0
+    assert ("cleanup_default_server",) in ft.calls
+    assert "default tmux server" in capsys.readouterr().out
+
+
+def test_seed_socket_defaults_to_config(monkeypatch):
+    # No env var: the dedicated socket comes from config (default "vupai") and is
+    # exported so the daemon and tmux children inherit it.
+    monkeypatch.delenv("VTMUX_TMUX_SOCKET", raising=False)
+    cli._seed_tmux_socket()
+    assert os.environ["VTMUX_TMUX_SOCKET"] == "vupai"
+
+
+def test_seed_socket_env_wins_over_config(monkeypatch):
+    # An explicit env var (tests, power users) is never clobbered by config.
+    monkeypatch.setenv("VTMUX_TMUX_SOCKET", "itest-sock")
+    cli._seed_tmux_socket()
+    assert os.environ["VTMUX_TMUX_SOCKET"] == "itest-sock"
+
+
+def test_seed_socket_rejects_unsafe_name(monkeypatch, capsys):
+    # A socket name with shell metacharacters would mis-target via run-shell;
+    # fall back to the safe default instead.
+    monkeypatch.setenv("VTMUX_TMUX_SOCKET", "x$(boom)")
+    cli._seed_tmux_socket()
+    assert os.environ["VTMUX_TMUX_SOCKET"] == "vupai"
+    assert "Invalid tmux_socket" in capsys.readouterr().out
+
+
+def test_seed_socket_empty_config_shares_default_server(monkeypatch):
+    # tmux_socket="" is the opt-out: no socket exported => shared default server.
+    from vupai.config import Config
+    monkeypatch.delenv("VTMUX_TMUX_SOCKET", raising=False)
+    monkeypatch.setattr(cli, "load_config", lambda: Config(tmux_socket=""))
+    cli._seed_tmux_socket()
+    assert "VTMUX_TMUX_SOCKET" not in os.environ
 
 
 def test_daemon_subcommand_is_hidden_in_help():

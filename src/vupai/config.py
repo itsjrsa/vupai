@@ -112,6 +112,13 @@ class Config:
     filler_words: frozenset[str] = field(
         default_factory=lambda: frozenset(
             {"um", "uh", "er", "ah", "eh", "hmm", "mm"}))
+    # tmux server socket name for vupai's sessions. vupai runs on its OWN tmux
+    # server (this socket, via `tmux -L <name>`) so it never mutates your default
+    # tmux server's global options, hooks, key bindings, numbering, or sessions.
+    # Set "" to share your default server (legacy behavior). Restricted to a safe
+    # filename charset (letters, digits, dot, dash, underscore) so it round-trips
+    # through tmux's run-shell command strings.
+    tmux_socket: str = "vupai"
 
 
 CONFIG_PATH = Path.home() / ".config" / "vupai" / "config.toml"
@@ -303,6 +310,12 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
     ("filler_words",
      '# The filler set (non-lexical only by default; add soft fillers at your risk).\n'
      '# filler_words = ["um", "uh", "er", "ah", "eh", "hmm", "mm"]\n'),
+    ("tmux_socket",
+     "# tmux server socket for vupai's sessions, isolated from your default tmux\n"
+     '# server so vupai never changes your existing tmux config/sessions. Set ""\n'
+     '# to share the default server (legacy). Allowed: letters, digits, dot, dash,\n'
+     '# underscore.\n'
+     '# tmux_socket = "vupai"\n'),
 )
 
 ANNOTATED_TEMPLATE = _TEMPLATE_HEADER + "".join(

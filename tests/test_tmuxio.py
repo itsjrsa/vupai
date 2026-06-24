@@ -1,3 +1,4 @@
+import os
 import subprocess
 from dataclasses import dataclass, field
 
@@ -549,10 +550,78 @@ def test_attach_execs_tmux_attach(monkeypatch):
         captured["file"] = file
         captured["args"] = args
 
+    monkeypatch.delenv("VTMUX_TMUX_SOCKET", raising=False)
     monkeypatch.setattr(tmuxio.os, "execvp", fake_execvp)
     tmuxio.attach()
     assert captured["file"] == "tmux"
     assert captured["args"] == ["tmux", "attach"]
+
+
+def test_attach_targets_dedicated_socket_and_clears_tmux(monkeypatch):
+    # With a dedicated socket, attach must target -L <socket> (not the default
+    # server) and clear $TMUX so a cross-socket attach from inside another tmux
+    # is permitted.
+    captured = {}
+    monkeypatch.setenv("VTMUX_TMUX_SOCKET", "vupai")
+    monkeypatch.setenv("TMUX", "/tmp/tmux-501/default,1234,0")
+    monkeypatch.setattr(tmuxio.os, "execvp",
+                        lambda file, args: captured.update(file=file, args=args))
+    tmuxio.attach("backend")
+    assert captured["args"] == ["tmux", "-L", "vupai", "attach", "-t", "=backend"]
+    assert "TMUX" not in tmuxio.os.environ
+
+
+def test_inside_vupai_server_distinguishes_foreign_tmux(monkeypatch):
+    monkeypatch.setenv("VTMUX_TMUX_SOCKET", "vupai")
+    # Inside vupai's own server.
+    monkeypatch.setenv("TMUX", "/tmp/tmux-501/vupai,1234,0")
+    assert tmuxio.inside_vupai_server() is True
+    # Inside the user's default (foreign) server.
+    monkeypatch.setenv("TMUX", "/tmp/tmux-501/default,1234,0")
+    assert tmuxio.inside_vupai_server() is False
+    # Not in tmux at all.
+    monkeypatch.delenv("TMUX", raising=False)
+    assert tmuxio.inside_vupai_server() is False
+
+
+def test_socket_env_prefix_quotes_and_blanks(monkeypatch):
+    monkeypatch.delenv("VTMUX_TMUX_SOCKET", raising=False)
+    assert tmuxio.socket_env_prefix() == ""
+    monkeypatch.setenv("VTMUX_TMUX_SOCKET", "vupai")
+    assert tmuxio.socket_env_prefix() == "VTMUX_TMUX_SOCKET=vupai "
+
+
+def test_cleanup_runs_against_default_server(monkeypatch):
+    # cleanup must clear the socket so its tmux commands hit the DEFAULT server,
+    # and must restore the socket afterward.
+    seen = []
+
+    def fake_run(args, *, stdin=None):
+        seen.append((os.environ.get("VTMUX_TMUX_SOCKET"), list(args)))
+        return ""
+
+    monkeypatch.setenv("VTMUX_TMUX_SOCKET", "vupai")
+    monkeypatch.setattr(tmuxio, "run", fake_run)
+    tmuxio.cleanup_default_server()
+    # Every command ran with no socket pinned (the default server)...
+    assert seen and all(sock is None for sock, _ in seen)
+    # ...and unset vupai's globals + binding.
+    flat = [a for _, a in seen]
+    assert ["set", "-gu", "pane-border-status"] in flat
+    assert ["set", "-gu", "extended-keys"] in flat
+    assert ["unbind-key", "R"] in flat
+    assert ["set-hook", "-gu", "after-split-window"] in flat
+    # The socket is restored after cleanup returns.
+    assert os.environ["VTMUX_TMUX_SOCKET"] == "vupai"
+
+
+def test_revert_user_globals_tolerates_down_server(monkeypatch):
+    # Against a down server even `set -gu` exits nonzero; cleanup must swallow it.
+    def boom(args, *, stdin=None):
+        raise tmuxio.TmuxError("no server running")
+
+    monkeypatch.setattr(tmuxio, "run", boom)
+    tmuxio.revert_user_globals()  # must not raise
 
 
 def test_inside_tmux_reflects_env(monkeypatch):
