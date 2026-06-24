@@ -252,7 +252,7 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
 # grows (more names = more ASR confusion), which is what the large-create popup
 # warns about. Order is preserved: existing panes keep their callsigns.
 CALLSIGNS: tuple[str, ...] = (
-    "nova", "atlas", "sage", "echo", "orion", "river", "ember",
+    "nova", "atlas", "sage", "echo", "orion", "ember",
     "lyra", "vega", "koda", "slate", "raven", "quill", "tango", "pixel",
     "delta", "comet", "jasper", "willow", "onyx", "cobalt", "maple", "flint",
     "harbor", "zephyr", "indigo", "basil", "cedar", "lumen", "sierra", "marlin",
