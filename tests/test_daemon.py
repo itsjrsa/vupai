@@ -1842,3 +1842,60 @@ def test_stop_command_silences_without_muting(tmp_path):
     assert ev.is_set(), "_handle_stop must set the read-cancel Event"
     assert daemon._talkback is True, "_handle_stop must not touch the persistent mute"
     assert entry["outcome"] == "ok"
+
+
+def test_run_read_clears_read_cancel_on_completion(tmp_path):
+    # After _run_read finishes, _read_cancel must be reset to None so a later
+    # barge-in _silence() is a clean no-op (not setting a dead Event).
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    main_reg = make_registry(_read_lines(), "%1")
+    feedback = FakeFeedback()
+    executed = []
+
+    def execute_fn(cmd, registry, config, *, inject_fn=None, **kwargs):
+        executed.append(cmd)
+        return CommandResult(True, "alpha: all good")
+
+    daemon = Daemon(
+        Config(), FakeRecorder(wav), FakeTranscriber("read alpha"), main_reg,
+        feedback, execute_fn=execute_fn,
+        async_fn=lambda fn, *a: fn(*a),  # run synchronously
+        read_registry_factory=lambda: make_registry(_read_lines(), "%1"))
+
+    cancel = threading.Event()
+    daemon._read_cancel = cancel
+    daemon._run_read(Command(kind="read", name="alpha"), cancel)
+
+    assert daemon._read_cancel is None, (
+        "_read_cancel must be cleared after _run_read finishes")
+
+
+def test_run_read_does_not_clear_newer_read_cancel(tmp_path):
+    # If a second _dispatch_read overwrites _read_cancel with a new Event B
+    # while worker A is still in its finally, worker A must NOT clobber B to None.
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    main_reg = make_registry(_read_lines(), "%1")
+    feedback = FakeFeedback()
+
+    newer_event = threading.Event()
+
+    def execute_fn(cmd, registry, config, *, inject_fn=None, **kwargs):
+        # Simulate a concurrent _dispatch_read overwriting _read_cancel mid-worker.
+        daemon._read_cancel = newer_event
+        return CommandResult(True, "alpha: all good")
+
+    daemon = Daemon(
+        Config(), FakeRecorder(wav), FakeTranscriber("read alpha"), main_reg,
+        feedback, execute_fn=execute_fn,
+        async_fn=lambda fn, *a: fn(*a),
+        read_registry_factory=lambda: make_registry(_read_lines(), "%1"))
+
+    cancel_a = threading.Event()
+    daemon._read_cancel = cancel_a
+    daemon._run_read(Command(kind="read", name="alpha"), cancel_a)
+
+    # Worker A's finally must have detected _read_cancel is not cancel_a and left it.
+    assert daemon._read_cancel is newer_event, (
+        "worker A must not clobber a newer Event set by a concurrent _dispatch_read")

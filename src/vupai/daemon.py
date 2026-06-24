@@ -151,6 +151,11 @@ class Daemon:
         # summarizer subprocess is killed). _last_ack is the most recent spoken
         # process handle (an ack or a read sentence, since both go through
         # _speak); terminating it cuts the currently-playing `say` mid-sentence.
+        # No lock: pointer read/write is CPython-atomic, best-effort semantics,
+        # consistent with _talkback above. Accepted consequence: after a barge-in,
+        # at most one already-queued sentence may still finish (cancel stops the
+        # worker before the NEXT sentence; _last_ack cuts the current one, but a
+        # race can leave a just-started sentence to proc.wait() out).
         self._read_cancel: "threading.Event | None" = None
         self._last_ack = None
         self._journal = journal if journal is not None else Journal.from_config(config)
@@ -489,6 +494,12 @@ class Daemon:
                     result.message, focused.id if focused is not None else None)
         except Exception:
             logger.debug("read worker failed", exc_info=True)
+        finally:
+            # Clear _read_cancel so a later _silence() after this read completes
+            # is a clean no-op. Identity check: a concurrent _dispatch_read may have
+            # already stored a fresh Event B; only clear when it's still OUR Event.
+            if cancel is not None and self._read_cancel is cancel:
+                self._read_cancel = None
 
     def _run_command(self, cmd: Command, entry: dict, *, confirmed: bool = False):
         """Execute a parsed command and record the result. `confirmed` marks a
