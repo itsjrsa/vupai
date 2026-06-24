@@ -37,10 +37,24 @@ logger = logging.getLogger(__name__)
 # Sentinel enqueued by stop() to unblock the consumer loop for a clean shutdown.
 _SHUTDOWN = object()
 
-# Command kinds whose SUCCESS carries information the immediate intent ack could
-# not (a create's assigned callsign; a talkback toggle's confirmation), so their
-# result is voiced even on success. Every other kind speaks only the intent up
-# front and, on failure, the error - a success is silent (the intent said it).
+# Talk-back is curated, not blanket: speak what you can't see, stay quiet when the
+# screen already shows it, always speak failures.
+#
+# _ANNOUNCE_INTENT - kinds that voice an immediate present-tense intent on issue.
+# These act on things off-screen or are irreversible (a new agent's callsign you
+# may miss, a kill, a fan-out to agents you're not looking at), so a spoken ack
+# carries information. The view/navigation verbs (focus / zoom / unzoom / layout /
+# swap) are deliberately ABSENT: the cursor jump / resize / re-tile is its own
+# instant feedback, so speaking it is redundant and naggy in rapid use. They still
+# speak on FAILURE (every kind does, in _run_command) - that is the eyes-off case
+# you cannot see. read / talkback are handled on their own paths, not here.
+_ANNOUNCE_INTENT = frozenset(
+    {"create", "close", "close_others", "broadcast", "slash", "board"})
+
+# Subset of _ANNOUNCE_INTENT whose SUCCESS also voices the result, because it
+# carries information the intent could not (a create's assigned callsign; a
+# talkback toggle's confirmation). Every other announced kind is intent-only on
+# success - the present-tense ack already said it.
 _SPEAK_ON_SUCCESS = frozenset({"create", "talkback"})
 
 # Shown on every empty capture. Covers BOTH causes (a denied Microphone grant
@@ -286,11 +300,14 @@ class Daemon:
                     self._run_command(cmd, entry)
                     return
                 # Voice the present-tense intent NOW, before the (popup-gated, often
-                # slow) execution, so feedback is immediate. The result ack then
-                # speaks only on failure (or a create/talkback success). Fired even
-                # for confirm-gated commands: the user hears "closing sage" while
-                # the popup is up, and "cancelled" if they decline.
-                self._speak(intent_phrase(cmd))
+                # slow) execution, so feedback is immediate - but only for the
+                # curated _ANNOUNCE_INTENT kinds (the view/navigation verbs you can
+                # already see stay silent on success). The result ack then speaks
+                # only on failure (or a create/talkback success). Fired even for
+                # confirm-gated commands: the user hears "closing sage" while the
+                # popup is up, and "cancelled" if they decline.
+                if cmd.kind in _ANNOUNCE_INTENT:
+                    self._speak(intent_phrase(cmd))
                 if self._config.confirm_destructive and self._needs_confirm(cmd):
                     summary = _summarize_destructive(cmd, self._registry)
                     # Synchronous confirmation (a tmux popup by default). Anything

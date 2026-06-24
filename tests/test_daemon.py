@@ -848,20 +848,43 @@ def test_create_success_ack_silent_when_muted(tmp_path, monkeypatch):
     assert spoken == []
 
 
-def test_command_speaks_intent_immediately_then_silent_on_success(tmp_path, monkeypatch):
-    # The intent is voiced BEFORE execute (here a non-destructive focus, no popup);
-    # the success itself adds nothing, so only the one immediate phrase is heard.
+def test_announced_command_speaks_intent_immediately_then_silent_on_success(tmp_path, monkeypatch):
+    # A consequential (eyes-off) command announces its intent BEFORE execute; the
+    # success adds nothing, so only the one immediate phrase is heard.
     spoken = []
     monkeypatch.setattr("vupai.daemon.speech.speak",
                         lambda text, *, cmd: spoken.append(text))
 
     def execute_fn(cmd, registry, config, *, inject_fn):
-        return CommandResult(True, "focused nova")
+        return CommandResult(True, "sent /clear to nova")
+
+    d = Daemon(Config(), _Rec(), _Tx("clear nova"), _Reg(_panes()), _Fb(),
+               execute_fn=execute_fn)
+    d._process(_wav(tmp_path), mode="system")
+    assert spoken == ["sending clear"]
+
+
+def test_view_verb_is_silent_on_success_but_speaks_on_failure(tmp_path, monkeypatch):
+    # focus/zoom/unzoom/layout/swap show their own on-screen feedback, so a success
+    # is voiced by NOTHING (curated talk-back) - but a failure, which you can't see,
+    # still speaks.
+    spoken = []
+    monkeypatch.setattr("vupai.daemon.speech.speak",
+                        lambda text, *, cmd: spoken.append(text))
+
+    outcome = {"ok": True, "msg": "focused nova"}
+
+    def execute_fn(cmd, registry, config, *, inject_fn):
+        return CommandResult(outcome["ok"], outcome["msg"])
 
     d = Daemon(Config(), _Rec(), _Tx("focus nova"), _Reg(_panes()), _Fb(),
                execute_fn=execute_fn)
     d._process(_wav(tmp_path), mode="system")
-    assert spoken == ["switching to nova"]
+    assert spoken == []  # success: the cursor jump is its own feedback
+
+    outcome.update(ok=False, msg="no pane named nova")
+    d._process(_wav(tmp_path), mode="system")
+    assert spoken == ["no pane named nova"]  # failure speaks
 
 
 def test_destructive_speaks_intent_before_popup_then_failure(tmp_path, monkeypatch):
