@@ -490,7 +490,16 @@ class Daemon:
             # execute) already covered it. Only kinds whose result adds new info
             # (a create's callsign, a talkback toggle) speak on success.
             if cmd.kind in _SPEAK_ON_SUCCESS:
-                self._speak(result.spoken or result.message)
+                spoken = result.spoken or result.message
+                # A create voiced "opening an agent" a split-second ago (line ~310);
+                # pad the "<name> is up" ack with a lead-in silence so the two don't
+                # run together. Other announced successes (talkback) have no preceding
+                # intent collision, so they speak as-is.
+                if cmd.kind == "create":
+                    spoken = speech.lead_silence(
+                        spoken, self._config.tts_intent_gap_ms,
+                        cmd=self._config.tts_cmd)
+                self._speak(spoken)
         else:
             self._feedback.reject(result.message, self._hud_pane())
             # Failure always speaks: the intent said "closing sage", so the user

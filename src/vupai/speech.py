@@ -17,6 +17,7 @@ voice pipeline.
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import re
 import shlex
@@ -25,7 +26,24 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["speak", "SentenceSpeaker", "split_sentences"]
+__all__ = ["speak", "SentenceSpeaker", "split_sentences", "lead_silence"]
+
+
+def lead_silence(text: str, ms: int, *, cmd: str = "say") -> str:
+    """Prefix `text` with `ms` milliseconds of silence, for macOS `say` only.
+
+    `say` honors the inline `[[slnc N]]` directive; any other backend would read
+    it aloud, so for a non-`say` `cmd` (or ms <= 0, or blank text) `text` is
+    returned unchanged. Used to keep a create's "<name> is up" ack from treading
+    on the "opening an agent" intent spoken a split-second before it.
+    """
+    text = (text or "").strip()
+    if not text or ms <= 0:
+        return text
+    argv = shlex.split(cmd or "")
+    if not argv or os.path.basename(argv[0]) != "say":
+        return text
+    return f"[[slnc {ms}]] {text}"
 
 # A sentence ends at one-or-more . ! ? FOLLOWED BY whitespace (so a terminator at
 # the very end of the buffer-so-far waits for the next chunk instead of splitting
