@@ -159,7 +159,12 @@ Invariants) and talks to tmux purely via the CLI.
 - **macOS permissions** (Accessibility + Input-Monitoring + Microphone) are granted
   to the *terminal app*, not the script - they silent-fail otherwise. Use `vupai doctor`.
 - Tests inject collaborators (`io=`, `lister=`, `route_fn=`, `recorder_factory=`…)
-  so units run with fakes - no real tmux/mic/model in the unit suite.
+  so units run with fakes - no real tmux/mic/model in the unit suite. `test_cli.py`'s
+  hand-rolled `FakeTmux` (swapped in via `monkeypatch.setattr(cli, "tmuxio", …)`)
+  needs a method for every new `tmuxio` function `cli.py`/`board.py` call, or unit
+  tests `AttributeError`. `cli.main()` exports `VTMUX_TMUX_SOCKET` (and `attach()`
+  clears `$TMUX`); `tests/conftest.py` autouse-restores both, so don't assume a
+  clean env across `cli.main()` calls in tests.
 - **Addressing mode (`addressing` config):** `button` (default) uses two keys:
   the `hotkey` (dictation) injects verbatim into the focused pane (no parse, no
   name routing), and the `command_hotkey` (system, default Right-Command) runs the
