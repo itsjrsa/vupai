@@ -354,14 +354,19 @@ _READ_VERB_ALIASES = frozenset({"reed", "red"})
 
 
 def _parse_read(toks: list[str]) -> Command | None:
-    """`read [name]` -> speak a pane's summary aloud (focused pane when bare).
+    """`read [name|board|all]` -> speak a summary aloud.
 
     Strips a leading article/filler after the verb ("read me nova", "read the
-    atlas", "read out nova"). A bare "read" targets the focused pane.
+    atlas", "read out nova"). A bare "read" targets the focused pane; "read board"
+    (or "read all") speaks a board-style digest of every agent.
     """
     if not toks or (toks[0] not in _READ_VERBS and toks[0] not in _READ_VERB_ALIASES):
         return None
     rest = [t for t in toks[1:] if t not in ("the", "me", "out")]
+    # "read board" / "read all" -> a spoken digest of every agent, not a pane named
+    # "board" (the visual board pane need not even be open). to_all carries it.
+    if rest and (rest[0] == "board" or rest[0] in _ALL_TARGETS):
+        return Command(kind="read", to_all=True)
     return Command(kind="read", name=rest[0] if rest else "")
 
 
@@ -650,8 +655,51 @@ def _default_speaker(config):
     return lambda text: speech.speak(text, cmd=config.tts_cmd)
 
 
+def _default_board_statuses(config):
+    """Build a board snapshot fn bound to config's one-line board summarizer."""
+    return lambda panes: board.collect_statuses(
+        panes,
+        summarize_fn=lambda tail: summarize.summarize(
+            tail, cmd=config.board_summarizer_cmd,
+            timeout=config.board_summary_timeout_s))
+
+
+def _exec_read_board(registry, config, io, *, speak_fn=None,
+                     statuses_fn=None) -> CommandResult:
+    """Speak a board-style digest of every agent (state + one-line summary).
+
+    Independent of the visual board pane: it snapshots the focused session's named
+    agent panes directly (excluding the board pane itself), so "read board" works
+    whether or not a board pane is open. Read-only, so it runs safely on the read
+    worker thread; the digest is also the CommandResult message (surfaces with TTS
+    off). statuses_fn is injected by the unit suite (no tmux, no subprocess).
+    """
+    speak_fn = speak_fn or _default_speaker(config)
+    statuses_fn = statuses_fn or _default_board_statuses(config)
+    focused = registry.focused()
+    session = focused.session if focused is not None else ""
+    try:
+        board_id = io.find_board_pane(session) if session else None
+    except Exception:
+        board_id = None
+    panes = [p for p in registry.panes
+             if p.name != p.id and p.id != board_id
+             and (not session or p.session == session)]
+    try:
+        statuses = statuses_fn(panes)
+    except Exception:
+        return CommandResult(False, "couldn't read the board")
+    spoken = board.speak_statuses(statuses)
+    try:
+        speak_fn(spoken)
+    except Exception:
+        pass  # TTS is best-effort; the digest still surfaces as the message
+    return CommandResult(True, spoken)
+
+
 def _exec_read(cmd: Command, registry, config, io, *, capture_fn=None,
-               summarize_fn=None, speak_fn=None, title_fn=None) -> CommandResult:
+               summarize_fn=None, speak_fn=None, title_fn=None,
+               statuses_fn=None) -> CommandResult:
     """Resolve a pane (named, else focused), summarize its tail, speak it.
 
     Read-only: it captures + summarizes + speaks, never injects or mutates tmux,
@@ -661,6 +709,9 @@ def _exec_read(cmd: Command, registry, config, io, *, capture_fn=None,
     line even with TTS off. Collaborators are injected for the unit suite (no real
     CLI / no audio). summarize_fn takes (tail, title).
     """
+    if cmd.to_all:  # "read board" / "read all": a digest of every agent
+        return _exec_read_board(registry, config, io, speak_fn=speak_fn,
+                                statuses_fn=statuses_fn)
     capture_fn = capture_fn or tmuxio.capture_pane
     title_fn = title_fn or tmuxio.pane_title
     summarize_fn = summarize_fn or _default_summarizer(config)
@@ -781,8 +832,8 @@ def _exec_slash(cmd: Command, registry, config, inject_fn) -> CommandResult:
 def execute_command(cmd: Command, registry, config, *,
                     io=tmuxio, inject_fn=inject,
                     capture_fn=None, summarize_fn=None,
-                    speak_fn=None, title_fn=None) -> CommandResult:
-    # capture_fn/summarize_fn/speak_fn/title_fn are read-command seams (None ->
+                    speak_fn=None, title_fn=None, statuses_fn=None) -> CommandResult:
+    # capture_fn/summarize_fn/speak_fn/title_fn/statuses_fn are read-command seams (None ->
     # built from config); only the read path consumes them. Mirrors the inject_fn
     # seam, which only the slash/broadcast paths consume.
     try:
@@ -809,7 +860,7 @@ def execute_command(cmd: Command, registry, config, *,
         if cmd.kind == "read":
             return _exec_read(cmd, registry, config, io, capture_fn=capture_fn,
                               summarize_fn=summarize_fn, speak_fn=speak_fn,
-                              title_fn=title_fn)
+                              title_fn=title_fn, statuses_fn=statuses_fn)
         if cmd.kind == "slash":
             return _exec_slash(cmd, registry, config, inject_fn)
         if cmd.kind == "broadcast":

@@ -1202,6 +1202,17 @@ def test_parse_read_only_on_button_key():
     assert _parse("read nova") is None
 
 
+def test_parse_read_board_is_a_digest_not_a_pane_named_board():
+    # "read board" speaks every agent's status, it does NOT look up a pane "board".
+    assert _parse_btn("read board") == Command(kind="read", to_all=True)
+    assert _parse_btn("read the board") == Command(kind="read", to_all=True)
+
+
+def test_parse_read_all_is_a_digest():
+    assert _parse_btn("read all") == Command(kind="read", to_all=True)
+    assert _parse_btn("read everyone") == Command(kind="read", to_all=True)
+
+
 # --- read command: execution ------------------------------------------------
 
 
@@ -1334,6 +1345,76 @@ def test_bound_tail_limits_lines_then_keeps_the_end():
     bounded = _bound_tail("\n".join(f"line{i}" for i in range(100)))
     assert bounded.count("\n") + 1 == _READ_CAPTURE_LINES
     assert bounded.endswith("line99")
+
+
+def test_execute_read_board_digest_speaks_every_agent():
+    from vupai.board import PaneStatus
+    from vupai.panestate import PaneState
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    seen, spoken = [], []
+    statuses = [
+        PaneStatus("nova", "claude", PaneState.WORKING, "fixing the parser", False),
+        PaneStatus("atlas", "claude", PaneState.NEEDS_INPUT, "approve deploy?", True),
+    ]
+    res = execute_command(
+        Command(kind="read", to_all=True), reg, Config(), io=FakeTmux(),
+        statuses_fn=lambda p: seen.append(p) or statuses,
+        speak_fn=lambda t: spoken.append(t))
+    assert res.ok
+    assert "2 agents on the board." in res.message
+    assert "nova, claude, working: fixing the parser." in res.message
+    assert "atlas, claude, needs input: approve deploy?" in res.message
+    assert spoken == [res.message]  # the digest is exactly what gets spoken
+
+
+def test_execute_read_board_excludes_the_board_pane_and_unnamed():
+    # The board pane (find_board_pane) and unnamed plain shells are not agents.
+    panes = [_pane("%1", "nova", active=True, session="repo"),
+             _pane("%9", "board", session="repo"),      # the board pane
+             _pane("%3", "%3", session="repo")]         # unnamed shell
+    reg = FakeRegistry(panes, focused=panes[0])
+    seen = []
+    execute_command(
+        Command(kind="read", to_all=True), reg, Config(),
+        io=FakeTmux(board_pane="%9"),
+        statuses_fn=lambda p: seen.append([x.id for x in p]) or [],
+        speak_fn=lambda t: None)
+    assert seen == [["%1"]]  # only the named, non-board agent pane
+
+
+def test_execute_read_board_scopes_to_focused_session():
+    panes = [_pane("%1", "nova", active=True, session="repoA"),
+             _pane("%2", "atlas", session="repoA"),
+             _pane("%3", "orion", session="repoB")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    seen = []
+    execute_command(
+        Command(kind="read", to_all=True), reg, Config(), io=FakeTmux(),
+        statuses_fn=lambda p: seen.append({x.id for x in p}) or [],
+        speak_fn=lambda t: None)
+    assert seen == [{"%1", "%2"}]  # repoB's orion is excluded
+
+
+def test_execute_read_board_failure_is_reported_not_raised():
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+
+    def boom(_panes):
+        raise RuntimeError("summarizer exploded")
+
+    res = execute_command(
+        Command(kind="read", to_all=True), reg, Config(), io=FakeTmux(),
+        statuses_fn=boom, speak_fn=lambda t: None)
+    assert not res.ok and "couldn't read the board" in res.message
+
+
+def test_execute_read_board_no_agents_still_ok():
+    reg = FakeRegistry([], focused=None)
+    res = execute_command(
+        Command(kind="read", to_all=True), reg, Config(), io=FakeTmux(),
+        statuses_fn=lambda p: [], speak_fn=lambda t: None)
+    assert res.ok and "No agents" in res.message
 
 
 def test_parse_read_yields_to_configured_slash_verb():
