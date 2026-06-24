@@ -461,8 +461,14 @@ def speak_statuses(statuses) -> str:
 
 
 def _self_cmd() -> str:
-    """How to re-invoke this CLI from a tmux pane (absolute interpreter)."""
-    return f"{sys.executable} -m vupai"
+    """How to re-invoke this CLI from a tmux pane (absolute interpreter).
+
+    Socket-prefixed (socket_env_prefix) so the board pane - which tmux launches
+    as a split-window child that does NOT inherit our env - queries vupai's own
+    server. Reached by the spoken "board" verb, which calls open_board with no
+    self_cmd (commands._exec_board), so this fallback must carry the socket too.
+    """
+    return f"{tmuxio.socket_env_prefix()}{sys.executable} -m vupai"
 
 
 def open_board(target_pane: str, session: str, *, io=tmuxio,

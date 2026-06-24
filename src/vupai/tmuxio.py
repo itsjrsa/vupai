@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 
 # Field 5 is the voice name, stored in the per-pane user option @vupai_name
@@ -33,11 +34,54 @@ class TmuxError(RuntimeError):
 
 
 def _base_argv() -> list[str]:
-    # Tests may pin an isolated server via a private socket name.
+    # vupai runs on its OWN tmux server, pinned by VTMUX_TMUX_SOCKET (seeded once
+    # in cli.main from config, default "vupai"), so every global option/hook/
+    # binding lands on that private server instead of the user's default tmux.
+    # Tests pin the same env var to an isolated socket. Empty/unset = the shared
+    # default server (legacy opt-out via config tmux_socket="").
     socket = os.environ.get("VTMUX_TMUX_SOCKET")
     if socket:
         return ["tmux", "-L", socket]
     return ["tmux"]
+
+
+def socket_env_prefix() -> str:
+    """Shell-command prefix carrying vupai's socket into a tmux run-shell/split
+    child, which does NOT inherit our process env. Empty in shared-server mode.
+
+    The socket name is shell-quoted; config restricts it to a safe charset so the
+    value survives tmux's command-string layer and the /bin/sh run-shell uses.
+    """
+    socket = os.environ.get("VTMUX_TMUX_SOCKET")
+    if not socket:
+        return ""
+    return f"VTMUX_TMUX_SOCKET={shlex.quote(socket)} "
+
+
+def current_tmux_socket() -> str | None:
+    """Socket name of the tmux server the current client is on, from $TMUX, or
+    None when not inside tmux. $TMUX is ``socketpath,pid,session``; the basename
+    of socketpath is the ``-L`` name (or "default")."""
+    tmux = os.environ.get("TMUX")
+    if not tmux:
+        return None
+    path = tmux.split(",", 1)[0]
+    return os.path.basename(path) or None
+
+
+def inside_vupai_server() -> bool:
+    """True when the current client is attached to vupai's OWN tmux server.
+
+    Distinguishes 'inside vupai' (where switch-client works) from 'inside the
+    user's OTHER tmux' (where entering vupai needs a cross-socket attach). In
+    shared-server mode (no dedicated socket) any tmux we're in is vupai's.
+    """
+    if not inside_tmux():
+        return False
+    socket = os.environ.get("VTMUX_TMUX_SOCKET")
+    if not socket:
+        return True
+    return current_tmux_socket() == os.path.basename(socket)
 
 
 def run(args: list[str], *, stdin: str | None = None) -> str:
@@ -565,15 +609,20 @@ def inside_tmux() -> bool:
 
 
 def attach(target: str | None = None) -> None:
-    """Replace the current process with ``tmux attach``.
+    """Replace the current process with ``tmux attach`` on vupai's own server.
 
     `target` pins which session to attach to; without it tmux picks the
-    most-recently-used session.
+    most-recently-used session. Routes through `_base_argv()` so the attach
+    targets vupai's dedicated socket (the bare `tmux attach` it used before would
+    hit the user's DEFAULT server). $TMUX is cleared so a cross-socket attach
+    from inside the user's other tmux is permitted (tmux only refuses nesting
+    onto the SAME server $TMUX names).
     """
-    argv = ["tmux", "attach"]
+    argv = _base_argv() + ["attach"]
     if target:
         argv += ["-t", f"={target}"]
-    os.execvp("tmux", argv)
+    os.environ.pop("TMUX", None)
+    os.execvp(argv[0], argv)
 
 
 def switch_client(name: str) -> None:
@@ -584,3 +633,85 @@ def switch_client(name: str) -> None:
 def kill_session(name: str) -> None:
     """Kill session `name` (exact match). The tmux server/daemon are unaffected."""
     run(["kill-session", "-t", f"={name}"])
+
+
+# ---------------------------------------------------------------------------
+# Default-server cleanup (migration off the shared server)
+# ---------------------------------------------------------------------------
+
+# Globals enable_pane_titles/set_terminal_title/set_base_index/
+# set_extended_keys_off + the status installers set unconditionally and never
+# auto-revert. `vupai cleanup` unsets them on the user's DEFAULT server so an
+# install that predates the dedicated socket leaves no footprint behind.
+_ALWAYS_ON_GLOBALS = (
+    "pane-border-status", "pane-border-format",
+    "set-titles", "set-titles-string",
+    "base-index", "pane-base-index", "extended-keys",
+    "status-right-length", "status-left-length",
+)
+_VUPAI_GLOBAL_OPTIONS = (
+    "@vupai_status", "@vupai_status_orig",
+    "@vupai_tip", "@vupai_tip_orig",
+    "@vupai_win_orig", "@vupai_wincur_orig",
+)
+
+
+def _safe(args: list[str]) -> None:
+    """Run a tmux command, swallowing TmuxError so a down/clean server is a
+    no-op. Even `set -gu` exits nonzero when no server is running."""
+    try:
+        run(args)
+    except TmuxError:
+        pass
+
+
+def revert_user_globals() -> None:
+    """Undo every server-global vupai sets on the CURRENT server: restore the
+    captured status-line originals where we have them, unset the always-on
+    globals, drop the naming hooks / rename binding, and clear vupai's @ options.
+    Each step tolerates a server that is down or never touched."""
+    try:
+        restore_status_right()
+    except TmuxError:
+        pass
+    try:
+        restore_status_left()
+    except TmuxError:
+        pass
+    for opt in _ALWAYS_ON_GLOBALS:
+        _safe(["set", "-gu", opt])
+    for hook in ("after-split-window", "after-new-window"):
+        _safe(["set-hook", "-gu", hook])
+    _safe(["unbind-key", "R"])
+    for opt in _VUPAI_GLOBAL_OPTIONS:
+        _safe(["set", "-gu", opt])
+
+
+def _on_default_server(fn):
+    """Call `fn` against the DEFAULT tmux server regardless of the configured
+    socket, by clearing VTMUX_TMUX_SOCKET for the duration (`_base_argv` reads it
+    live). Restores the prior value afterward."""
+    saved = os.environ.pop("VTMUX_TMUX_SOCKET", None)
+    try:
+        return fn()
+    finally:
+        if saved is not None:
+            os.environ["VTMUX_TMUX_SOCKET"] = saved
+
+
+def cleanup_default_server() -> None:
+    """Revert vupai's globals on the user's DEFAULT tmux server (not vupai's).
+    A no-op when no default server is running."""
+    _on_default_server(revert_user_globals)
+
+
+def default_server_footprint() -> bool:
+    """True if vupai has left global state on the user's DEFAULT server.
+
+    Keyed on pane-border-format carrying ``@vupai_name`` - a string no user sets
+    by hand, written unconditionally by enable_pane_titles - so it is a reliable,
+    vupai-unique marker even when the status indicator was disabled."""
+    def probe() -> bool:
+        val = show_global("pane-border-format")
+        return bool(val) and "@vupai_name" in val
+    return _on_default_server(probe)

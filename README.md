@@ -130,6 +130,15 @@ vupai new backend     # create "backend" (error if it already exists)
 vupai kill backend    # kill the "backend" session
 ```
 
+> [!NOTE]
+> **vupai runs on its own tmux server** (a dedicated socket, `tmux -L vupai`), so
+> it never changes your existing tmux config, key bindings, or sessions. The
+> trade-off: vupai sessions don't show up in a plain `tmux ls` — reach them with
+> `vupai attach` (or `tmux -L vupai ls`). Set `tmux_socket = ""` in the config to
+> share your default server instead. If you used an older version that ran on
+> your default server, run **`vupai cleanup`** once to revert the settings it
+> left there.
+
 `vupai` starts the push-to-talk daemon as a **detached background process**
 (not a tmux window — it must run under your terminal app to receive global key
 events) and attaches you to a tmux session. Sessions follow tmux-style verbs:
@@ -286,6 +295,8 @@ bind -T copy-mode-vi WheelDownPane send -X scroll-down
 > (config reload) flips it back on and silently breaks submission. For the same
 > reason, don't override `pane-border-format` / `pane-border-status` (clobbers the
 > voice-name border) or rebind `<prefix> + R` (vupai uses it to rename a pane).
+> These apply **inside vupai's own session** (tmux still sources your
+> `~/.tmux.conf` on vupai's dedicated server); your default tmux is untouched.
 
 ## Scope & limitations
 

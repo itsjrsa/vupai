@@ -52,6 +52,32 @@ from vupai.watcher import PaneWatcher
 PIDFILE: Path = Path.home() / ".config" / "vupai" / "daemon.pid"
 DAEMON_LOG: Path = Path.home() / ".config" / "vupai" / "daemon.log"
 STATEFILE: Path = Path.home() / ".config" / "vupai" / "daemon.state"
+# One-shot marker: once vupai has run on its dedicated socket we stop probing the
+# user's default server for a leftover footprint (see ensure_up's migration note).
+MIGRATE_SENTINEL: Path = Path.home() / ".config" / "vupai" / ".migrated"
+
+# tmux socket names are filenames; restrict to a safe charset so the value
+# round-trips through tmux run-shell command strings (see socket_env_prefix).
+_SOCKET_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _seed_tmux_socket() -> None:
+    """Pin vupai to its own tmux server before anything touches tmux.
+
+    Exports VTMUX_TMUX_SOCKET (env wins over config so tests can pin an isolated
+    server) so it propagates to the detached daemon (Popen inherits os.environ)
+    and, via socket_env_prefix, to tmux hook/board children. An empty value
+    (config tmux_socket="") opts back into the shared default server. Must run as
+    the first thing in main(), before any code path that could spawn the daemon
+    or run a tmux command.
+    """
+    socket = os.environ.get("VTMUX_TMUX_SOCKET") or load_config().tmux_socket
+    if socket and not _SOCKET_RE.match(socket):
+        print(f"Invalid tmux_socket {socket!r}; falling back to 'vupai'. "
+              "Allowed: letters, digits, dot, dash, underscore.")
+        socket = "vupai"
+    if socket:
+        os.environ["VTMUX_TMUX_SOCKET"] = socket
 
 
 def write_daemon_state(phase: str, *, pid: int | None = None,
@@ -199,9 +225,11 @@ def _self_cmd() -> str:
     """How tmux hooks/bindings should re-invoke this CLI.
 
     Uses the absolute venv interpreter so `vupai` need not be on tmux's PATH
-    (run-shell executes via /bin/sh, which lacks the venv activation).
+    (run-shell executes via /bin/sh, which lacks the venv activation). Prefixed
+    with the socket env var (socket_env_prefix) because run-shell/hook children
+    do NOT inherit our process env, so without it they'd query the wrong server.
     """
-    return f"{sys.executable} -m vupai"
+    return f"{tmuxio.socket_env_prefix()}{sys.executable} -m vupai"
 
 
 def _autoname_unnamed_panes() -> None:
@@ -323,7 +351,27 @@ def ensure_up(session: str | None = None) -> str:
             print("The hotkey won't respond until it finishes. Watch progress:")
             print(f"  tail -f {DAEMON_LOG}")
         _spawn_daemon()
+    _maybe_migration_notice()
     return name
+
+
+def _maybe_migration_notice() -> None:
+    """One-shot: on the first run under a dedicated socket, warn if an older
+    (shared-server) vupai left state on the user's DEFAULT tmux, pointing them at
+    `vupai cleanup`. Probes the default server at most once, ever (the sentinel),
+    so the steady state costs nothing. Skipped in shared-server mode."""
+    socket = os.environ.get("VTMUX_TMUX_SOCKET")
+    if not socket or MIGRATE_SENTINEL.exists():
+        return
+    try:
+        if tmuxio.default_server_footprint():
+            print(f"vupai now runs on its own tmux server ('{socket}') and no "
+                  "longer changes your default tmux.")
+            print("A previous version left settings on your default server - run "
+                  "`vupai cleanup` to remove them.")
+    finally:
+        MIGRATE_SENTINEL.parent.mkdir(parents=True, exist_ok=True)
+        MIGRATE_SENTINEL.write_text("checked\n")
 
 
 # ---------------------------------------------------------------------------
@@ -333,11 +381,13 @@ def ensure_up(session: str | None = None) -> str:
 def _enter_session(name: str) -> None:
     """Move the client into session `name`.
 
-    From a normal terminal that's `tmux attach`. From inside an existing pane
-    `attach` would refuse to nest, so switch the current client instead - which
-    is exactly how you hop between named sessions with the verb commands.
+    Three cases now that vupai owns a separate tmux server:
+    - not in tmux: plain attach.
+    - inside vupai's own server: switch-client (hop between named sessions).
+    - inside the user's OTHER tmux: switch-client can't cross servers, so do a
+      cross-socket attach (nested), which attach() enables by clearing $TMUX.
     """
-    if tmuxio.inside_tmux():
+    if tmuxio.inside_vupai_server():
         tmuxio.switch_client(name)
     else:
         tmuxio.attach(name)
@@ -392,12 +442,13 @@ def _cmd_default(args: argparse.Namespace) -> int:
     if getattr(args, "reload", False):
         _cmd_down(args)
     name = ensure_up(None)  # bare `vupai` targets the cwd-named session
-    # `tmux attach` refuses to nest, so attaching from inside a pane would fail
-    # (and looks like a broken reload). When already inside tmux, the daemon has
-    # been respawned and there's nowhere new to attach - so just report and stop.
-    if tmuxio.inside_tmux():
-        print("Already inside tmux - daemon reloaded; staying in the current "
-              "session (skipped attach to avoid nesting).")
+    # Already inside vupai's own server: the daemon has been (re)spawned and
+    # there's nowhere new to attach, so just report and stop (avoids same-server
+    # nesting). From a normal shell or the user's OTHER tmux, attach into vupai's
+    # server (attach() does a cross-socket attach by clearing $TMUX).
+    if tmuxio.inside_vupai_server():
+        print("Already inside vupai's tmux - daemon reloaded; staying in the "
+              "current session.")
         return 0
     tmuxio.attach(name)
     return 0
@@ -434,6 +485,22 @@ def _cmd_reload(args: argparse.Namespace) -> int:
     """
     _cmd_down(args)
     ensure_up()
+    return 0
+
+
+def _cmd_cleanup(args: argparse.Namespace) -> int:
+    """`vupai cleanup`: revert vupai's leftover settings on your DEFAULT server.
+
+    vupai now runs on its own tmux server, but an older version mutated the
+    default server's globals/hooks/binding with no auto-undo. This reverts them
+    on the default server (never on vupai's). Safe anytime: a no-op when the
+    default server is down or already clean.
+    """
+    tmuxio.cleanup_default_server()
+    print("Reverted vupai's settings on your default tmux server (if any were "
+          "present).")
+    print("Options vupai had overridden return to tmux's built-in defaults; run "
+          "`tmux source-file ~/.tmux.conf` to reapply your own.")
     return 0
 
 
@@ -1164,6 +1231,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "reload", help="restart the daemon so source edits take effect"
     ).set_defaults(func=_cmd_reload)
+    sub.add_parser(
+        "cleanup",
+        help="revert vupai's leftover settings on your default tmux server"
+    ).set_defaults(func=_cmd_cleanup)
     sub.add_parser("status").set_defaults(func=_cmd_status)
 
     p_name = sub.add_parser("name")
@@ -1222,6 +1293,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _seed_tmux_socket()  # pin vupai's own tmux server before any tmux/daemon use
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)
