@@ -291,7 +291,9 @@ bind -T copy-mode-vi WheelDownPane send -X scroll-down
 
 - **v1 targets Claude Code panes** (and plain shells). Codex/OpenCode have known
   TUI submit bugs and are out of scope for now.
-- **Voice input only** — agents don't talk back (no TTS) yet.
+- **Talk-back is read-on-request only** — say `read <name>` and vupai speaks that
+  pane's summary aloud (macOS `say`, swap via `tts_cmd`). There is no unprompted
+  narration: agents speak only when you ask.
 - **Recognizer name-biasing is currently a no-op** — the installed `parakeet-mlx`
   doesn't accept hotwords, so vupai relies on fuzzy + phonetic matching of the
   spoken name instead (which handles most ASR slips). Pick distinctive,

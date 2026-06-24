@@ -7,6 +7,7 @@ Every helper builds the precise argv tmux expects and delegates execution to
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 
 # Field 5 is the voice name, stored in the per-pane user option @vupai_name
@@ -116,6 +117,24 @@ def capture_pane(pane_id: str) -> str:
     # terminal width is captured as one contiguous line (the injector's
     # confirmation needle would otherwise straddle a wrap break and never match).
     return run(["capture-pane", "-J", "-p", "-t", pane_id])
+
+
+_LEAD_GLYPH_RE = re.compile(r"^[^\w]+")
+
+
+def pane_title(pane_id: str) -> str:
+    """The pane's title - the task summary an agent (e.g. Claude Code) sets for
+    itself, or the running command. Carries "what this pane is about", which the
+    `read` command feeds to the summarizer for context. Best-effort: "" on failure.
+
+    Unlike the voice name (@vupai_name, which apps can't clobber), here we WANT
+    the app's own title; a leading status glyph (the spinner) is stripped.
+    """
+    try:
+        title = run(["display-message", "-p", "-t", pane_id, "#{pane_title}"]).strip()
+    except Exception:
+        return ""
+    return _LEAD_GLYPH_RE.sub("", title).strip()
 
 
 def send_enter(pane_id: str) -> None:

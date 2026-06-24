@@ -21,6 +21,7 @@ import re
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from vupai import summarize as summarize_mod
@@ -353,6 +354,110 @@ def _default_program(pane) -> str:
     except Exception:
         prog = ""
     return prog or pane.command
+
+
+@dataclass
+class PaneStatus:
+    """One pane's board-style status: callsign, program, state, one-line summary."""
+    callsign: str
+    program: str
+    state: PaneState
+    summary: str
+    needs_input: bool
+
+
+def _bound(text: str, capture_lines: int, tail_bytes: int) -> str:
+    """Last N lines then last M UTF-8 bytes (the standalone twin of Board._bounded)."""
+    lines = text.splitlines()
+    if capture_lines:
+        lines = lines[-capture_lines:]
+    tail = "\n".join(lines)
+    if tail_bytes:
+        raw = tail.encode("utf-8", "replace")
+        if len(raw) > tail_bytes:
+            tail = raw[-tail_bytes:].decode("utf-8", "replace")
+    return tail
+
+
+def collect_statuses(panes, *, summarize_fn, capture_fn=tmuxio.capture_pane,
+                     program_resolver=_default_program, settle_pause: float = 0.6,
+                     sleep=time.sleep, capture_lines: int = _CAPTURE_LINES,
+                     tail_bytes: int = _TAIL_BYTES,
+                     max_workers: int = _MAX_CONCURRENT) -> list[PaneStatus]:
+    """Snapshot each pane's state + a one-line summary on demand, no board pane.
+
+    Mirrors Board.tick without its polling thread: two captures `settle_pause`
+    apart feed a fresh ChurnClassifier (working vs idle), refined by needs-input;
+    the board's one-line `summarize_fn` then runs per pane (concurrently). This
+    lets the spoken `read board` command build the same data the visual board
+    shows even when no board pane is open. Capture failures drop that pane.
+    """
+    targets = list(panes)
+    first: dict[str, str | None] = {}
+    for p in targets:
+        try:
+            first[p.id] = _bound(capture_fn(p.id), capture_lines, tail_bytes)
+        except Exception:
+            first[p.id] = None
+    if targets:
+        sleep(settle_pause)  # one shared settle window, then re-sample for churn
+
+    pending = []  # (pane, program, state, needs, tail)
+    for p in targets:
+        program = program_resolver(p)
+        markers = markers_for(program)
+        clf = ChurnClassifier(markers=markers)
+        prev = first.get(p.id)
+        if prev is not None:
+            clf.observe(prev)
+        try:
+            tail = _bound(capture_fn(p.id), capture_lines, tail_bytes)
+        except Exception:
+            continue  # pane vanished between samples; skip it
+        obs = clf.observe(tail)
+        low = tail.lower()
+        needs = detect_needs_input(tail) or any(m in low for m in markers.needs_input)
+        state = PaneState.NEEDS_INPUT if needs else obs.state
+        pending.append((p, program, state, needs, tail))
+
+    def _summ(tail: str):
+        try:
+            return summarize_fn(tail)
+        except Exception:
+            logger.debug("read-board summarizer failed", exc_info=True)
+            return None
+
+    if pending:
+        with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
+            summaries = list(ex.map(lambda item: _summ(item[4]), pending))
+    else:
+        summaries = []
+
+    out: list[PaneStatus] = []
+    for (p, program, state, needs, _tail), summary in zip(pending, summaries):
+        text = summary.text if summary is not None else ""
+        # A summarizer that detected a pending question latches NEEDS even if the
+        # single-frame heuristic above missed it (e.g. the prompt scrolled).
+        needs = needs or (summary.needs_input if summary is not None else False)
+        st = PaneState.NEEDS_INPUT if needs else state
+        out.append(PaneStatus(p.name, program, st, text, needs))
+    return out
+
+
+def speak_statuses(statuses) -> str:
+    """One spoken digest of every agent: callsign, program, state, then summary."""
+    if not statuses:
+        return "No agents to report."
+    n = len(statuses)
+    parts = [f"{n} agent{'s' if n != 1 else ''} on the board."]
+    for s in statuses:
+        label = _STATE_LABEL.get(s.state, "unknown")
+        head = f"{s.callsign}, {s.program}, {label}" if s.program else f"{s.callsign}, {label}"
+        clause = f"{head}: {s.summary}" if s.summary else head
+        # Terminate each clause so agents don't run together when a one-line
+        # summary lacks end punctuation ("...the board atlas, claude...").
+        parts.append(clause if clause.endswith((".", "!", "?")) else clause + ".")
+    return " ".join(parts)
 
 
 def _self_cmd() -> str:

@@ -49,11 +49,12 @@ implemented and removed from this list. The remaining open work is the two
   though the probe can't tell "granted" from "denied-but-silent"; add a caveat
   line on all-passed.
 
-## Closing the loop (vupai is input-only today)
+## Closing the loop (talk-back is read-on-request today)
 
-- **Audio / TTS feedback.** Confirmation chime on successful inject, a distinct
-  error tone, and optional spoken read-back of an agent's last output line. TTS
-  is deliberately deferred for v1; this is the natural v2 frontier.
+- **Audio / TTS feedback.** Spoken read-back of an agent's output ships as the
+  `read <name>` command (see `speech.py`; on-request only, summary via
+  `tts_cmd`). Still open: a confirmation chime on successful inject, a distinct
+  error tone, and *proactive* (unprompted) read-back on a busy -> idle edge.
 - **Idle / done detection.** Poll `capture-pane` to notice when an agent
   finishes or is blocked waiting for input, then notify (sound, pane
   `display-message`, or a macOS notification). Turns "talk at agents" into

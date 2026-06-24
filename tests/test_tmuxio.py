@@ -157,6 +157,22 @@ def test_send_enter_argv(monkeypatch):
     assert fake.calls[0]["args"] == ["tmux", "send-keys", "-t", "%3", "Enter"]
 
 
+def test_pane_title_argv_and_strips_leading_glyph(monkeypatch):
+    fake = FakeRun(stdout="✳ Debug tmux copy issue\n")  # leading spinner glyph
+    patch_run(monkeypatch, fake)
+    title = tmuxio.pane_title("%3")
+    assert fake.calls[0]["args"] == [
+        "tmux", "display-message", "-p", "-t", "%3", "#{pane_title}",
+    ]
+    assert title == "Debug tmux copy issue"  # glyph + surrounding space stripped
+
+
+def test_pane_title_swallows_tmux_error(monkeypatch):
+    fake = FakeRun(returncode=1, stderr="no such pane")
+    patch_run(monkeypatch, fake)
+    assert tmuxio.pane_title("%9") == ""  # best-effort: never raises
+
+
 def test_set_pane_name_argv(monkeypatch):
     fake = FakeRun()
     patch_run(monkeypatch, fake)

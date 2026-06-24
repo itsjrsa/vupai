@@ -1,6 +1,12 @@
 import subprocess
 
-from vupai.summarize import Summary, build_prompt, denoise, summarize
+from vupai.summarize import (
+    Summary,
+    build_prompt,
+    denoise,
+    summarize,
+    summarize_read,
+)
 
 # A realistic idle Claude Code pane tail: a poem, a duration line, the input box
 # with a queued follow-up, and the footer chrome at the very bottom.
@@ -154,3 +160,46 @@ def test_fallback_skips_chrome_and_picks_real_line():
 def test_fallback_no_output():
     s = summarize("", cmd="claude -p", runner=_runner(""))
     assert s == Summary("(no output)", False, "fallback")
+
+
+# --- summarize_read: the richer, spoken read-back summary --------------------
+
+
+def test_summarize_read_keeps_whole_reply_and_embeds_title():
+    cap = []
+    s = summarize_read(
+        "agent output", cmd="claude -p", title="Fix the parser",
+        runner=_runner("First sentence here. Second sentence too.", capture=cap))
+    assert s.source == "llm"
+    # The WHOLE reply, not just the last line (that's the board's job).
+    assert s.text == "First sentence here. Second sentence too."
+    # The pane title rode into the prompt (the single argv arg).
+    assert "Fix the parser" in cap[0][-1]
+
+
+def test_summarize_read_collapses_multiline_reply_to_one_paragraph():
+    s = summarize_read("x", cmd="claude -p",
+                       runner=_runner("Line one.\n\nLine two.\n"))
+    assert s.text == "Line one. Line two."
+
+
+def test_summarize_read_truncates_on_a_sentence_boundary():
+    reply = "One. " * 80  # many sentences, ~400 chars
+    s = summarize_read("x", cmd="claude -p", max_chars=50,
+                       runner=_runner(reply.strip()))
+    assert len(s.text) <= 50
+    assert s.text.endswith(".")  # a complete sentence, never mid-word
+
+
+def test_summarize_read_falls_back_on_failure():
+    s = summarize_read("a\nbuild failed: boom\n", cmd="claude -p",
+                       runner=_runner("", returncode=1))
+    assert s.source == "fallback"
+    assert s.text == "build failed: boom"
+
+
+def test_summarize_read_falls_back_on_empty_command():
+    s = summarize_read("a\nlast meaningful line", cmd="",
+                       runner=_runner("ignored"))
+    assert s.source == "fallback"
+    assert s.text == "last meaningful line"

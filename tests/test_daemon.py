@@ -1447,3 +1447,133 @@ def test_daemon_starts_and_stops_tip_rotator(tmp_path):
     daemon.run()
     assert rot.started is True
     assert rot.stopped is True
+
+
+def _read_lines():
+    return [
+        "\t".join(["%1", "@1", "main", "0", "alpha", "node", "1", "repo"]),
+        "\t".join(["%9", "@1", "main", "1", "nova", "node", "0", "repo"]),
+    ]
+
+
+def test_read_command_dispatched_off_main_thread_with_own_registry(tmp_path):
+    # Read is slow + audible, so the daemon must hand it to async_fn (a worker in
+    # production) rather than run it inline, and the worker must use a SEPARATE
+    # registry so it never races the main loop's self._registry.refresh().
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    main_reg = make_registry(_read_lines(), "%1")
+    read_reg = make_registry(_read_lines(), "%1")
+    feedback = FakeFeedback()
+    exec_calls: list[tuple] = []
+    async_calls: list[tuple] = []
+
+    def execute_fn(cmd, registry, config, *, inject_fn=None, **kwargs):
+        exec_calls.append((cmd, registry))
+        return CommandResult(True, "nova: refactored auth, tests green")
+
+    def async_fn(fn, *args):
+        async_calls.append((fn, args))
+        fn(*args)  # run synchronously for a deterministic assertion
+
+    daemon = Daemon(Config(), FakeRecorder(wav), FakeTranscriber("read nova"),
+                    main_reg, feedback, execute_fn=execute_fn, async_fn=async_fn,
+                    read_registry_factory=lambda: read_reg)
+    daemon._process(wav, mode="system")
+
+    assert async_calls, "read must be dispatched, not run inline on the main thread"
+    assert exec_calls, "the worker must execute the command"
+    cmd, used_reg = exec_calls[0]
+    assert cmd.kind == "read" and cmd.name == "nova"
+    assert used_reg is read_reg and used_reg is not main_reg
+    assert "nova: refactored auth, tests green" in feedback.statuses
+    assert not feedback.errors
+
+
+def test_read_command_failure_is_rejected(tmp_path):
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    main_reg = make_registry(_read_lines(), "%1")
+    feedback = FakeFeedback()
+
+    def execute_fn(cmd, registry, config, *, inject_fn=None, **kwargs):
+        return CommandResult(False, "no pane named ghost")
+
+    daemon = Daemon(Config(), FakeRecorder(wav), FakeTranscriber("read ghost"),
+                    main_reg, feedback, execute_fn=execute_fn,
+                    async_fn=lambda fn, *a: fn(*a),
+                    read_registry_factory=lambda: make_registry(_read_lines(), "%1"))
+    daemon._process(wav, mode="system")
+
+    assert feedback.rejects and "no pane named ghost" in feedback.rejects[0][0]
+
+
+def test_read_command_journaled_as_dispatched(tmp_path):
+    # The worker's outcome lands after this utterance's journal entry is written,
+    # so the entry records the dispatch synchronously (the spoken result is logged
+    # separately via feedback). A never-fired async_fn proves journaling is sync.
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    recorded: list[dict] = []
+
+    class RecordingJournal:
+        def record(self, entry, wav_path):
+            recorded.append(dict(entry))
+
+    daemon = Daemon(Config(), FakeRecorder(wav), FakeTranscriber("read nova"),
+                    make_registry(_read_lines(), "%1"), FakeFeedback(),
+                    execute_fn=lambda *a, **k: CommandResult(True, "nova: ok"),
+                    async_fn=lambda fn, *a: None,  # never run the worker
+                    journal=RecordingJournal(),
+                    read_registry_factory=lambda: make_registry(_read_lines(), "%1"))
+    daemon._process(wav, mode="system")
+
+    assert recorded and recorded[0]["decision"] == "command"
+    assert recorded[0]["command"] == "read nova"
+    assert recorded[0]["outcome"] == "dispatched"
+
+
+def test_read_reject_hud_pane_comes_from_worker_registry(tmp_path):
+    # On failure the HUD overlay target must come from the worker's OWN registry,
+    # never self._registry (which the main loop refreshes) - that read would race
+    # the refresh. Give the two registries different focus; the worker's must win.
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    main_reg = make_registry(_read_lines(), "%1")    # main thread focuses %1
+    worker_reg = make_registry(_read_lines(), "%9")  # worker focuses %9
+    feedback = FakeFeedback()
+    daemon = Daemon(
+        Config(), FakeRecorder(wav), FakeTranscriber("read ghost"), main_reg,
+        feedback,
+        execute_fn=lambda *a, **k: CommandResult(False, "no pane named ghost"),
+        async_fn=lambda fn, *a: fn(*a),
+        read_registry_factory=lambda: worker_reg)
+    daemon._process(wav, mode="system")
+
+    assert feedback.rejects
+    _, pane_id, _ = feedback.rejects[0]
+    assert pane_id == "%9"  # worker registry's focus, NOT the main registry's %1
+
+
+def test_read_worker_swallows_execute_exception(tmp_path):
+    # The worker runs on a daemon thread; an exception from execute_fn must not
+    # escape (a silent thread death would swallow the outcome). It logs and moves on.
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    feedback = FakeFeedback()
+
+    def boom(cmd, registry, config, *, inject_fn=None, **kwargs):
+        raise RuntimeError("execute exploded")
+
+    daemon = Daemon(
+        Config(), FakeRecorder(wav), FakeTranscriber("read nova"),
+        make_registry(_read_lines(), "%1"), feedback, execute_fn=boom,
+        async_fn=lambda fn, *a: fn(*a),
+        read_registry_factory=lambda: make_registry(_read_lines(), "%1"))
+
+    daemon._process(wav, mode="system")  # must not raise out of the worker
+
+    # The worker swallowed the failure: no crash, and no result falsely surfaced
+    # (only the pre-transcribe "working" indicator, never a read status/reject).
+    assert feedback.statuses == ["working"]
+    assert not feedback.rejects

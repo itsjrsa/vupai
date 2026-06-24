@@ -247,3 +247,116 @@ def test_board_start_and_stop_lifecycle():
     assert ticked.wait(2.0)
     b.stop()
     assert b._thread is None
+
+
+# --- collect_statuses / speak_statuses (on-demand board, no polling thread) --
+
+def _statuses(panes, frames, **kw):
+    from vupai.board import collect_statuses
+
+    def fake_summarize(tail):
+        return Summary(f"sum:{tail[:6]}", False, "llm")
+
+    return collect_statuses(
+        panes,
+        capture_fn=_seq(frames),
+        summarize_fn=kw.pop("summarize_fn", fake_summarize),
+        program_resolver=kw.pop("program_resolver", lambda p: p.command),
+        sleep=lambda _s: None,                 # no real settle delay in tests
+        **kw,
+    )
+
+
+def test_collect_statuses_marks_working_idle_and_summarizes():
+    panes = [_pane("%1", "nova"), _pane("%2", "atlas")]
+    # nova: a Claude WORKING marker; atlas: a Claude IDLE marker.
+    frames = {"%1": ["esc to interrupt - generating"],
+              "%2": ["all done\n? for shortcuts"]}
+    statuses = _statuses(panes, frames)
+    by = {s.callsign: s for s in statuses}
+    assert by["nova"].state == PaneState.WORKING
+    assert by["atlas"].state == PaneState.IDLE
+    assert by["nova"].summary.startswith("sum:")
+    assert by["nova"].program == "claude"
+
+
+def test_collect_statuses_churn_detects_working_without_markers():
+    # A markerless tool (no "esc to interrupt"): two different frames -> churn -> working.
+    panes = [_pane("%1", "sage", command="uv")]
+    frames = {"%1": [WORK_A, WORK_B]}
+    statuses = _statuses(panes, frames, program_resolver=lambda p: "uv")
+    assert statuses[0].state == PaneState.WORKING
+
+
+def test_collect_statuses_churn_quiet_is_idle():
+    panes = [_pane("%1", "sage", command="uv")]
+    frames = {"%1": ["steady\nframe\noutput"]}   # identical across both samples
+    statuses = _statuses(panes, frames, program_resolver=lambda p: "uv")
+    assert statuses[0].state == PaneState.IDLE
+
+
+def test_collect_statuses_needs_input_latches_over_state():
+    panes = [_pane("%1", "nova")]
+    frames = {"%1": ["Do you want to proceed?\n  1. Yes\n  2. No"]}
+    statuses = _statuses(panes, frames)
+    assert statuses[0].state == PaneState.NEEDS_INPUT
+    assert statuses[0].needs_input is True
+
+
+def test_collect_statuses_summarizer_needs_input_latches():
+    panes = [_pane("%1", "nova")]
+    frames = {"%1": ["? for shortcuts"]}         # idle by marker...
+    statuses = _statuses(
+        panes, frames,
+        summarize_fn=lambda t: Summary("approve deploy?", True, "llm"))
+    assert statuses[0].state == PaneState.NEEDS_INPUT  # ...but the summary says NEEDS
+
+
+def test_collect_statuses_drops_a_pane_that_vanishes():
+    panes = [_pane("%1", "nova"), _pane("%2", "ghost")]
+
+    def cap(pid):
+        if pid == "%2":
+            raise RuntimeError("pane gone")
+        return "esc to interrupt"
+
+    from vupai.board import collect_statuses
+    statuses = collect_statuses(
+        panes, capture_fn=cap, summarize_fn=lambda t: Summary("s", False, "llm"),
+        program_resolver=lambda p: p.command, sleep=lambda _s: None)
+    assert [s.callsign for s in statuses] == ["nova"]
+
+
+def test_collect_statuses_swallows_summarizer_failure():
+    panes = [_pane("%1", "nova")]
+    frames = {"%1": ["esc to interrupt"]}
+
+    def boom(_tail):
+        raise RuntimeError("summarizer down")
+
+    statuses = _statuses(panes, frames, summarize_fn=boom)
+    assert statuses[0].summary == ""                 # degraded, not raised
+    assert statuses[0].state == PaneState.WORKING
+
+
+def test_collect_statuses_empty_panes_is_empty():
+    assert _statuses([], {}) == []
+
+
+def test_speak_statuses_digest_format():
+    from vupai.board import PaneStatus, speak_statuses
+    out = speak_statuses([
+        PaneStatus("nova", "claude", PaneState.WORKING, "fixing the parser", False),
+        PaneStatus("atlas", "uv", PaneState.NEEDS_INPUT, "approve deploy?", True),
+    ])
+    assert out.startswith("2 agents on the board.")
+    assert "nova, claude, working: fixing the parser." in out
+    assert "atlas, uv, needs input: approve deploy?" in out
+
+
+def test_speak_statuses_singular_and_empty():
+    from vupai.board import PaneStatus, speak_statuses
+    assert speak_statuses([]) == "No agents to report."
+    one = speak_statuses([PaneStatus("nova", "", PaneState.IDLE, "", False)])
+    assert one.startswith("1 agent on the board.")
+    assert "nova, idle." in one                        # no program, no summary

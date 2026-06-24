@@ -420,3 +420,17 @@ def test_render_config_uncomments_named_scalar_keys(tmp_path):
 
 def test_render_config_empty_active_equals_template():
     assert render_config({}) == ANNOTATED_TEMPLATE
+
+
+def test_tts_defaults():
+    cfg = Config()
+    assert cfg.tts_enabled is True
+    assert cfg.tts_cmd == "say"
+
+
+def test_tts_overrides(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('tts_enabled = false\ntts_cmd = "say -v Daniel"\n')
+    cfg = load_config(p)
+    assert cfg.tts_enabled is False
+    assert cfg.tts_cmd == "say -v Daniel"
