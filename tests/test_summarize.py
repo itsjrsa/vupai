@@ -1,4 +1,5 @@
 import subprocess
+import threading
 
 from vupai.summarize import (
     Summary,
@@ -253,3 +254,45 @@ def test_summarize_read_stream_fallback_is_spoken_too():
     assert summary.source == "fallback"
     assert summary.text == "last meaningful line"
     assert "".join(chunks) == "last meaningful line"
+
+
+def test_stream_run_kills_proc_when_cancelled():
+    from vupai import summarize
+
+    killed = {"n": 0}
+
+    class _FakeProc:
+        def __init__(self):
+            self.stdout = self  # acts as the pipe object too
+            self._fd = _os_pipe_read_end()
+
+        def fileno(self):
+            return self._fd
+
+        def poll(self):
+            return None  # never exits on its own
+
+        def kill(self):
+            killed["n"] += 1
+
+        def wait(self, timeout=None):
+            return 0
+
+        def close(self):
+            pass
+
+    cancel = threading.Event()
+    cancel.set()  # already cancelled: the first loop iteration must kill + exit
+
+    out = summarize.stream_run(
+        "fake-tts", "prompt", 5.0, lambda _t: None,
+        popen=lambda *a, **k: _FakeProc(), cancel=cancel)
+
+    assert killed["n"] >= 1
+    assert out is None  # nothing produced
+
+
+def _os_pipe_read_end():
+    import os
+    r, _w = os.pipe()
+    return r

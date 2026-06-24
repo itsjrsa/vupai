@@ -245,7 +245,7 @@ def summarize_read(tail: str, *, cmd: str, timeout: float = 20.0, title: str = "
 
 
 def stream_run(cmd: str, prompt: str, timeout: float, on_text, *,
-               popen=subprocess.Popen) -> str | None:
+               popen=subprocess.Popen, cancel=None) -> str | None:
     """Run `cmd` with `prompt` last, streaming stdout to `on_text` as it arrives.
 
     Reads the pipe as bytes become available (select + os.read, an incremental
@@ -274,6 +274,9 @@ def stream_run(cmd: str, prompt: str, timeout: float, on_text, *,
     try:
         while True:
             remaining = deadline - time.monotonic()
+            if cancel is not None and cancel.is_set():
+                proc.kill()
+                break
             if remaining <= 0:
                 proc.kill()
                 break
@@ -320,7 +323,7 @@ def stream_run(cmd: str, prompt: str, timeout: float, on_text, *,
 
 def summarize_read_stream(tail: str, *, cmd: str, timeout: float = 20.0,
                           title: str = "", on_text, max_chars: int = 500,
-                          popen=subprocess.Popen) -> Summary:
+                          popen=subprocess.Popen, cancel=None) -> Summary:
     """Streaming twin of `summarize_read`: feeds spoken text to `on_text` live.
 
     `on_text` receives the model's text as it streams (wire it to a
@@ -328,7 +331,8 @@ def summarize_read_stream(tail: str, *, cmd: str, timeout: float = 20.0,
     for the status line. On any failure the stdlib fallback is both returned AND
     pushed once through `on_text`, so the fallback still gets spoken.
     """
-    full = stream_run(cmd, build_read_prompt(tail, title), timeout, on_text, popen=popen)
+    full = stream_run(cmd, build_read_prompt(tail, title), timeout, on_text,
+                      popen=popen, cancel=cancel)
     if full is None:
         fb = _fallback(tail)
         try:
