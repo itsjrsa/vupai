@@ -1713,3 +1713,31 @@ def test_execute_read_board_streaming_failure_is_reported_not_raised(monkeypatch
         Command(kind="read", to_all=True), reg, Config(), io=FakeTmux(),
         speak_fn=lambda t: None)
     assert not res.ok and "couldn't read the board" in res.message
+
+
+# --- read stream: cancel + cap ----------------------------------------------
+
+def test_exec_read_stream_applies_cap_and_cancel():
+    # Without cancel, a cap of 2 stops speaking after two sentences.
+    cfg = Config(tts_stream=True, read_max_sentences=2)
+
+    def fake_stream_fn(tail, title, on_text):
+        for chunk in ["A. ", "B. ", "C. ", "D. "]:
+            on_text(chunk)
+        from vupai.summarize import Summary
+        return Summary("A. B. C. D.", False, "llm")
+
+    spoken = []
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+
+    res = execute_command(
+        Command(kind="read"), reg, cfg, io=FakeTmux(),
+        capture_fn=lambda _pid: "output",
+        title_fn=lambda _pid: "title",
+        speak_fn=lambda text: spoken.append(text),
+        stream_fn=fake_stream_fn)
+
+    assert res.ok
+    # label "nova: " rides into the first sentence; cap=2 stops after two.
+    assert spoken == ["nova: A.", "B."]
