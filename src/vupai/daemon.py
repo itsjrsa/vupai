@@ -490,7 +490,16 @@ class Daemon:
             # execute) already covered it. Only kinds whose result adds new info
             # (a create's callsign, a talkback toggle) speak on success.
             if cmd.kind in _SPEAK_ON_SUCCESS:
-                self._speak(result.spoken or result.message)
+                spoken = result.spoken or result.message
+                # A create voiced "opening an agent" a split-second ago (line ~310);
+                # pad the "<name> is up" ack with a lead-in silence so the two don't
+                # run together. Other announced successes (talkback) have no preceding
+                # intent collision, so they speak as-is.
+                if cmd.kind == "create":
+                    spoken = speech.lead_silence(
+                        spoken, self._config.tts_intent_gap_ms,
+                        cmd=self._config.tts_cmd)
+                self._speak(spoken)
         else:
             self._feedback.reject(result.message, self._hud_pane())
             # Failure always speaks: the intent said "closing sage", so the user
@@ -498,18 +507,22 @@ class Daemon:
             self._speak(result.spoken or result.message)
         return result
 
-    def _speak(self, text: str) -> None:
+    def _speak(self, text: str):
         """Speak `text` via the configured TTS, gated by the runtime mute switch.
 
         Best-effort and non-blocking (speech.speak fires `say` and returns at once),
         so this is safe on the main thread. Shared by command acks and the read
-        worker, so the "mute"/"unmute" toggle covers both from one switch."""
+        worker, so the "mute"/"unmute" toggle covers both from one switch. Returns
+        the process handle (or None when muted/failed) so the read worker's
+        SentenceSpeaker can serialize streamed sentences on it; ack callers ignore
+        it. Muting mid-stream simply starts returning None, silencing the rest."""
         if not self._talkback or not self._config.tts_cmd:
-            return
+            return None
         try:
-            speech.speak(text, cmd=self._config.tts_cmd)
+            return speech.speak(text, cmd=self._config.tts_cmd)
         except Exception:
             logger.debug("talk-back speak failed", exc_info=True)
+            return None
 
     def _hud_pane(self) -> str | None:
         """The pane to show HUD overlays on: the focused pane, or None."""

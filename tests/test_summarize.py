@@ -4,8 +4,10 @@ from vupai.summarize import (
     Summary,
     build_prompt,
     denoise,
+    stream_run,
     summarize,
     summarize_read,
+    summarize_read_stream,
 )
 
 # A realistic idle Claude Code pane tail: a poem, a duration line, the input box
@@ -203,3 +205,51 @@ def test_summarize_read_falls_back_on_empty_command():
                        runner=_runner("ignored"))
     assert s.source == "fallback"
     assert s.text == "last meaningful line"
+
+
+# --- streaming summary (stream_run / summarize_read_stream) ------------------
+# Real but trivial subprocesses (a shell emitting text) - no network, fast.
+
+def test_stream_run_relays_stdout_and_returns_full():
+    chunks = []
+    full = stream_run("sh -c 'printf \"Hello. \"; printf World.'", "prompt", 5.0,
+                      chunks.append)
+    assert full == "Hello. World."
+    assert "".join(chunks) == "Hello. World."  # delivered incrementally to on_text
+
+
+def test_stream_run_missing_command_returns_none():
+    assert stream_run("definitely-not-a-real-binary-xyz", "p", 5.0, lambda _t: None) is None
+
+
+def test_stream_run_empty_output_returns_none():
+    assert stream_run("sh -c 'true'", "p", 5.0, lambda _t: None) is None
+
+
+def test_stream_run_timeout_kills_and_returns_partial():
+    chunks = []
+    full = stream_run("sh -c 'printf early; sleep 5'", "p", 0.5, chunks.append)
+    assert full == "early"            # what arrived before the deadline
+    assert "".join(chunks) == "early"  # already streamed to the sink
+
+
+def test_summarize_read_stream_feeds_text_and_returns_llm_summary():
+    chunks = []
+    summary = summarize_read_stream(
+        "tail", cmd="sh -c 'printf \"Auth refactor done. Tests pass.\"'",
+        timeout=5.0, title="auth", on_text=chunks.append)
+    assert summary.source == "llm"
+    assert summary.text == "Auth refactor done. Tests pass."
+    assert "".join(chunks) == "Auth refactor done. Tests pass."
+
+
+def test_summarize_read_stream_fallback_is_spoken_too():
+    # Command fails -> stdlib fallback, and it is pushed through on_text so the
+    # fallback still gets spoken (not just returned for the status line).
+    chunks = []
+    summary = summarize_read_stream(
+        "last meaningful line", cmd="definitely-not-a-real-binary-xyz",
+        timeout=5.0, on_text=chunks.append)
+    assert summary.source == "fallback"
+    assert summary.text == "last meaningful line"
+    assert "".join(chunks) == "last meaningful line"

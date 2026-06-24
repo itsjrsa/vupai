@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 import re
+import sys
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+
+# Default board/read summarizer: the bundled streaming claude wrapper, invoked on
+# THIS interpreter (sys.executable, which has vupai importable) the same way the
+# daemon re-invokes itself (`-m vupai ...`). Streams Haiku token-by-token so the
+# "read" talk-back speaks as it generates; swap for plain `claude -p`, an Ollama
+# adapter, `codex exec`, etc. to opt out. Computed (not a literal) for the abs
+# interpreter path, so it is never persisted into config.toml.
+_DEFAULT_SUMMARIZER = f"{sys.executable} -m vupai.claude_summarize --model claude-haiku-4-5"
 
 
 def _as_key_tuple(value: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
@@ -107,10 +116,15 @@ class Config:
     # `vupai up`. Summaries are edge-triggered (only when a pane settles), so
     # cost stays low. board_summarizer_cmd is swappable (e.g. "codex exec",
     # "gemini -p", "ollama run <model>") and degrades to a non-LLM last-line
-    # summary when the command is absent or fails. The default uses Haiku, since
-    # a one-line glance summary does not need a high-tier model.
+    # summary when the command is absent or fails. The default is the bundled
+    # streaming Haiku wrapper (_DEFAULT_SUMMARIZER: `python -m vupai.claude_
+    # summarize`), so "read" talk-back speaks token-by-token; plain `claude -p`
+    # buffers and speaks once. To offload onto a (remote) Ollama box and skip the
+    # ~3s `claude -p` CLI cold-start per call, point it at scripts/ollama_
+    # summarize.py (keeps the model warm via keep_alive=-1); see that file's
+    # header and board_summarizer_cmd below.
     board_enabled: bool = False
-    board_summarizer_cmd: str = "claude -p --model claude-haiku-4-5"
+    board_summarizer_cmd: str = field(default_factory=lambda: _DEFAULT_SUMMARIZER)
     board_poll_interval: float = 2.0
     board_min_summary_interval: float = 30.0
     board_summary_timeout_s: float = 20.0
@@ -123,6 +137,19 @@ class Config:
     # on the status line, just silently.
     tts_enabled: bool = True
     tts_cmd: str = "say"
+    # Stream the "read" summary: speak each sentence as the summarizer produces it
+    # (first words out in ~1-2s) instead of waiting for the whole reply. Pays off
+    # with a streaming board_summarizer_cmd (the default vupai.claude_summarize,
+    # or the Ollama adapter); a buffering command (plain `claude -p`) still works,
+    # it just speaks once at the end. Off -> the original whole-reply-at-once path.
+    tts_stream: bool = True
+    # Silence (ms) inserted before a create's success ack ("sage is up") so it
+    # doesn't tread on the heels of the present-tense intent ("opening an agent")
+    # spoken a split-second earlier. The two are separate, non-awaited `say`
+    # processes, so without this lead-in they run together. macOS `say` only:
+    # honored via the inline [[slnc N]] directive; other backends ignore it
+    # (the directive is stripped rather than read aloud). 0 disables the gap.
+    tts_intent_gap_ms: int = 1000
     # Strip non-lexical filler tokens (um, uh, er, ah, eh, hmm, mm) from every
     # transcript before commands/routing/dictation see it. On by default: the
     # default set is non-lexical only, so removal is essentially risk-free, and
@@ -311,10 +338,13 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# board_enabled = false\n'),
     ("board_summarizer_cmd",
      '# Command that turns a pane\'s scrollback tail into a one-line summary.\n'
-     '# Swappable: "codex exec", "gemini -p", "ollama run <model>", etc. The\n'
-     '# prompt rides as the final argument; the last non-blank stdout line is the\n'
-     '# summary. Degrades to a non-LLM last-line summary if absent or it fails.\n'
-     '# board_summarizer_cmd = "claude -p --model claude-haiku-4-5"\n'),
+     '# Default: the bundled streaming Haiku wrapper, so "read" talk-back speaks\n'
+     '# token-by-token. The prompt rides as the final argument; the last non-blank\n'
+     '# stdout line is the summary. Degrades to a non-LLM last-line summary if\n'
+     '# absent or it fails. Swap for "claude -p ..." (buffers), "codex exec", etc.\n'
+     '# board_summarizer_cmd = "python -m vupai.claude_summarize --model claude-haiku-4-5"\n'
+     '# Remote Ollama (model on another host, skips the CLI cold-start) - point at\n'
+     '# scripts/ollama_summarize.py with flags: --host http://BOX:11434 --model M.\n'),
     ("board_poll_interval",
      '# Board tick cadence (seconds).\n'
      '# board_poll_interval = 2.0\n'),
@@ -323,7 +353,8 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# board_min_summary_interval = 30.0\n'),
     ("board_summary_timeout_s",
      '# Hard timeout (seconds) for one summarizer invocation before falling back.\n'
-     '# (`claude -p` cold-starts a CLI per call, so keep this generous.)\n'
+     '# (`claude -p` cold-starts a CLI per call, and a remote Ollama pays a model\n'
+     '# load on its first call after eviction, so keep this generous.)\n'
      '# board_summary_timeout_s = 20.0\n'),
     ("tts_enabled",
      '# Speak the "read <name>" command\'s summary aloud. On by default (the\n'
@@ -335,6 +366,17 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# argument. Swappable for any TTS CLI ("say -v Daniel", a neural-TTS\n'
      '# binary, "espeak"). Failures degrade silently to the on-screen summary.\n'
      '# tts_cmd = "say"\n'),
+    ("tts_stream",
+     '# Speak the "read" summary sentence-by-sentence as it is generated (first\n'
+     '# words out in ~1-2s) instead of after the whole reply. Pays off with the\n'
+     '# default streaming summarizer (or the Ollama adapter); a buffering command\n'
+     '# (plain claude -p) still works, it just speaks once at the end.\n'
+     '# tts_stream = true\n'),
+    ("tts_intent_gap_ms",
+     '# Silence (ms) before a create\'s "<name> is up" ack so it doesn\'t run into\n'
+     '# the "opening an agent" intent spoken a moment earlier. macOS `say` only;\n'
+     '# other backends ignore it. 0 disables the gap.\n'
+     '# tts_intent_gap_ms = 1000\n'),
     ("filler_filter",
      '# Strip non-lexical filler tokens before commands/routing/dictation.\n'
      '# filler_filter = true\n'),

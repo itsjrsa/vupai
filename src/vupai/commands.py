@@ -731,10 +731,20 @@ def _default_summarizer(config):
 
 
 def _default_speaker(config):
-    """A speak callable from config, or a no-op when TTS is off/unset."""
+    """A speak callable from config, or a no-op when TTS is off/unset.
+
+    Returns the process handle (or None) so a streaming SentenceSpeaker can wait
+    on each utterance; the non-streaming path ignores the return."""
     if not config.tts_enabled or not config.tts_cmd:
         return lambda _text: None
     return lambda text: speech.speak(text, cmd=config.tts_cmd)
+
+
+def _default_stream_summarizer(config):
+    """Streaming read summary bound to config; feeds spoken text to `on_text`."""
+    return lambda tail, title, on_text: summarize.summarize_read_stream(
+        tail, cmd=config.board_summarizer_cmd,
+        timeout=config.board_summary_timeout_s, title=title, on_text=on_text)
 
 
 def _default_board_statuses(config):
@@ -756,8 +766,6 @@ def _exec_read_board(registry, config, io, *, speak_fn=None,
     worker thread; the digest is also the CommandResult message (surfaces with TTS
     off). statuses_fn is injected by the unit suite (no tmux, no subprocess).
     """
-    speak_fn = speak_fn or _default_speaker(config)
-    statuses_fn = statuses_fn or _default_board_statuses(config)
     focused = registry.focused()
     session = focused.session if focused is not None else ""
     try:
@@ -767,6 +775,10 @@ def _exec_read_board(registry, config, io, *, speak_fn=None,
     panes = [p for p in registry.panes
              if p.name != p.id and p.id != board_id
              and (not session or p.session == session)]
+    if statuses_fn is None and config.tts_stream:
+        return _exec_read_board_stream(panes, config, speak_fn=speak_fn)
+    speak_fn = speak_fn or _default_speaker(config)
+    statuses_fn = statuses_fn or _default_board_statuses(config)
     try:
         statuses = statuses_fn(panes)
     except Exception:
@@ -779,9 +791,67 @@ def _exec_read_board(registry, config, io, *, speak_fn=None,
     return CommandResult(True, spoken)
 
 
+def _exec_read_board_stream(panes, config, *, speak_fn=None) -> CommandResult:
+    """Streaming "read board": speak the header now, each agent as it lands.
+
+    The opening "N agents on the board." is voiced immediately (using the count
+    of agent panes) while the per-pane one-line summaries run concurrently; each
+    agent's clause is then spoken in pane order the moment its summary lands, via
+    board.collect_statuses' on_status hook feeding a SentenceSpeaker. The full
+    digest is still returned for the status line. Best-effort: failures close the
+    speaker and report, never raise (runs on the read worker thread).
+    """
+    speak_fn = speak_fn or _default_speaker(config)
+    speaker = speech.SentenceSpeaker(speak_one=speak_fn)
+    if not panes:
+        speaker.feed("No agents to report.")
+        speaker.close()
+        return CommandResult(True, "No agents to report.")
+    speaker.feed(board.status_header(len(panes)) + " ")
+    statuses: list = []
+
+    def _on_status(st):
+        statuses.append(st)
+        speaker.feed(board.status_clause(st) + " ")
+
+    try:
+        board.collect_statuses(
+            panes,
+            summarize_fn=lambda tail: summarize.summarize(
+                tail, cmd=config.board_summarizer_cmd,
+                timeout=config.board_summary_timeout_s),
+            on_status=_on_status)
+    except Exception:
+        speaker.close()
+        return CommandResult(False, "couldn't read the board")
+    speaker.close()
+    return CommandResult(True, board.speak_statuses(statuses))
+
+
+def _resolve_read_target(cmd, registry, config):
+    """Resolve the read target to (pane_id, label) or (None, error message).
+
+    A named pane resolves by name (ambiguous/unknown -> error); a bare "read"
+    targets the focused pane, and an unnamed focused pane (name == id) speaks
+    without a callsign prefix (label "").
+    """
+    if cmd.name:
+        m = resolve_pane_by_name(cmd.name, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
+        if m.candidates:
+            return None, "ambiguous: " + " / ".join(m.candidates) + " - say the name again"
+        if m.pane_id is None:
+            return None, f"no pane named {cmd.name}"
+        return (m.pane_id, m.matched_name), None
+    focused = registry.focused()
+    if focused is None:
+        return None, "no focused pane to read"
+    label = focused.name if focused.name != focused.id else ""
+    return (focused.id, label), None
+
+
 def _exec_read(cmd: Command, registry, config, io, *, capture_fn=None,
                summarize_fn=None, speak_fn=None, title_fn=None,
-               statuses_fn=None) -> CommandResult:
+               statuses_fn=None, stream_fn=None) -> CommandResult:
     """Resolve a pane (named, else focused), summarize its tail, speak it.
 
     Read-only: it captures + summarizes + speaks, never injects or mutates tmux,
@@ -790,29 +860,26 @@ def _exec_read(cmd: Command, registry, config, io, *, capture_fn=None,
     the spoken line is also the CommandResult message, so it surfaces on the status
     line even with TTS off. Collaborators are injected for the unit suite (no real
     CLI / no audio). summarize_fn takes (tail, title).
+
+    With config.tts_stream on and no summarize_fn injected (the real run), this
+    takes the streaming path (_exec_read_stream): speak sentence-by-sentence as
+    the summary is generated. An injected summarize_fn forces the original
+    one-shot path - the unit suite drives that, deterministic and audio-free.
     """
     if cmd.to_all:  # "read board" / "read all": a digest of every agent
         return _exec_read_board(registry, config, io, speak_fn=speak_fn,
                                 statuses_fn=statuses_fn)
+    target, err = _resolve_read_target(cmd, registry, config)
+    if err is not None:
+        return CommandResult(False, err)
+    pane_id, label = target
     capture_fn = capture_fn or tmuxio.capture_pane
     title_fn = title_fn or tmuxio.pane_title
+    if summarize_fn is None and config.tts_stream:
+        return _exec_read_stream(pane_id, label, config, capture_fn, title_fn,
+                                 speak_fn=speak_fn, stream_fn=stream_fn)
     summarize_fn = summarize_fn or _default_summarizer(config)
     speak_fn = speak_fn or _default_speaker(config)
-    if cmd.name:
-        m = resolve_pane_by_name(cmd.name, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
-        if m.candidates:
-            msg = "ambiguous: " + " / ".join(m.candidates) + " - say the name again"
-            return CommandResult(False, msg)
-        if m.pane_id is None:
-            return CommandResult(False, f"no pane named {cmd.name}")
-        pane_id, label = m.pane_id, m.matched_name
-    else:
-        focused = registry.focused()
-        if focused is None:
-            return CommandResult(False, "no focused pane to read")
-        pane_id = focused.id
-        # An unnamed focused pane (name == id) speaks without a callsign prefix.
-        label = focused.name if focused.name != focused.id else ""
     try:
         tail = _bound_tail(capture_fn(pane_id))
         summary = summarize_fn(tail, title_fn(pane_id))
@@ -826,6 +893,32 @@ def _exec_read(cmd: Command, registry, config, io, *, capture_fn=None,
         speak_fn(spoken)
     except Exception:
         pass  # TTS is best-effort; the summary still surfaces as the message
+    return CommandResult(True, spoken)
+
+
+def _exec_read_stream(pane_id, label, config, capture_fn, title_fn, *,
+                      speak_fn=None, stream_fn=None) -> CommandResult:
+    """Streaming read: speak each sentence as the summary is generated.
+
+    A SentenceSpeaker plays sentences in order (waiting on each `say` so they
+    never overlap) while later sentences are still being produced; the label
+    rides into the first sentence ("nova: ..."). The full cleaned reply is still
+    returned as the message for the status line. Best-effort: any failure closes
+    the speaker and reports, never raises (this runs on the read worker thread).
+    """
+    speak_fn = speak_fn or _default_speaker(config)
+    stream_fn = stream_fn or _default_stream_summarizer(config)
+    speaker = speech.SentenceSpeaker(speak_one=speak_fn)
+    if label:
+        speaker.feed(f"{label}: ")
+    try:
+        tail = _bound_tail(capture_fn(pane_id))
+        summary = stream_fn(tail, title_fn(pane_id), speaker.feed)
+    except Exception:
+        speaker.close()
+        return CommandResult(False, f"couldn't read {label or 'the focused pane'}")
+    speaker.close()
+    spoken = f"{label}: {summary.text}" if label else summary.text
     return CommandResult(True, spoken)
 
 
@@ -917,10 +1010,11 @@ def _exec_slash(cmd: Command, registry, config, inject_fn) -> CommandResult:
 def execute_command(cmd: Command, registry, config, *,
                     io=tmuxio, inject_fn=inject,
                     capture_fn=None, summarize_fn=None,
-                    speak_fn=None, title_fn=None, statuses_fn=None) -> CommandResult:
-    # capture_fn/summarize_fn/speak_fn/title_fn/statuses_fn are read-command seams (None ->
-    # built from config); only the read path consumes them. Mirrors the inject_fn
-    # seam, which only the slash/broadcast paths consume.
+                    speak_fn=None, title_fn=None, statuses_fn=None,
+                    stream_fn=None) -> CommandResult:
+    # capture_fn/summarize_fn/speak_fn/title_fn/statuses_fn/stream_fn are read-command
+    # seams (None -> built from config); only the read path consumes them. Mirrors the
+    # inject_fn seam, which only the slash/broadcast paths consume.
     try:
         if cmd.kind == "create":
             return _exec_create(cmd, registry, config, io)
@@ -951,7 +1045,8 @@ def execute_command(cmd: Command, registry, config, *,
         if cmd.kind == "read":
             return _exec_read(cmd, registry, config, io, capture_fn=capture_fn,
                               summarize_fn=summarize_fn, speak_fn=speak_fn,
-                              title_fn=title_fn, statuses_fn=statuses_fn)
+                              title_fn=title_fn, statuses_fn=statuses_fn,
+                              stream_fn=stream_fn)
         if cmd.kind == "slash":
             return _exec_slash(cmd, registry, config, inject_fn)
         if cmd.kind == "broadcast":
