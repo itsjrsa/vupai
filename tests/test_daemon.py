@@ -783,6 +783,150 @@ def test_normal_text_still_routes(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Spoken talk-back: command acks + the mute/unmute runtime toggle
+# ---------------------------------------------------------------------------
+
+
+def test_create_success_speaks_say_friendly_callsign(tmp_path, monkeypatch):
+    # create's result adds info the intent could not (the assigned callsign), so
+    # it speaks on success - and the say-friendly `spoken` twin wins.
+    spoken = []
+    monkeypatch.setattr("vupai.daemon.speech.speak",
+                        lambda text, *, cmd: spoken.append(text))
+
+    def execute_fn(cmd, registry, config, *, inject_fn):
+        return CommandResult(True, "created 1 panes: sage", spoken="sage is up")
+
+    d = Daemon(Config(), _Rec(), _Tx("x"), _Reg(_panes()), _Fb(),
+               execute_fn=execute_fn)
+    d._run_command(Command(kind="create", count=1), {})
+    assert spoken == ["sage is up"]
+
+
+def test_single_target_success_is_silent_intent_already_spoke(tmp_path, monkeypatch):
+    # focus/close/swap/... say only their immediate intent; a success adds nothing,
+    # so _run_command stays quiet (the intent ack covered it).
+    spoken = []
+    monkeypatch.setattr("vupai.daemon.speech.speak",
+                        lambda text, *, cmd: spoken.append(text))
+
+    def execute_fn(cmd, registry, config, *, inject_fn):
+        return CommandResult(True, "focused nova", spoken="switched to nova")
+
+    d = Daemon(Config(), _Rec(), _Tx("x"), _Reg(_panes()), _Fb(),
+               execute_fn=execute_fn)
+    d._run_command(Command(kind="focus", name="nova"), {})
+    assert spoken == []
+
+
+def test_failure_always_speaks_even_for_single_target(tmp_path, monkeypatch):
+    spoken = []
+    monkeypatch.setattr("vupai.daemon.speech.speak",
+                        lambda text, *, cmd: spoken.append(text))
+
+    def execute_fn(cmd, registry, config, *, inject_fn):
+        return CommandResult(False, "no pane named sage")
+
+    d = Daemon(Config(), _Rec(), _Tx("x"), _Reg(_panes()), _Fb(),
+               execute_fn=execute_fn)
+    d._run_command(Command(kind="close", name="sage"), {})
+    assert spoken == ["no pane named sage"]
+
+
+def test_create_success_ack_silent_when_muted(tmp_path, monkeypatch):
+    spoken = []
+    monkeypatch.setattr("vupai.daemon.speech.speak",
+                        lambda text, *, cmd: spoken.append(text))
+
+    def execute_fn(cmd, registry, config, *, inject_fn):
+        return CommandResult(True, "created 1 panes: sage", spoken="sage is up")
+
+    d = Daemon(Config(), _Rec(), _Tx("x"), _Reg(_panes()), _Fb(),
+               execute_fn=execute_fn)
+    d._talkback = False  # runtime mute
+    d._run_command(Command(kind="create", count=1), {})
+    assert spoken == []
+
+
+def test_command_speaks_intent_immediately_then_silent_on_success(tmp_path, monkeypatch):
+    # The intent is voiced BEFORE execute (here a non-destructive focus, no popup);
+    # the success itself adds nothing, so only the one immediate phrase is heard.
+    spoken = []
+    monkeypatch.setattr("vupai.daemon.speech.speak",
+                        lambda text, *, cmd: spoken.append(text))
+
+    def execute_fn(cmd, registry, config, *, inject_fn):
+        return CommandResult(True, "focused nova")
+
+    d = Daemon(Config(), _Rec(), _Tx("focus nova"), _Reg(_panes()), _Fb(),
+               execute_fn=execute_fn)
+    d._process(_wav(tmp_path), mode="system")
+    assert spoken == ["switching to nova"]
+
+
+def test_destructive_speaks_intent_before_popup_then_failure(tmp_path, monkeypatch):
+    # close is popup-gated: the intent must be spoken BEFORE the (blocking) confirm,
+    # so the user hears "closing sage" at once; the failure trails after execute.
+    order = []
+    monkeypatch.setattr("vupai.daemon.speech.speak",
+                        lambda text, *, cmd: order.append(("speak", text)))
+
+    def confirm_fn(summary, *, timeout, disable_hint):
+        order.append(("popup", summary))
+        return True
+
+    def execute_fn(cmd, registry, config, *, inject_fn):
+        order.append(("execute", cmd.name))
+        return CommandResult(False, "no pane named sage")
+
+    d = Daemon(Config(), _Rec(), _Tx("close sage"), _Reg(_panes()), _Fb(),
+               execute_fn=execute_fn, confirm_fn=confirm_fn)
+    d._process(_wav(tmp_path), mode="system")
+    assert order == [("speak", "closing sage"), ("popup", "close sage"),
+                     ("execute", "sage"), ("speak", "no pane named sage")]
+
+
+def test_destructive_cancel_speaks_intent_then_cancelled(tmp_path, monkeypatch):
+    spoken = []
+    monkeypatch.setattr("vupai.daemon.speech.speak",
+                        lambda text, *, cmd: spoken.append(text))
+    d = Daemon(Config(), _Rec(), _Tx("close sage"), _Reg(_panes()), _Fb(),
+               confirm_fn=lambda *a, **k: False)  # decline the popup
+    d._process(_wav(tmp_path), mode="system")
+    assert spoken == ["closing sage", "cancelled"]
+
+
+def test_talkback_seeds_from_config_tts_enabled(tmp_path):
+    assert Daemon(Config(tts_enabled=True), _Rec(), _Tx("x"),
+                  _Reg(_panes()), _Fb())._talkback is True
+    assert Daemon(Config(tts_enabled=False), _Rec(), _Tx("x"),
+                  _Reg(_panes()), _Fb())._talkback is False
+
+
+def test_mute_command_silences_runtime_and_is_itself_silent(tmp_path, monkeypatch):
+    spoken = []
+    monkeypatch.setattr("vupai.daemon.speech.speak",
+                        lambda text, *, cmd: spoken.append(text))
+    d = Daemon(Config(), _Rec(), _Tx("mute"), _Reg(_panes()), _Fb())
+    assert d._talkback is True
+    d._process(_wav(tmp_path), mode="system")
+    assert d._talkback is False
+    assert spoken == []  # muting takes effect before its own ack would speak
+
+
+def test_unmute_command_restores_runtime_and_confirms_aloud(tmp_path, monkeypatch):
+    spoken = []
+    monkeypatch.setattr("vupai.daemon.speech.speak",
+                        lambda text, *, cmd: spoken.append(text))
+    # Starts muted (persisted default off); the voice command overrides it live.
+    d = Daemon(Config(tts_enabled=False), _Rec(), _Tx("unmute"), _Reg(_panes()), _Fb())
+    assert d._talkback is False
+    d._process(_wav(tmp_path), mode="system")
+    assert d._talkback is True
+    assert spoken == ["talk back on"]
+
+
+# ---------------------------------------------------------------------------
 # Submit review delay (inject_submit_delay): clear-to-cancel before Enter
 # ---------------------------------------------------------------------------
 

@@ -12,11 +12,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from . import speech
 from .asr import Transcriber, model_cached
 from .commands import (
     DESTRUCTIVE_KINDS,
     Command,
     execute_command,
+    intent_phrase,
     parse_command,
 )
 from .config import Config
@@ -34,6 +36,12 @@ logger = logging.getLogger(__name__)
 
 # Sentinel enqueued by stop() to unblock the consumer loop for a clean shutdown.
 _SHUTDOWN = object()
+
+# Command kinds whose SUCCESS carries information the immediate intent ack could
+# not (a create's assigned callsign; a talkback toggle's confirmation), so their
+# result is voiced even on success. Every other kind speaks only the intent up
+# front and, on failure, the error - a success is silent (the intent said it).
+_SPEAK_ON_SUCCESS = frozenset({"create", "talkback"})
 
 # Shown on every empty capture. Covers BOTH causes (a denied Microphone grant
 # AND a disconnected/muted/name-collided device) and is emitted unconditionally -
@@ -119,6 +127,11 @@ class Daemon:
         # that on every utterance and sharing it would race the refresh. A factory
         # (not an instance) so each read sees a fresh, independently-refreshed view.
         self._read_registry_factory = read_registry_factory or PaneRegistry
+        # Runtime master switch for ALL spoken talk-back (command acks + read).
+        # Seeded from config.tts_enabled (the persisted default) and flipped live
+        # by the "mute"/"unmute" voice command. A plain bool: written on the main
+        # thread, read on the read worker - atomic enough in CPython, no lock.
+        self._talkback = config.tts_enabled
         self._journal = journal if journal is not None else Journal.from_config(config)
         self._hotkey: Hotkey | MultiHotkey | None = None
         self._stop_event = threading.Event()
@@ -265,6 +278,19 @@ class Daemon:
                     # thread so it never stalls the next utterance. See _dispatch_read.
                     self._dispatch_read(cmd, entry)
                     return
+                if cmd.kind == "talkback":
+                    # Flip the runtime mute BEFORE running so _run_command's spoken
+                    # ack honors the new state: unmute confirms aloud, mute stays
+                    # silent (it's already muted). No tmux mutation, no confirm gate.
+                    self._talkback = cmd.enable
+                    self._run_command(cmd, entry)
+                    return
+                # Voice the present-tense intent NOW, before the (popup-gated, often
+                # slow) execution, so feedback is immediate. The result ack then
+                # speaks only on failure (or a create/talkback success). Fired even
+                # for confirm-gated commands: the user hears "closing sage" while
+                # the popup is up, and "cancelled" if they decline.
+                self._speak(intent_phrase(cmd))
                 if self._config.confirm_destructive and self._needs_confirm(cmd):
                     summary = _summarize_destructive(cmd, self._registry)
                     # Synchronous confirmation (a tmux popup by default). Anything
@@ -278,6 +304,7 @@ class Daemon:
                         entry["command"] = summary
                         entry["outcome"] = "cancelled"
                         self._feedback.status(f"cancelled: {summary}")
+                        self._speak("cancelled")
                         return
                     self._run_command(cmd, entry, confirmed=True)
                     return
@@ -416,7 +443,8 @@ class Daemon:
             return
         try:
             result = self._execute_fn(
-                cmd, registry, self._config, inject_fn=self._inject_fn)
+                cmd, registry, self._config, inject_fn=self._inject_fn,
+                speak_fn=self._speak)
             if result.ok:
                 self._feedback.status(result.message)
             else:
@@ -441,9 +469,30 @@ class Daemon:
         entry["outcome"] = "ok" if result.ok else "unknown"
         if result.ok:
             self._feedback.status(result.message)
+            # Success is normally silent - the immediate intent ack (spoken before
+            # execute) already covered it. Only kinds whose result adds new info
+            # (a create's callsign, a talkback toggle) speak on success.
+            if cmd.kind in _SPEAK_ON_SUCCESS:
+                self._speak(result.spoken or result.message)
         else:
             self._feedback.reject(result.message, self._hud_pane())
+            # Failure always speaks: the intent said "closing sage", so the user
+            # needs to hear it didn't happen ("no pane named sage").
+            self._speak(result.spoken or result.message)
         return result
+
+    def _speak(self, text: str) -> None:
+        """Speak `text` via the configured TTS, gated by the runtime mute switch.
+
+        Best-effort and non-blocking (speech.speak fires `say` and returns at once),
+        so this is safe on the main thread. Shared by command acks and the read
+        worker, so the "mute"/"unmute" toggle covers both from one switch."""
+        if not self._talkback or not self._config.tts_cmd:
+            return
+        try:
+            speech.speak(text, cmd=self._config.tts_cmd)
+        except Exception:
+            logger.debug("talk-back speak failed", exc_info=True)
 
     def _hud_pane(self) -> str | None:
         """The pane to show HUD overlays on: the focused pane, or None."""

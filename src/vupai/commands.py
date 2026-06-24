@@ -200,7 +200,7 @@ MAX_CREATE_COUNT = 30
 @dataclass(frozen=True)
 class Command:
     # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|board|read|
-    # slash|broadcast|unknown
+    # talkback|slash|broadcast|unknown
     kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
@@ -213,6 +213,7 @@ class Command:
     to_all: bool = False                   # slash: target all named panes
     layout: str = ""                       # tmux layout name (kind == "layout")
     main_focus: bool = False               # layout: swap focused pane into main slot
+    enable: bool = False                   # talkback: True = unmute, False = mute
 
 
 def _tokens(s: str) -> list[str]:
@@ -370,6 +371,36 @@ def _parse_read(toks: list[str]) -> Command | None:
     return Command(kind="read", name=rest[0] if rest else "")
 
 
+# Talk-back toggle: silence/restore ALL spoken feedback (command acks + read).
+# Phrase sets are matched on the normalized full utterance (the system key makes
+# the whole utterance a command), so common words like "quiet"/"speak" are safe
+# here - plain dictation goes verbatim via the other key. Keyed by the joined,
+# article-stripped token string. Disjoint from every other verb set, so ordering
+# in the parse chain is irrelevant. Extend with a one-liner + a test.
+_TALKBACK_OFF = frozenset({
+    "mute", "quiet", "silence", "hush", "shush", "be quiet", "stay quiet",
+    "stop talking", "stop talk", "stop speaking", "stop reading", "stop reading back",
+    "shut up", "talk back off", "stop talk back", "stop the talk back", "no talk back",
+})
+_TALKBACK_ON = frozenset({
+    "unmute", "speak", "speak up", "talk back", "talk back on", "talk to me",
+    "start talking", "read back on", "read backs on", "talk backs on",
+})
+
+
+def _parse_talkback(toks: list[str]) -> Command | None:
+    """`mute`/`unmute` (and synonyms) -> toggle all spoken feedback, else None.
+
+    Matched on the whole utterance so it never shadows a pane action; an
+    unrecognized phrase returns None and falls through to dictation."""
+    phrase = " ".join(t for t in toks if t not in ("the", "please"))
+    if phrase in _TALKBACK_OFF:
+        return Command(kind="talkback", enable=False)
+    if phrase in _TALKBACK_ON:
+        return Command(kind="talkback", enable=True)
+    return None
+
+
 def _parse_slash(toks: list[str], slash_commands: dict[str, str]) -> Command | None:
     """`<verb> [target]` where verb is a configured slash command.
 
@@ -402,7 +433,7 @@ def _parse_body(body: str, macros: dict[str, list[str]],
     # configured slash command. Default config has no such collision.
     return (_parse_create(toks, programs) or _parse_close(toks)
             or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks)
-            or _parse_layout(toks) or _parse_board(toks)
+            or _parse_layout(toks) or _parse_board(toks) or _parse_talkback(toks)
             or _parse_slash(toks, slash_commands) or _parse_read(toks))
 
 
@@ -441,6 +472,49 @@ def parse_command(
 class CommandResult:
     ok: bool
     message: str
+    # Optional natural-language phrase for spoken talk-back. The status-line
+    # `message` is terse and symbol-laden ("swapped a <-> b", "sent /clear to nova",
+    # "2/2 agents") which reads badly aloud; `spoken` is the say-friendly twin.
+    # Empty means "speak the message" (word-only messages read fine as-is).
+    spoken: str = ""
+
+
+def intent_phrase(cmd: Command) -> str:
+    """Present-tense spoken phrase voiced the INSTANT a command is recognized,
+    before the confirm popup and execution - so feedback feels immediate instead
+    of trailing the (popup-gated, sometimes slow) action. Pure: it reads only the
+    parsed Command, never tmux. Empty string -> nothing is voiced up front (read /
+    talkback / macro carry their own feedback). The result ack (post-execute) then
+    speaks only on failure, so a success is just this one immediate phrase."""
+    if cmd.kind == "create":
+        return "opening an agent" if cmd.count == 1 else f"opening {cmd.count} agents"
+    if cmd.kind == "close":
+        return f"closing {cmd.name}"
+    if cmd.kind == "close_others":
+        return "closing the other agents"
+    if cmd.kind == "focus":
+        return f"switching to {cmd.name}"
+    if cmd.kind == "swap":
+        return f"swapping {cmd.name} and {cmd.name_b}"
+    if cmd.kind == "zoom":
+        return f"zooming {cmd.name}" if cmd.name else "zooming"
+    if cmd.kind == "unzoom":
+        return "restoring the layout"
+    if cmd.kind == "layout":
+        return f"{_LAYOUT_LABELS.get(cmd.layout, 'arranging the')} layout"
+    if cmd.kind == "board":
+        return "opening the board"
+    if cmd.kind == "broadcast":
+        return "broadcasting"
+    if cmd.kind == "slash":
+        return f"sending {cmd.text.lstrip('/')}"
+    return ""
+
+
+def talkback_message(enable: bool) -> str:
+    """Status-line text for a talk-back toggle. Single source of truth shared by
+    the executor and the daemon so the wording can't drift."""
+    return "talk-back on" if enable else "talk-back off (muted)"
 
 
 def wrap_agent_command(program: str) -> str:
@@ -504,7 +578,12 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
         # around the 6th-7th split. Tiling each round keeps room for the next.
         io.select_layout(target, "tiled")
     io.select_layout(target, "tiled")
-    return CommandResult(True, f"created {cmd.count} panes: {' '.join(assigned)}{note}")
+    if len(assigned) == 1:
+        spoken = f"{assigned[0]} is up"
+    else:
+        spoken = f"{len(assigned)} agents up: {', '.join(assigned)}"
+    return CommandResult(True, f"created {cmd.count} panes: {' '.join(assigned)}{note}",
+                         spoken=spoken)
 
 
 def _exec_focus(cmd: Command, registry, config, io) -> CommandResult:
@@ -515,7 +594,8 @@ def _exec_focus(cmd: Command, registry, config, io) -> CommandResult:
     if m.pane_id is None:
         return CommandResult(False, f"no pane named {cmd.name}")
     io.select_pane(m.pane_id)
-    return CommandResult(True, f"focused {m.matched_name}")
+    return CommandResult(True, f"focused {m.matched_name}",
+                         spoken=f"switched to {m.matched_name}")
 
 
 def _exec_swap(cmd: Command, registry, config, io) -> CommandResult:
@@ -528,7 +608,8 @@ def _exec_swap(cmd: Command, registry, config, io) -> CommandResult:
         if m.pane_id is None:
             return CommandResult(False, f"no pane named {raw}")
     io.swap_pane(a.pane_id, b.pane_id)
-    return CommandResult(True, f"swapped {a.matched_name} <-> {b.matched_name}")
+    return CommandResult(True, f"swapped {a.matched_name} <-> {b.matched_name}",
+                         spoken=f"swapped {a.matched_name} and {b.matched_name}")
 
 
 def _exec_close(cmd: Command, registry, config, io) -> CommandResult:
@@ -539,7 +620,7 @@ def _exec_close(cmd: Command, registry, config, io) -> CommandResult:
     if m.pane_id is None:
         return CommandResult(False, f"no pane named {cmd.name}")
     io.kill_pane(m.pane_id)
-    return CommandResult(True, f"closed {m.matched_name}")
+    return CommandResult(True, f"closed {m.matched_name}", spoken=f"closed {m.matched_name}")
 
 
 def _exec_close_others(cmd: Command, registry, config, io) -> CommandResult:
@@ -556,7 +637,8 @@ def _exec_close_others(cmd: Command, registry, config, io) -> CommandResult:
     for p in victims:
         io.kill_pane(p.id)
     kept = focused.name if focused.name != focused.id else "the focused pane"
-    return CommandResult(True, f"closed {len(victims)} panes, kept {kept}")
+    return CommandResult(True, f"closed {len(victims)} panes, kept {kept}",
+                         spoken=f"closed {len(victims)} agents, kept {kept}")
 
 
 def _exec_zoom(cmd: Command, registry, config, io) -> CommandResult:
@@ -788,7 +870,8 @@ def _exec_broadcast(cmd: Command, registry, config, inject_fn) -> CommandResult:
         if inject_fn(p.id, cmd.text, confirm_timeout=config.inject_confirm_timeout,
                      poll_interval=config.inject_poll_interval):
             ok += 1
-    return CommandResult(True, f"broadcast to {ok}/{len(targets)} agents")
+    return CommandResult(True, f"broadcast to {ok}/{len(targets)} agents",
+                         spoken=f"broadcast to {ok} of {len(targets)} agents")
 
 
 def _inject(inject_fn, pane_id, text, config) -> bool:
@@ -809,7 +892,8 @@ def _exec_slash(cmd: Command, registry, config, inject_fn) -> CommandResult:
         if not targets:
             return CommandResult(False, "no named agents")
         ok = sum(1 for p in targets if _inject(inject_fn, p.id, literal, config))
-        return CommandResult(True, f"sent {literal} to {ok}/{len(targets)} agents")
+        return CommandResult(True, f"sent {literal} to {ok}/{len(targets)} agents",
+                             spoken=f"sent {literal.lstrip('/')} to {ok} of {len(targets)} agents")
     if cmd.name:
         m = resolve_pane_by_name(cmd.name, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
         if m.candidates:
@@ -825,7 +909,8 @@ def _exec_slash(cmd: Command, registry, config, inject_fn) -> CommandResult:
         pane_id = focused.id
         label = focused.name if focused.name != focused.id else "the focused pane"
     if _inject(inject_fn, pane_id, literal, config):
-        return CommandResult(True, f"sent {literal} to {label}")
+        return CommandResult(True, f"sent {literal} to {label}",
+                             spoken=f"sent {literal.lstrip('/')} to {label}")
     return CommandResult(False, f"failed to send {literal} to {label}")
 
 
@@ -857,6 +942,12 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_layout(cmd, registry, config, io)
         if cmd.kind == "board":
             return _exec_board(cmd, registry, config, io)
+        if cmd.kind == "talkback":
+            # The runtime mute flag lives on the daemon (it survives across
+            # utterances); this just reports the toggle. "on" confirms aloud, "off"
+            # has no spoken twin - by the time it would speak, talk-back is muted.
+            return CommandResult(True, talkback_message(cmd.enable),
+                                 spoken="talk back on" if cmd.enable else "")
         if cmd.kind == "read":
             return _exec_read(cmd, registry, config, io, capture_fn=capture_fn,
                               summarize_fn=summarize_fn, speak_fn=speak_fn,

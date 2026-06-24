@@ -1492,6 +1492,86 @@ def test_execute_read_passes_pane_title_to_summarizer():
     assert seen["title"] == "Add voice read-back"
 
 
+def test_parse_talkback_mute_and_unmute_phrases():
+    for phrase in ("mute", "quiet", "be quiet", "stop talking", "shut up",
+                   "the mute", "mute please"):
+        c = _parse_btn(phrase)
+        assert c is not None and c.kind == "talkback" and c.enable is False, phrase
+    for phrase in ("unmute", "speak up", "talk back", "talk to me", "start talking"):
+        c = _parse_btn(phrase)
+        assert c is not None and c.kind == "talkback" and c.enable is True, phrase
+
+
+def test_parse_talkback_only_on_button_key():
+    # The mute/unmute words are common; they are commands only on the system key.
+    # On the dictation/keyword key they fall through to verbatim injection.
+    assert _parse("mute") is None
+    assert _parse("talk back") is None
+
+
+def test_parse_unrelated_phrase_is_not_talkback():
+    # A near-miss must not toggle: it falls through (None -> dictation/route).
+    assert _parse_btn("muted colors") is None
+    assert _parse_btn("speak to nova") is None
+
+
+def test_intent_phrase_is_present_tense_per_kind():
+    from vupai.commands import intent_phrase
+    assert intent_phrase(Command(kind="close", name="sage")) == "closing sage"
+    assert intent_phrase(Command(kind="create", count=1)) == "opening an agent"
+    assert intent_phrase(Command(kind="create", count=3)) == "opening 3 agents"
+    assert intent_phrase(Command(kind="focus", name="nova")) == "switching to nova"
+    assert intent_phrase(Command(kind="swap", name="a", name_b="b")) == "swapping a and b"
+    assert intent_phrase(Command(kind="close_others")) == "closing the other agents"
+    assert intent_phrase(Command(kind="slash", text="/clear")) == "sending clear"
+    assert intent_phrase(Command(kind="zoom")) == "zooming"
+    # read / talkback / unknown carry their own feedback -> no up-front intent.
+    assert intent_phrase(Command(kind="read")) == ""
+    assert intent_phrase(Command(kind="talkback", enable=True)) == ""
+
+
+def test_execute_talkback_reports_state_and_speaks_only_on_unmute():
+    on = execute_command(Command(kind="talkback", enable=True), FakeRegistry([]),
+                         Config(), io=FakeTmux())
+    assert on.ok and on.message == "talk-back on" and on.spoken == "talk back on"
+    off = execute_command(Command(kind="talkback", enable=False), FakeRegistry([]),
+                          Config(), io=FakeTmux())
+    # Muted: no spoken twin (by the time it would speak, talk-back is already off).
+    assert off.ok and "muted" in off.message and off.spoken == ""
+
+
+def test_execute_create_has_say_friendly_spoken_ack(monkeypatch):
+    monkeypatch.setattr("vupai.commands.shutil.which", lambda c: "/bin/claude")
+    focused = _pane("%0", "%0", active=True)
+    reg = FakeRegistry([focused], focused=focused)
+    one = execute_command(Command(kind="create", count=1, unit="pane"), reg,
+                          Config(), io=FakeTmux(new_ids=["%1"]))
+    assert one.spoken == "nova is up"
+    reg = FakeRegistry([focused], focused=focused)
+    two = execute_command(Command(kind="create", count=2, unit="pane"), reg,
+                          Config(), io=FakeTmux(new_ids=["%1", "%2"]))
+    assert two.spoken == "2 agents up: nova, atlas"
+
+
+def test_execute_swap_and_broadcast_spoken_drops_symbols():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    swap = execute_command(Command(kind="swap", name="nova", name_b="atlas"), reg,
+                           Config(), io=FakeTmux())
+    assert "<->" in swap.message and swap.spoken == "swapped nova and atlas"
+    bc = execute_command(Command(kind="broadcast", text="go"), reg, Config(),
+                         io=FakeTmux(), inject_fn=lambda *a, **k: True)
+    assert "/" in bc.message and bc.spoken == "broadcast to 2 of 2 agents"
+
+
+def test_execute_slash_spoken_strips_leading_slash():
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+    res = execute_command(Command(kind="slash", text="/clear", name="nova"), reg,
+                          Config(), io=FakeTmux(), inject_fn=lambda *a, **k: True)
+    assert res.message == "sent /clear to nova" and res.spoken == "sent clear to nova"
+
+
 def test_bound_tail_byte_limit_keeps_end_and_is_utf8_safe():
     from vupai.commands import _READ_TAIL_BYTES, _bound_tail
     # Few lines (under the line cap) but far over the byte cap: the byte branch

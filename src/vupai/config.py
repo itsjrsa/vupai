@@ -96,11 +96,13 @@ class Config:
     board_poll_interval: float = 2.0
     board_min_summary_interval: float = 30.0
     board_summary_timeout_s: float = 20.0
-    # Talk-back (see speech.py): the spoken "read <name>" command summarizes a
-    # pane (reusing board_summarizer_cmd) and reads the result aloud. tts_cmd is
-    # swappable (any TTS CLI that takes the phrase as its last argument); the
-    # default is macOS `say`. tts_enabled gates only the audio - with it off,
-    # "read" still surfaces the summary on the status line, just silently.
+    # Talk-back (see speech.py): vupai speaks back a short spoken ack of every
+    # command ("nova is up", "closed atlas") and reads pane summaries aloud for
+    # "read <name>". tts_cmd is swappable (any TTS CLI that takes the phrase as its
+    # last argument); the default is macOS `say`. tts_enabled is the persisted
+    # master switch and the startup default for the runtime "mute"/"unmute" voice
+    # command; it gates only the audio - with it off, acks and "read" still surface
+    # on the status line, just silently.
     tts_enabled: bool = True
     tts_cmd: str = "say"
     # Strip non-lexical filler tokens (um, uh, er, ah, eh, hmm, mm) from every
