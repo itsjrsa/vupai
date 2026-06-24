@@ -246,6 +246,10 @@ def find_board_pane(session: str) -> str | None:
 
 def enable_pane_titles() -> None:
     run(["set", "-g", "pane-border-status", "top"])
+    # Thicker glyphs for the border lines. tmux draws borders with box-drawing
+    # characters; "heavy" swaps the thin single-line set for the bold/heavy one,
+    # making each pane edge read as a chunkier rule.
+    run(["set", "-g", "pane-border-lines", "heavy"])
     # Three segments, each shown only when present: voice name (bold), program,
     # then the app's own title. So the border reads "sage · claude · ✳ Add help
     # command...", keeping the program visible even after the agent overwrites
@@ -671,7 +675,7 @@ def kill_session(name: str) -> None:
 # auto-revert. `vupai cleanup` unsets them on the user's DEFAULT server so an
 # install that predates the dedicated socket leaves no footprint behind.
 _ALWAYS_ON_GLOBALS = (
-    "pane-border-status", "pane-border-format",
+    "pane-border-status", "pane-border-format", "pane-border-lines",
     "set-titles", "set-titles-string",
     "base-index", "pane-base-index", "extended-keys",
     "status-right-length", "status-left-length",

@@ -223,9 +223,10 @@ def test_enable_pane_titles_runs_both_set_commands(monkeypatch):
     patch_run(monkeypatch, fake)
     tmuxio.enable_pane_titles()
     assert fake.calls[0]["args"] == ["tmux", "set", "-g", "pane-border-status", "top"]
+    assert fake.calls[1]["args"] == ["tmux", "set", "-g", "pane-border-lines", "heavy"]
     # name · program · pane_title, each segment conditional so it collapses when
     # its option is unset.
-    assert fake.calls[1]["args"] == [
+    assert fake.calls[2]["args"] == [
         "tmux", "set", "-g", "pane-border-format",
         "#{?@vupai_name,#[bold]#{@vupai_name}#[nobold] · ,}"
         "#{?@vupai_program,#{@vupai_program} · ,}"
