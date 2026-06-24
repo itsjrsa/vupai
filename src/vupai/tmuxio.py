@@ -530,6 +530,26 @@ def server_running() -> bool:
     return True
 
 
+def list_sessions() -> list[tuple[str, bool]]:
+    """Sessions on vupai's server as ``(name, attached)`` pairs.
+
+    `session_attached` is a client count: 0 = detached, >=1 = a client is
+    attached. Returns [] when the server isn't running (`list-sessions` errors),
+    so callers treat "no server" and "no sessions" alike (a clean `tmux ls`).
+    """
+    try:
+        out = run(["list-sessions", "-F", "#{session_name}\t#{session_attached}"])
+    except TmuxError:
+        return []
+    sessions: list[tuple[str, bool]] = []
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        name, _, attached = line.partition("\t")
+        sessions.append((name, attached.strip() not in ("", "0")))
+    return sessions
+
+
 def has_session(name: str) -> bool:
     """Whether a session named `name` exists.
 

@@ -72,6 +72,29 @@ def test_list_panes_ignores_blank_lines(monkeypatch):
     assert tmuxio.list_panes() == ["%1\t@1\twin\t0\tname\tzsh\t1\trepo"]
 
 
+def test_list_sessions_argv_and_parses_attached_flag(monkeypatch):
+    # session_attached is a client count: 0 = detached, >=1 = attached.
+    fake = FakeRun(stdout="vupai\t1\nmy-app\t0\nscratch\t2\n")
+    patch_run(monkeypatch, fake)
+    sessions = tmuxio.list_sessions()
+    assert fake.calls[0]["args"] == [
+        "tmux", "list-sessions", "-F",
+        "#{session_name}\t#{session_attached}"]
+    assert sessions == [("vupai", True), ("my-app", False), ("scratch", True)]
+
+
+def test_list_sessions_ignores_blank_lines(monkeypatch):
+    fake = FakeRun(stdout="vupai\t1\n\n")
+    patch_run(monkeypatch, fake)
+    assert tmuxio.list_sessions() == [("vupai", True)]
+
+
+def test_list_sessions_returns_empty_when_no_server(monkeypatch):
+    fake = FakeRun(returncode=1, stderr="no server running")
+    patch_run(monkeypatch, fake)
+    assert tmuxio.list_sessions() == []
+
+
 @dataclass
 class VerbRun:
     """Returns canned CompletedProcesses keyed by the first tmux subcommand."""

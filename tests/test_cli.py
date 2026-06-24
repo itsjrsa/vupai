@@ -10,9 +10,11 @@ class FakeTmux:
     """In-memory stand-in for the tmuxio module."""
 
     def __init__(self, *, server=True, focused="%1", inside_tmux=False,
-                 inside_vupai=True, footprint=False):
+                 inside_vupai=True, footprint=False, sessions=None):
         self._server = server
         self._focused = focused
+        # list_sessions() returns (name, attached) pairs; default to none.
+        self._sessions = sessions if sessions is not None else []
         self._inside_tmux = inside_tmux
         # When inside tmux, is it vupai's own server (switch-client) or the
         # user's other tmux (cross-socket attach)? Defaults to vupai's.
@@ -92,6 +94,9 @@ class FakeTmux:
 
     def focused_pane_id(self):
         return self._focused
+
+    def list_sessions(self):
+        return list(self._sessions)
 
     def split_window(self, target, program, *, horizontal=False, size=None):
         self.calls.append(("split_window", target, program, horizontal, size))
@@ -1722,3 +1727,31 @@ def test_cmd_config_init_noop_when_complete(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "CONFIG_PATH", p)
     assert cli._cmd_config(SimpleNamespace(init=True)) == 0
     assert "already lists every key" in capsys.readouterr().out
+
+
+def test_ls_prints_message_when_no_sessions(fake_env, capsys):
+    ft, _ = fake_env
+    ft._sessions = []
+    assert cli.main(["ls"]) == 0
+    assert capsys.readouterr().out.strip() == "no vupai sessions"
+
+
+def test_ls_lists_sessions_with_counts_and_attached_state(
+        fake_env, monkeypatch, capsys):
+    ft, _ = fake_env
+    # Voice target (%1) lives in `my-app`; it is sorted first and marked `*`.
+    ft._focused = "%1"
+    ft._sessions = [("vupai", True), ("my-app", False), ("scratch", True)]
+    _stub_registry(monkeypatch, [
+        _pane("nova", "%1", session="my-app"),   # named agent in focused session
+        _pane("%9", "%9", session="my-app"),     # unnamed pane (name == id)
+        _pane("sage", "%3", session="vupai"),
+        _pane("axis", "%4", session="vupai"),
+    ])
+    assert cli.main(["ls"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "sessions:"
+    # focused session first, tagged `*`; singular pane wording; detached.
+    assert lines[1] == "  * my-app   1 agent/2 panes   detached"
+    assert lines[2] == "    scratch  0 agents/0 panes  attached"
+    assert lines[3] == "    vupai    2 agents/2 panes  attached"

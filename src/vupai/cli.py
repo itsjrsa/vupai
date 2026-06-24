@@ -560,6 +560,44 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ls(args: argparse.Namespace) -> int:
+    # Lightweight session list (tmux `ls` style): one line per session on
+    # vupai's server, the voice-focused session first and marked `*`, with
+    # vupai-specific agent/pane counts and attached/detached state. `status`
+    # stays the detailed per-pane dashboard.
+    sessions = tmuxio.list_sessions()
+    if not sessions:
+        print("no vupai sessions")
+        return 0
+    registry = PaneRegistry()
+    registry.refresh()
+    focused_id = tmuxio.focused_pane_id()
+    focused_session = next(
+        (p.session for p in registry.panes if p.id == focused_id), None)
+    # A pane is an "agent" once it has a voice name (@vupai_name); unnamed panes
+    # keep name == id (see registry.parse_panes).
+    agents: dict[str, int] = {}
+    panes: dict[str, int] = {}
+    for p in registry.panes:
+        panes[p.session] = panes.get(p.session, 0) + 1
+        if p.name != p.id:
+            agents[p.session] = agents.get(p.session, 0) + 1
+
+    def _count(name: str) -> str:
+        a, t = agents.get(name, 0), panes.get(name, 0)
+        return f"{a} agent{'' if a == 1 else 's'}/{t} pane{'' if t == 1 else 's'}"
+
+    ordered = sorted(sessions, key=lambda s: (s[0] != focused_session, s[0]))
+    name_w = max(len(name) for name, _ in ordered)
+    count_w = max(len(_count(name)) for name, _ in ordered)
+    print("sessions:")
+    for name, attached in ordered:
+        mark = "*" if name == focused_session else " "
+        conn = "attached" if attached else "detached"
+        print(f"  {mark} {name:<{name_w}}  {_count(name):<{count_w}}  {conn}")
+    return 0
+
+
 def _cmd_name(args: argparse.Namespace) -> int:
     cfg = load_config()
     reserved = {cfg.broadcast_word.strip().lower()}
@@ -1264,6 +1302,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="revert vupai's leftover settings on your default tmux server"
     ).set_defaults(func=_cmd_cleanup)
     sub.add_parser("status").set_defaults(func=_cmd_status)
+    sub.add_parser(
+        "ls", help="list vupai sessions (agents/panes, attached state)"
+    ).set_defaults(func=_cmd_ls)
 
     p_name = sub.add_parser("name")
     p_name.add_argument("name")
