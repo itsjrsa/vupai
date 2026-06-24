@@ -12,7 +12,7 @@ import shlex
 import shutil
 from dataclasses import dataclass
 
-from vupai import board, tmuxio
+from vupai import board, speech, summarize, tmuxio
 from vupai.injector import inject
 from vupai.router import (
     _peel_fillers,
@@ -199,8 +199,8 @@ MAX_CREATE_COUNT = 30
 
 @dataclass(frozen=True)
 class Command:
-    # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|board|slash|
-    # broadcast|unknown
+    # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|board|read|
+    # slash|broadcast|unknown
     kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
@@ -345,6 +345,26 @@ def _parse_board(toks: list[str]) -> Command | None:
     return None
 
 
+_READ_VERBS = ("read",)
+# Curated ASR mishearings of "read": the homophone "reed" and the past-tense
+# spelling "red". Reading only SPEAKS a summary (no state change), so a misfire is
+# harmless - at worst it reads the focused pane - but the set stays tight per the
+# alias convention. "read" itself transcribes cleanly.
+_READ_VERB_ALIASES = frozenset({"reed", "red"})
+
+
+def _parse_read(toks: list[str]) -> Command | None:
+    """`read [name]` -> speak a pane's summary aloud (focused pane when bare).
+
+    Strips a leading article/filler after the verb ("read me nova", "read the
+    atlas", "read out nova"). A bare "read" targets the focused pane.
+    """
+    if not toks or (toks[0] not in _READ_VERBS and toks[0] not in _READ_VERB_ALIASES):
+        return None
+    rest = [t for t in toks[1:] if t not in ("the", "me", "out")]
+    return Command(kind="read", name=rest[0] if rest else "")
+
+
 def _parse_slash(toks: list[str], slash_commands: dict[str, str]) -> Command | None:
     """`<verb> [target]` where verb is a configured slash command.
 
@@ -372,10 +392,13 @@ def _parse_body(body: str, macros: dict[str, list[str]],
         if " ".join(_tokens(key)) == norm and norm:
             return Command(kind="macro", actions=tuple(actions))
     toks = _tokens(body)
+    # `read` is parsed AFTER slash so a user-configured slash verb named "read"
+    # (or "red"/"reed") still wins - the built-in read never silently shadows a
+    # configured slash command. Default config has no such collision.
     return (_parse_create(toks, programs) or _parse_close(toks)
             or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks)
             or _parse_layout(toks) or _parse_board(toks)
-            or _parse_slash(toks, slash_commands))
+            or _parse_slash(toks, slash_commands) or _parse_read(toks))
 
 
 def parse_command(
@@ -596,6 +619,80 @@ def _exec_board(cmd: Command, registry, config, io) -> CommandResult:
     return CommandResult(True, message)
 
 
+# Read bounds the captured scrollback before summarizing, same budget as the
+# board's tail (board._CAPTURE_LINES / _TAIL_BYTES): enough for a conclusion,
+# capped so a long-running pane can't blow up the summarizer's input.
+_READ_CAPTURE_LINES = 40
+_READ_TAIL_BYTES = 6000
+
+
+def _bound_tail(text: str) -> str:
+    """Last N lines then last M UTF-8 bytes of `text` (mirrors board._bounded)."""
+    tail = "\n".join(text.splitlines()[-_READ_CAPTURE_LINES:])
+    raw = tail.encode("utf-8", "replace")
+    if len(raw) > _READ_TAIL_BYTES:
+        tail = raw[-_READ_TAIL_BYTES:].decode("utf-8", "replace")
+    return tail
+
+
+def _default_summarizer(config):
+    """Reuse the board's summarizer config for the spoken read-back."""
+    return lambda tail: summarize.summarize(
+        tail, cmd=config.board_summarizer_cmd,
+        timeout=config.board_summary_timeout_s)
+
+
+def _default_speaker(config):
+    """A speak callable from config, or a no-op when TTS is off/unset."""
+    if not config.tts_enabled or not config.tts_cmd:
+        return lambda _text: None
+    return lambda text: speech.speak(text, cmd=config.tts_cmd)
+
+
+def _exec_read(cmd: Command, registry, config, io, *,
+               capture_fn=None, summarize_fn=None, speak_fn=None) -> CommandResult:
+    """Resolve a pane (named, else focused), summarize its tail, speak it.
+
+    Read-only: it captures + summarizes + speaks, never injects or mutates tmux,
+    so it is safe to run on a background thread (the daemon does, off the main
+    pipeline). The summary reuses the board summarizer; the spoken line is also
+    the CommandResult message, so it surfaces on the status line even with TTS
+    off. Collaborators are injected for the unit suite (no real CLI / no audio).
+    """
+    capture_fn = capture_fn or tmuxio.capture_pane
+    summarize_fn = summarize_fn or _default_summarizer(config)
+    speak_fn = speak_fn or _default_speaker(config)
+    if cmd.name:
+        m = resolve_pane_by_name(cmd.name, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
+        if m.candidates:
+            msg = "ambiguous: " + " / ".join(m.candidates) + " - say the name again"
+            return CommandResult(False, msg)
+        if m.pane_id is None:
+            return CommandResult(False, f"no pane named {cmd.name}")
+        pane_id, label = m.pane_id, m.matched_name
+    else:
+        focused = registry.focused()
+        if focused is None:
+            return CommandResult(False, "no focused pane to read")
+        pane_id = focused.id
+        # An unnamed focused pane (name == id) speaks without a callsign prefix.
+        label = focused.name if focused.name != focused.id else ""
+    try:
+        text = capture_fn(pane_id)
+        summary = summarize_fn(_bound_tail(text))
+    except Exception:
+        # Read is read-only and runs on a worker thread (daemon._run_read), so it
+        # must never raise. The default capture/summarize degrade internally; this
+        # also guards a custom summarize_fn that raises.
+        return CommandResult(False, f"couldn't read {label or 'the focused pane'}")
+    spoken = f"{label}: {summary.text}" if label else summary.text
+    try:
+        speak_fn(spoken)
+    except Exception:
+        pass  # TTS is best-effort; the summary still surfaces as the message
+    return CommandResult(True, spoken)
+
+
 def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
     msgs: list[str] = []
     ok = True
@@ -679,7 +776,12 @@ def _exec_slash(cmd: Command, registry, config, inject_fn) -> CommandResult:
 
 
 def execute_command(cmd: Command, registry, config, *,
-                    io=tmuxio, inject_fn=inject) -> CommandResult:
+                    io=tmuxio, inject_fn=inject,
+                    capture_fn=None, summarize_fn=None,
+                    speak_fn=None) -> CommandResult:
+    # capture_fn/summarize_fn/speak_fn are read-command seams (None -> built from
+    # config); only the read path consumes them. Mirrors the inject_fn seam, which
+    # only the slash/broadcast paths consume.
     try:
         if cmd.kind == "create":
             return _exec_create(cmd, registry, config, io)
@@ -701,6 +803,9 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_layout(cmd, registry, config, io)
         if cmd.kind == "board":
             return _exec_board(cmd, registry, config, io)
+        if cmd.kind == "read":
+            return _exec_read(cmd, registry, config, io, capture_fn=capture_fn,
+                              summarize_fn=summarize_fn, speak_fn=speak_fn)
         if cmd.kind == "slash":
             return _exec_slash(cmd, registry, config, inject_fn)
         if cmd.kind == "broadcast":

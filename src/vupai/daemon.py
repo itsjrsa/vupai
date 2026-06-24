@@ -84,7 +84,8 @@ class Daemon:
                  parse_fn=parse_command, execute_fn=execute_command,
                  confirm_fn=popup_confirm,
                  journal: Journal | None = None, async_fn=None,
-                 state_writer=None, watcher=None, tip_rotator=None) -> None:
+                 state_writer=None, watcher=None, tip_rotator=None,
+                 read_registry_factory=None) -> None:
         self._config = config
         self._recorder = recorder
         self._transcriber = transcriber
@@ -113,6 +114,11 @@ class Daemon:
         # How off-listener-thread feedback is dispatched; tests inject a
         # synchronous runner so listener-thread indicator calls are deterministic.
         self._async_fn = async_fn if async_fn is not None else _spawn_thread
+        # The spoken "read" command runs on a worker thread (see _dispatch_read)
+        # with its OWN registry, never self._registry - the main loop refreshes
+        # that on every utterance and sharing it would race the refresh. A factory
+        # (not an instance) so each read sees a fresh, independently-refreshed view.
+        self._read_registry_factory = read_registry_factory or PaneRegistry
         self._journal = journal if journal is not None else Journal.from_config(config)
         self._hotkey: Hotkey | MultiHotkey | None = None
         self._stop_event = threading.Event()
@@ -254,6 +260,11 @@ class Daemon:
                 macros=self._config.macros, programs=self._config.programs,
                 slash_commands=self._config.slash_commands, addressing=addressing)
             if cmd is not None:
+                if cmd.kind == "read":
+                    # Read is slow (LLM summary) and audible; it runs off the main
+                    # thread so it never stalls the next utterance. See _dispatch_read.
+                    self._dispatch_read(cmd, entry)
+                    return
                 if self._config.confirm_destructive and self._needs_confirm(cmd):
                     summary = _summarize_destructive(cmd, self._registry)
                     # Synchronous confirmation (a tmux popup by default). Anything
@@ -371,6 +382,52 @@ class Daemon:
         if cmd.kind == "create":
             return cmd.count >= self._config.confirm_create_threshold
         return False
+
+    def _dispatch_read(self, cmd: Command, entry: dict) -> None:
+        """Speak a pane's summary off the main thread.
+
+        Read is the one command that is BOTH slow (an LLM summary) and audible
+        (`say` blocks until the phrase ends), so running it inline would stall
+        transcription of the next utterance. The worker (_run_read) gets its own
+        registry to stay clear of the main loop's refresh. The journal records the
+        dispatch here, synchronously, since the worker's outcome lands after this
+        utterance's entry is already written; the spoken result is surfaced (and
+        logged via feedback) from the worker.
+        """
+        entry["decision"] = "command"
+        entry["command"] = "read " + (cmd.name or "(focused)")
+        entry["outcome"] = "dispatched"
+        self._async_fn(self._run_read, cmd)
+
+    def _run_read(self, cmd: Command) -> None:
+        """Worker body for a read: resolve + summarize + speak via execute_fn, on a
+        fresh registry, then surface the spoken line.
+
+        Runs on a background thread, so it has two hard rules: never raise (a daemon
+        thread dies silently, swallowing the outcome) and never touch self._registry
+        (the main loop owns it and refreshes it on every utterance) - both would
+        break the isolation that is the whole point of running off-thread.
+        """
+        registry = self._read_registry_factory()
+        try:
+            registry.refresh()
+        except Exception:
+            logger.debug("read registry refresh failed", exc_info=True)
+            return
+        try:
+            result = self._execute_fn(
+                cmd, registry, self._config, inject_fn=self._inject_fn)
+            if result.ok:
+                self._feedback.status(result.message)
+            else:
+                # HUD target from the worker's OWN (just-refreshed) registry, never
+                # self._hud_pane() - that reads self._registry and would race the
+                # main loop's refresh.
+                focused = registry.focused()
+                self._feedback.reject(
+                    result.message, focused.id if focused is not None else None)
+        except Exception:
+            logger.debug("read worker failed", exc_info=True)
 
     def _run_command(self, cmd: Command, entry: dict, *, confirmed: bool = False):
         """Execute a parsed command and record the result. `confirmed` marks a

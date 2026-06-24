@@ -96,6 +96,13 @@ class Config:
     board_poll_interval: float = 2.0
     board_min_summary_interval: float = 30.0
     board_summary_timeout_s: float = 20.0
+    # Talk-back (see speech.py): the spoken "read <name>" command summarizes a
+    # pane (reusing board_summarizer_cmd) and reads the result aloud. tts_cmd is
+    # swappable (any TTS CLI that takes the phrase as its last argument); the
+    # default is macOS `say`. tts_enabled gates only the audio - with it off,
+    # "read" still surfaces the summary on the status line, just silently.
+    tts_enabled: bool = True
+    tts_cmd: str = "say"
     # Strip non-lexical filler tokens (um, uh, er, ah, eh, hmm, mm) from every
     # transcript before commands/routing/dictation see it. On by default: the
     # default set is non-lexical only, so removal is essentially risk-free, and
@@ -280,6 +287,16 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# Hard timeout (seconds) for one summarizer invocation before falling back.\n'
      '# (`claude -p` cold-starts a CLI per call, so keep this generous.)\n'
      '# board_summary_timeout_s = 20.0\n'),
+    ("tts_enabled",
+     '# Speak the "read <name>" command\'s summary aloud. On by default (the\n'
+     '# command is explicit and macOS `say` ships with the OS). Turn off to keep\n'
+     '# "read" silent - it still prints the summary to the status line.\n'
+     '# tts_enabled = true\n'),
+    ("tts_cmd",
+     '# Text-to-speech command for "read"; the phrase rides as the final\n'
+     '# argument. Swappable for any TTS CLI ("say -v Daniel", a neural-TTS\n'
+     '# binary, "espeak"). Failures degrade silently to the on-screen summary.\n'
+     '# tts_cmd = "say"\n'),
     ("filler_filter",
      '# Strip non-lexical filler tokens before commands/routing/dictation.\n'
      '# filler_filter = true\n'),

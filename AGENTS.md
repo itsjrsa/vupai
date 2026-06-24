@@ -23,6 +23,7 @@ uv run pytest -m "not integration and not slow" -q   # unit suite (no tmux/mic/m
 uv run pytest -m integration -q                      # needs a real tmux (isolated -L socket)
 uv run pytest -m slow -q                             # needs the real Parakeet model + a wav fixture
 uv run ruff check .                                  # lint
+uv run python scripts/check_voice.py                 # type/debug voice actions w/o mic or daemon (-h for flags)
 vupai doctor                                         # check macOS permissions, print fix steps
 vupai setup                                          # interactive: probe + deep-link each missing-permission pane
 ```
@@ -43,6 +44,7 @@ vupai setup                                          # interactive: probe + deep
 - `vupai config --init` - ensure `~/.config/vupai/config.toml` lists every available key. When the file is absent it writes the full annotated template (every `Config` field present, commented at its default, with doc prose). When it exists, it **appends only the keys the file is missing** (as commented defaults under a labeled separator) and **never rewrites or reorders existing content** - so hand edits and chosen values are preserved and nothing is backed up because nothing is overwritten. Safe to re-run after an upgrade to top up newly added settings (`config.update_config`). First-run `vupai setup` writes the same annotated file (with the chosen journal/mic/hotkey keys uncommented).
 - `vupai setup` - interactive permission bootstrap: detects the terminal app from `TERM_PROGRAM`, probes each permission (which triggers the macOS prompts), then `open`s the exact Settings deep-link pane for any that are missing and prints the `tccutil reset` recovery command. **Cannot grant on the user's behalf** - macOS TCC requires a human click; setup removes the navigation, not the consent. Deep-link/app-detect/open helpers live in `permissions.py` (`terminal_app`, `fixes`, `open_settings_pane`), injectable for tests. **First run only** (no `config.toml` yet), it also prompts for journaling consent (`journal_enabled` + `journal_keep_audio`) and writes the full annotated config via `config.write_full_config` (the chosen journal keys uncommented, every other key commented at its default); once a config file exists the prompt is skipped so re-running to confirm permissions never re-asks. It **always** runs a re-runnable mic-selection step (`_prompt_mic_setup`; bare Enter keeps the current device) **and a re-runnable hotkey step** (`_prompt_hotkey_setup`; bare Enter / non-interactive stdin keeps the current keys).
 - `vupai board` - open a **supervision board**: a dedicated tmux pane (split right, ~40% width, off the focused pane) that summarizes, per named agent pane in the session, the main conclusion / pending action. Also a **spoken verb** (button mode): say "board" / "open board" / "show board" (`commands._parse_board` -> `kind="board"` -> `_exec_board`, sharing `board.open_board` with the CLI). `board_enabled` is reserved for a future auto-open on `vupai up`. The board is the foreground program of its own pane (the hidden `_board` loop), excludes itself (by `$TMUX_PANE`), is one-per-session (a second `vupai board` focuses the existing one via the `@vupai_board` tag rather than splitting again), and is torn down by closing the pane. Summaries are **edge-triggered** (only when a pane settles WORKING→IDLE), content-hash-gated, throttled per pane (`board_min_summary_interval`), and bounded to a scrollback tail, so token spend is bounded; `board_summarizer_cmd` (default `claude -p --model claude-haiku-4-5`) is swappable (`codex exec` / `gemini -p` / `ollama run …`) and degrades to a non-LLM last-line summary when absent or failing. See `board.py`, `panestate.py`, `summarize.py` and `docs/supervision-board-plan.md`.
+- **`read [name]`** (spoken verb, button mode) - the **talk-back** path: vupai speaks a pane's summary aloud (`commands._parse_read` -> `kind="read"` -> `_exec_read`). Resolves a named pane (else the focused one), captures + bounds its tail, summarizes it reusing `board_summarizer_cmd`, and reads the line through `speech.speak` (`tts_cmd`, default `say`). `tts_enabled` gates only the audio; the summary always surfaces on the status line, so "read" stays useful silent. **Runs off the main thread** (`daemon._dispatch_read` -> `_async_fn`): the summary is slow and `say` blocks, so inlining it would stall the next utterance. The worker uses its **own `PaneRegistry`** (never `self._registry`, which the main loop refreshes) and the journal records the dispatch, not the spoken result. On-request only - there is no unprompted narration. Aliases: `reed` / `red` (reading is non-destructive, so the set is generous).
 - `vupai _daemon` / `vupai _board` - hidden; the long-running daemon process (spawned detached, logs to `~/.config/vupai/daemon.log`) and the in-pane supervision-board render loop
 
 ## Architecture
@@ -71,8 +73,9 @@ hotkey → recorder → asr → router → injector → feedback   (+ tmux pane 
 | `src/vupai/config.py` | TOML config at `~/.config/vupai/config.toml` + defaults; `_FIELD_BLOCKS` (per-field doc + commented default) is the single source of truth, `ANNOTATED_TEMPLATE` is built from it and `render_config` uncomments chosen keys; `write_full_config` writes a fresh full annotated file (first-run `setup`; does NOT merge) and `update_config` additively appends only a file's missing key-blocks (for `vupai config --init`; never overwrites, no backup); `set_mic_device` / `set_hotkey_config` MERGE keys in place via shared `_merge_scalar_keys` (preserve comments/other keys, uncomment a commented default in place) |
 | `src/vupai/panestate.py` | shared pane-state classification: the watcher's marker `classify_state` (re-exported by `watcher.py`) plus the board's tool-agnostic `ChurnClassifier` (content-churn baseline + optional per-tool `MARKERS` + settle/hysteresis) and a generic `detect_needs_input` |
 | `src/vupai/summarize.py` | best-effort swappable pane summarizer: runs `board_summarizer_cmd` (no shell) with the prompt+tail as one argv arg, reads the last non-blank stdout line, degrades to a stdlib last-line fallback on any failure |
+| `src/vupai/speech.py` | best-effort swappable text-to-speech sink (the `read` command's voice): runs `tts_cmd` (default `say`) with the phrase as one argv arg, **non-blocking** (`Popen`, never awaited - `say` blocks until done), swallows every failure |
 | `src/vupai/board.py` | supervision-board engine: own `PaneRegistry` + Event poll loop (twin of `PaneWatcher`), per-pane edge/hash/throttle/in-flight gating, cold-start, self-exclusion, and a pure `render_frame` printed to the board pane's stdout |
-| `src/vupai/commands.py` | parse control-word utterances into `Command`s and execute them (create/macro/focus/swap/close/zoom/layout/board/slash/broadcast); interpretation split from execution |
+| `src/vupai/commands.py` | parse control-word utterances into `Command`s and execute them (create/macro/focus/swap/close/zoom/layout/board/read/slash/broadcast); interpretation split from execution |
 | `src/vupai/journal.py` | append-only JSONL utterance trail (transcript + decision + outcome) at `~/.config/vupai/journal.jsonl`; opt-in ring-bounded audio retention for offline misfire replay |
 
 The daemon reaches tmux only through `tmuxio` (the `tmux` CLI); the hotkey is
@@ -253,7 +256,8 @@ constants so they cannot drift from `commands.py`.
 ## Design decisions (settled rationale)
 
 Hybrid routing (focus default + leading-name override) · push-to-talk, hold
-Right-Option, no wake word · voice input only (TTS deferred) · Python daemon (not
+Right-Option, no wake word · input-first, with on-request talk-back only (the
+`read` command speaks a pane summary via `tts_cmd`; no unprompted TTS) · Python daemon (not
 Swift/native, not a browser app) · Parakeet via `parakeet-mlx` · **v1 drives Claude
 Code panes only** (Codex/OpenCode have known send-keys submit bugs) · no control
 word (the system key signals a command); `broadcast_word` is configurable ·
@@ -279,6 +283,11 @@ dictation key keeps `alt_r` (muscle memory) and the system key defaults to `cmd_
   **local-only - never commit them** (gitignored). When a skill says "commit the
   design/plan doc," skip that step in this repo.
 - Code comments in English. TDD with pytest; frequent small commits.
+- **Manual voice debugging without the mic:** `scripts/check_voice.py` (tracked,
+  not packaged) types an utterance through the same parse/route/inject path the
+  daemon uses for each keybind (`system`/`dictation`), against the focused pane.
+  `read` speaks unless `--silent`; `--dry` shows decisions with no side effects;
+  `--pane`/`--summarizer`/`--tts-cmd`/`--config` make it a deterministic harness.
 - Conventional commit messages, **no Claude attribution / co-authored-by lines**.
   Never push to `master` without asking.
 - **Adding a `Config` field:** also add a `(name, block)` entry to

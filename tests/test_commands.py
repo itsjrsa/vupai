@@ -1172,3 +1172,228 @@ def test_execute_layout_no_focused_pane():
     res = execute_command(Command(kind="layout", layout="tiled", main_focus=False),
                           reg, Config(), io=io)
     assert res.ok is False and res.message == "no focused pane" and io.calls == []
+
+
+# --- read command: parsing --------------------------------------------------
+
+
+def test_parse_read_by_name():
+    assert _parse_btn("read nova") == Command(kind="read", name="nova")
+
+
+def test_parse_read_bare_targets_focused():
+    assert _parse_btn("read") == Command(kind="read", name="")
+
+
+def test_parse_read_strips_article_and_filler():
+    assert _parse_btn("read the nova").name == "nova"
+    assert _parse_btn("read me nova").name == "nova"
+    assert _parse_btn("read out atlas").name == "atlas"
+
+
+def test_parse_read_misheard_verbs():
+    # "read" lands as the homophone "reed" or the past-tense spelling "red".
+    assert _parse_btn("reed nova").kind == "read"
+    assert _parse_btn("red nova") == Command(kind="read", name="nova")
+
+
+def test_parse_read_only_on_button_key():
+    # Read is a system-key command; the dictation/keyword key types verbatim.
+    assert _parse("read nova") is None
+
+
+# --- read command: execution ------------------------------------------------
+
+
+def _summary(text, needs_input=False):
+    from vupai.summarize import Summary
+    return Summary(text, needs_input, "llm")
+
+
+def test_execute_read_named_pane_summarizes_and_speaks():
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])  # focus is nova...
+    spoken, captured = [], []
+    res = execute_command(
+        Command(kind="read", name="atlas"), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: captured.append(pid) or "scrollback",
+        summarize_fn=lambda tail: _summary("ran the suite, all green"),
+        speak_fn=lambda text: spoken.append(text))
+    assert res.ok
+    assert captured == ["%2"]  # ...but the NAMED pane is read, not the focused one
+    assert res.message == "atlas: ran the suite, all green"
+    assert spoken == ["atlas: ran the suite, all green"]
+
+
+def test_execute_read_bare_reads_focused_pane():
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+    spoken = []
+    res = execute_command(
+        Command(kind="read", name=""), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: "nova tail",
+        summarize_fn=lambda tail: _summary("waiting for input", needs_input=True),
+        speak_fn=lambda t: spoken.append(t))
+    assert res.ok and res.message == "nova: waiting for input"
+    assert spoken == ["nova: waiting for input"]
+
+
+def test_execute_read_unnamed_focused_pane_has_no_prefix():
+    focused = _pane("%5", "%5", active=True)  # unnamed: name == id
+    reg = FakeRegistry([focused], focused=focused)
+    spoken = []
+    res = execute_command(
+        Command(kind="read", name=""), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: "shell tail",
+        summarize_fn=lambda tail: _summary("idle shell"),
+        speak_fn=lambda t: spoken.append(t))
+    assert res.ok and res.message == "idle shell"  # no "<label>: " prefix
+    assert spoken == ["idle shell"]
+
+
+def test_execute_read_unknown_pane():
+    reg = FakeRegistry([_pane("%1", "nova", active=True)], focused=None)
+    res = execute_command(
+        Command(kind="read", name="ghost"), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: "x", summarize_fn=lambda tail: _summary("x"),
+        speak_fn=lambda t: None)
+    assert not res.ok and "no pane named ghost" in res.message
+
+
+def test_execute_read_no_focused_pane():
+    reg = FakeRegistry([], focused=None)
+    res = execute_command(
+        Command(kind="read", name=""), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: "x", summarize_fn=lambda tail: _summary("x"),
+        speak_fn=lambda t: None)
+    assert not res.ok and "no focused pane" in res.message
+
+
+def test_execute_read_capture_failure_is_reported_not_raised():
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+
+    def boom(pid):
+        raise RuntimeError("pane vanished mid-read")
+
+    res = execute_command(
+        Command(kind="read", name="nova"), reg, Config(), io=FakeTmux(),
+        capture_fn=boom, summarize_fn=lambda tail: _summary("x"),
+        speak_fn=lambda t: None)
+    assert not res.ok and "couldn't read nova" in res.message
+
+
+def test_execute_read_ambiguous_names(monkeypatch):
+    from vupai.router import NameMatch
+    panes = [_pane("%1", "nova"), _pane("%2", "norma")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    monkeypatch.setattr(
+        "vupai.commands.resolve_pane_by_name",
+        lambda *a, **k: NameMatch(None, None, 83.0, ("nova", "norma")))
+    res = execute_command(
+        Command(kind="read", name="nor"), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: "x", summarize_fn=lambda tail: _summary("x"),
+        speak_fn=lambda t: None)
+    assert not res.ok and "ambiguous" in res.message and "nova" in res.message
+
+
+def test_execute_read_tts_disabled_returns_summary_but_stays_silent(monkeypatch):
+    # With tts off the default speaker is a no-op, yet the summary still surfaces
+    # (as the CommandResult message -> the status line). No real audio spawns.
+    spawned = []
+    monkeypatch.setattr(
+        "vupai.speech.subprocess.Popen", lambda *a, **k: spawned.append(a))
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+    res = execute_command(
+        Command(kind="read", name="nova"), reg, Config(tts_enabled=False),
+        io=FakeTmux(), capture_fn=lambda pid: "tail",
+        summarize_fn=lambda tail: _summary("done"))
+    assert res.ok and res.message == "nova: done"
+    assert spawned == []
+
+
+def test_default_speaker_noop_when_disabled():
+    from vupai.commands import _default_speaker
+    assert _default_speaker(Config(tts_enabled=False))("hello") is None
+    assert _default_speaker(Config(tts_enabled=True, tts_cmd=""))("hello") is None
+
+
+def test_default_speaker_calls_speech_when_enabled(monkeypatch):
+    from vupai.commands import _default_speaker
+    calls = []
+    monkeypatch.setattr(
+        "vupai.speech.speak", lambda text, *, cmd: calls.append((text, cmd)))
+    _default_speaker(Config(tts_enabled=True, tts_cmd="say -v Daniel"))("hello")
+    assert calls == [("hello", "say -v Daniel")]
+
+
+def test_bound_tail_limits_lines_then_keeps_the_end():
+    from vupai.commands import _READ_CAPTURE_LINES, _bound_tail
+    bounded = _bound_tail("\n".join(f"line{i}" for i in range(100)))
+    assert bounded.count("\n") + 1 == _READ_CAPTURE_LINES
+    assert bounded.endswith("line99")
+
+
+def test_parse_read_yields_to_configured_slash_verb():
+    # A user who maps "read" to a slash command keeps it; built-in read yields,
+    # so the read verb never silently shadows configured slash commands.
+    cfg = Config(slash_commands={"read": "/read"})
+    c = _parse_btn("read nova", cfg)
+    assert c.kind == "slash" and c.text == "/read" and c.name == "nova"
+    # ...but with the default config (no such slash), read still works.
+    assert _parse_btn("read nova").kind == "read"
+
+
+def test_execute_read_summarize_failure_is_reported_not_raised():
+    # Read runs on a worker thread, so a raising summarizer must degrade to a
+    # CommandResult, never propagate (which would kill the thread silently).
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+
+    def boom(tail):
+        raise RuntimeError("summarizer exploded")
+
+    res = execute_command(
+        Command(kind="read", name="nova"), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: "tail", summarize_fn=boom, speak_fn=lambda t: None)
+    assert not res.ok and "couldn't read nova" in res.message
+
+
+def test_execute_read_speak_failure_is_swallowed_summary_survives():
+    # TTS is best-effort: a raising speaker must not lose the summary, which
+    # still surfaces on the status line via the CommandResult message.
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+
+    def boom(text):
+        raise RuntimeError("tts exploded")
+
+    res = execute_command(
+        Command(kind="read", name="nova"), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: "tail",
+        summarize_fn=lambda tail: _summary("all green"), speak_fn=boom)
+    assert res.ok and res.message == "nova: all green"
+
+
+def test_default_summarizer_threads_config(monkeypatch):
+    from vupai.commands import _default_summarizer
+    calls = []
+    monkeypatch.setattr(
+        "vupai.summarize.summarize",
+        lambda tail, *, cmd, timeout: calls.append((tail, cmd, timeout)) or _summary("x"))
+    cfg = Config(board_summarizer_cmd="codex exec", board_summary_timeout_s=12.0)
+    _default_summarizer(cfg)("the tail")
+    assert calls == [("the tail", "codex exec", 12.0)]
+
+
+def test_bound_tail_byte_limit_keeps_end_and_is_utf8_safe():
+    from vupai.commands import _READ_TAIL_BYTES, _bound_tail
+    # Few lines (under the line cap) but far over the byte cap: the byte branch
+    # must trim from the front, keep the end, and never split a multi-byte char.
+    text = "head\n" + "x" * (_READ_TAIL_BYTES * 2) + "😀tail"
+    bounded = _bound_tail(text)
+    raw = bounded.encode("utf-8")
+    assert len(raw) <= _READ_TAIL_BYTES
+    assert bounded.endswith("😀tail")
+    assert "�" not in bounded  # no half-decoded byte from a mid-char cut
