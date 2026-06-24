@@ -498,18 +498,22 @@ class Daemon:
             self._speak(result.spoken or result.message)
         return result
 
-    def _speak(self, text: str) -> None:
+    def _speak(self, text: str):
         """Speak `text` via the configured TTS, gated by the runtime mute switch.
 
         Best-effort and non-blocking (speech.speak fires `say` and returns at once),
         so this is safe on the main thread. Shared by command acks and the read
-        worker, so the "mute"/"unmute" toggle covers both from one switch."""
+        worker, so the "mute"/"unmute" toggle covers both from one switch. Returns
+        the process handle (or None when muted/failed) so the read worker's
+        SentenceSpeaker can serialize streamed sentences on it; ack callers ignore
+        it. Muting mid-stream simply starts returning None, silencing the rest."""
         if not self._talkback or not self._config.tts_cmd:
-            return
+            return None
         try:
-            speech.speak(text, cmd=self._config.tts_cmd)
+            return speech.speak(text, cmd=self._config.tts_cmd)
         except Exception:
             logger.debug("talk-back speak failed", exc_info=True)
+            return None
 
     def _hud_pane(self) -> str | None:
         """The pane to show HUD overlays on: the focused pane, or None."""

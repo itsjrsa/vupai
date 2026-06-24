@@ -1582,3 +1582,74 @@ def test_bound_tail_byte_limit_keeps_end_and_is_utf8_safe():
     assert len(raw) <= _READ_TAIL_BYTES
     assert bounded.endswith("😀tail")
     assert "�" not in bounded  # no half-decoded byte from a mid-char cut
+
+
+# --- read command: streaming path -------------------------------------------
+
+def test_execute_read_streams_sentences_with_label_on_first():
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+    spoken = []
+
+    def stream_fn(tail, title, on_text):
+        on_text("Tests pass. ")        # one complete sentence
+        on_text("Build is green.")     # held until close (no trailing space)
+        return _summary("Tests pass. Build is green.")
+
+    res = execute_command(
+        Command(kind="read", name=""), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: "tail", title_fn=lambda pid: "",
+        stream_fn=stream_fn, speak_fn=lambda t: spoken.append(t))
+    assert res.ok
+    assert res.message == "nova: Tests pass. Build is green."
+    # The callsign rides into the first spoken sentence; the rest follows in order.
+    assert spoken == ["nova: Tests pass.", "Build is green."]
+
+
+def test_execute_read_streaming_unnamed_pane_has_no_prefix():
+    focused = _pane("%5", "%5", active=True)  # unnamed: name == id
+    reg = FakeRegistry([focused], focused=focused)
+    spoken = []
+
+    def stream_fn(tail, title, on_text):
+        on_text("Idle shell. ")
+        return _summary("Idle shell.")
+
+    res = execute_command(
+        Command(kind="read", name=""), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: "tail", title_fn=lambda pid: "",
+        stream_fn=stream_fn, speak_fn=lambda t: spoken.append(t))
+    assert res.ok and res.message == "Idle shell."
+    assert spoken == ["Idle shell."]  # no "<label>: " prefix
+
+
+def test_execute_read_streaming_failure_is_reported_not_raised():
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+
+    def boom(tail, title, on_text):
+        raise RuntimeError("summarizer died mid-stream")
+
+    res = execute_command(
+        Command(kind="read", name=""), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: "tail", title_fn=lambda pid: "",
+        stream_fn=boom, speak_fn=lambda t: None)
+    assert not res.ok
+    assert "couldn't read nova" in res.message
+
+
+def test_execute_read_streaming_disabled_uses_oneshot_summarizer():
+    # tts_stream off -> the injected one-shot summarize_fn drives, not stream_fn.
+    panes = [_pane("%1", "nova", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+    cfg = Config(tts_stream=False)
+    spoken, streamed = [], []
+    res = execute_command(
+        Command(kind="read", name=""), reg, cfg, io=FakeTmux(),
+        capture_fn=lambda pid: "tail", title_fn=lambda pid: "",
+        summarize_fn=lambda tail, _t: _summary("one shot summary"),
+        stream_fn=lambda *a: streamed.append(a),
+        speak_fn=lambda t: spoken.append(t))
+    assert res.ok and res.message == "nova: one shot summary"
+    assert spoken == ["nova: one shot summary"]
+    assert streamed == []  # stream_fn never consulted

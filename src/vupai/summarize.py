@@ -14,10 +14,14 @@ Mirrors watcher._osascript_notify: best-effort, exceptions swallowed.
 """
 from __future__ import annotations
 
+import codecs
 import logging
+import os
 import re
+import select
 import shlex
 import subprocess
+import time
 from dataclasses import dataclass
 
 from vupai.panestate import detect_needs_input
@@ -237,4 +241,107 @@ def summarize_read(tail: str, *, cmd: str, timeout: float = 20.0, title: str = "
     text = _spoken(out, max_chars)
     if not text:
         return _fallback(tail)
+    return Summary(text, detect_needs_input(tail), "llm")
+
+
+def stream_run(cmd: str, prompt: str, timeout: float, on_text, *,
+               popen=subprocess.Popen) -> str | None:
+    """Run `cmd` with `prompt` last, streaming stdout to `on_text` as it arrives.
+
+    Reads the pipe as bytes become available (select + os.read, an incremental
+    UTF-8 decoder for chunk-split multibyte) so a streaming backend's tokens reach
+    `on_text` token-by-token; a backend that buffers (plain `claude -p`) simply
+    delivers everything in one late chunk - same result, no streaming win. Returns
+    the full accumulated text, or None when nothing usable was produced (so the
+    caller degrades to the stdlib fallback). Best-effort: every failure -> None.
+    """
+    argv = shlex.split(cmd)
+    if not argv:
+        return None
+    argv.append(prompt)
+    try:
+        proc = popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        logger.debug("summarizer command not found: %s", argv[0])
+        return None
+    except Exception:
+        logger.debug("summarizer failed to run", exc_info=True)
+        return None
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    chunks: list[str] = []
+    deadline = time.monotonic() + timeout
+    fd = proc.stdout.fileno()
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                break
+            ready, _, _ = select.select([fd], [], [], min(remaining, 0.5))
+            if not ready:
+                if proc.poll() is not None:
+                    break  # process exited with no more output
+                continue
+            data = os.read(fd, 4096)
+            if not data:
+                break  # EOF
+            text = decoder.decode(data)
+            if text:
+                chunks.append(text)
+                try:
+                    on_text(text)
+                except Exception:
+                    logger.debug("on_text sink raised", exc_info=True)
+        tail = decoder.decode(b"", final=True)
+        if tail:
+            chunks.append(tail)
+            try:
+                on_text(tail)
+            except Exception:
+                pass
+    except Exception:
+        logger.debug("summarizer stream read failed", exc_info=True)
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    finally:
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=1)
+        except Exception:
+            pass
+    full = "".join(chunks)
+    return full if full.strip() else None
+
+
+def summarize_read_stream(tail: str, *, cmd: str, timeout: float = 20.0,
+                          title: str = "", on_text, max_chars: int = 500,
+                          popen=subprocess.Popen) -> Summary:
+    """Streaming twin of `summarize_read`: feeds spoken text to `on_text` live.
+
+    `on_text` receives the model's text as it streams (wire it to a
+    SentenceSpeaker). The returned Summary carries the cleaned, capped full reply
+    for the status line. On any failure the stdlib fallback is both returned AND
+    pushed once through `on_text`, so the fallback still gets spoken.
+    """
+    full = stream_run(cmd, build_read_prompt(tail, title), timeout, on_text, popen=popen)
+    if full is None:
+        fb = _fallback(tail)
+        try:
+            on_text(fb.text)
+        except Exception:
+            pass
+        return fb
+    text = _spoken(full, max_chars)
+    if not text:
+        fb = _fallback(tail)
+        try:
+            on_text(fb.text)
+        except Exception:
+            pass
+        return fb
     return Summary(text, detect_needs_input(tail), "llm")

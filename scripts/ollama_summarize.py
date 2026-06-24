@@ -66,11 +66,58 @@ def _parse_argv(argv: list[str]) -> tuple[str, str, float, str] | None:
     return host.rstrip("/"), model, timeout, rest[-1]
 
 
-def _generate(host: str, model: str, prompt: str, timeout: float) -> str:
+class ThinkStripper:
+    """Drop <think>...</think> spans from a token stream, incrementally.
+
+    Reasoning models (e.g. qwen3) emit a chain-of-thought block vupai must never
+    speak. `feed` returns only the text that is safe to emit now: complete think
+    blocks are removed, an unclosed <think> (and everything after it) is held back
+    until it closes, and a trailing partial tag ("<", "<thi", "</") is held until
+    the next token disambiguates it. The emitted prefix is stable - future
+    removals only ever affect text after it - so emitting len-deltas is correct.
+    """
+
+    def __init__(self):
+        self._buf = ""
+        self._emitted = 0
+
+    @staticmethod
+    def _could_be_tag(s: str) -> bool:
+        low = s.lower()
+        return "<think>".startswith(low) or "</think>".startswith(low)
+
+    def _safe_prefix(self, *, final: bool) -> str:
+        cleaned = _THINK_RE.sub("", self._buf)
+        cut = cleaned.lower().find("<think>")  # unclosed open: hold it + the rest
+        if cut != -1:
+            cleaned = cleaned[:cut]
+        elif not final:
+            lt = cleaned.rfind("<")  # hold a possible partial tag at the tail
+            if lt != -1 and self._could_be_tag(cleaned[lt:]):
+                cleaned = cleaned[:lt]
+        return cleaned
+
+    def feed(self, chunk: str) -> str:
+        self._buf += chunk
+        cleaned = self._safe_prefix(final=False)
+        out = cleaned[self._emitted:]
+        self._emitted = len(cleaned)
+        return out
+
+    def flush(self) -> str:
+        cleaned = self._safe_prefix(final=True)
+        out = cleaned[self._emitted:]
+        self._emitted = len(cleaned)
+        return out
+
+
+def _generate(host: str, model: str, prompt: str, timeout: float, *, write) -> bool:
+    """Stream a completion, relaying think-free text to `write`. Returns whether
+    any text was emitted (False -> caller exits non-zero so vupai falls back)."""
     body = json.dumps({
         "model": model,
         "prompt": prompt,
-        "stream": False,
+        "stream": True,
         # Keep the model resident so the next edge-triggered summary skips reload.
         "keep_alive": -1,
         "options": {"temperature": 0.2, "num_predict": NUM_PREDICT},
@@ -81,11 +128,29 @@ def _generate(host: str, model: str, prompt: str, timeout: float) -> str:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    stripper = ThinkStripper()
+    state = {"started": False}
+
+    def _emit(text: str) -> None:
+        if not text:
+            return
+        if not state["started"]:
+            text = text.lstrip()  # trim leading whitespace; all-blank -> nothing
+            if not text:
+                return
+            state["started"] = True
+        write(text)
+
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
-    text = payload.get("response", "")
-    # Strip reasoning-model scratchpads; vupai would otherwise read them aloud.
-    return _THINK_RE.sub("", text).strip()
+        for raw in resp:  # one JSON object per line (stream:true)
+            raw = raw.strip()
+            if not raw:
+                continue
+            chunk = json.loads(raw).get("response", "")
+            if chunk:
+                _emit(stripper.feed(chunk))
+    _emit(stripper.flush())
+    return state["started"]
 
 
 def main(argv: list[str]) -> int:
@@ -93,14 +158,19 @@ def main(argv: list[str]) -> int:
     if parsed is None:
         return 1  # no prompt -> let vupai fall back
     host, model, timeout, prompt = parsed
+
+    def _write(text: str) -> None:
+        sys.stdout.write(text)
+        sys.stdout.flush()  # stream: surface each token instead of buffering
+
     try:
-        out = _generate(host, model, prompt, timeout)
+        emitted = _generate(host, model, prompt, timeout, write=_write)
     except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
         # Unreachable host, timeout, bad JSON: stay silent, exit non-zero.
         return 1
-    if not out:
+    if not emitted:
         return 1
-    sys.stdout.write(out + "\n")
+    sys.stdout.write("\n")
     return 0
 
 

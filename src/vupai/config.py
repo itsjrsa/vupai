@@ -126,6 +126,13 @@ class Config:
     # on the status line, just silently.
     tts_enabled: bool = True
     tts_cmd: str = "say"
+    # Stream the "read" summary: speak each sentence as the summarizer produces it
+    # (first words out in ~1-2s) instead of waiting for the whole reply. Needs a
+    # streaming-capable board_summarizer_cmd to actually pay off (the Ollama
+    # adapter, or scripts/claude_summarize.py); a buffering command (plain
+    # `claude -p`) still works, it just speaks once at the end. Off -> the
+    # original speak-the-whole-thing-at-once path.
+    tts_stream: bool = True
     # Strip non-lexical filler tokens (um, uh, er, ah, eh, hmm, mm) from every
     # transcript before commands/routing/dictation see it. On by default: the
     # default set is non-lexical only, so removal is essentially risk-free, and
@@ -318,8 +325,9 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# prompt rides as the final argument; the last non-blank stdout line is the\n'
      '# summary. Degrades to a non-LLM last-line summary if absent or it fails.\n'
      '# board_summarizer_cmd = "claude -p --model claude-haiku-4-5"\n'
-     '# Remote Ollama (no local CLI cold-start; model can live on another host):\n'
-     '# board_summarizer_cmd = "python3 /abs/path/scripts/ollama_summarize.py --host http://BOX:11434 --model qwen2.5:7b"\n'),
+     '# Remote Ollama (model on another host, skips the CLI cold-start) - point at\n'
+     '# scripts/ollama_summarize.py with flags: --host http://BOX:11434 --model M.\n'
+     '# scripts/claude_summarize.py streams Haiku for word-by-word talk-back.\n'),
     ("board_poll_interval",
      '# Board tick cadence (seconds).\n'
      '# board_poll_interval = 2.0\n'),
@@ -341,6 +349,12 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# argument. Swappable for any TTS CLI ("say -v Daniel", a neural-TTS\n'
      '# binary, "espeak"). Failures degrade silently to the on-screen summary.\n'
      '# tts_cmd = "say"\n'),
+    ("tts_stream",
+     '# Speak the "read" summary sentence-by-sentence as it is generated (first\n'
+     '# words out in ~1-2s) instead of after the whole reply. Pays off with a\n'
+     '# streaming board_summarizer_cmd (the Ollama adapter, or\n'
+     '# scripts/claude_summarize.py); a buffering command still works.\n'
+     '# tts_stream = true\n'),
     ("filler_filter",
      '# Strip non-lexical filler tokens before commands/routing/dictation.\n'
      '# filler_filter = true\n'),
