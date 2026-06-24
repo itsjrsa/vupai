@@ -5,16 +5,9 @@ rides last, --model or $CLAUDE_MODEL) and stream-json event extraction (relay
 text_delta, drop thinking and every other event type).
 """
 
-import importlib.util
 import json
-from pathlib import Path
 
-_SPEC = importlib.util.spec_from_file_location(
-    "claude_summarize",
-    Path(__file__).resolve().parent.parent / "scripts" / "claude_summarize.py",
-)
-csum = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(csum)
+from vupai import claude_summarize as csum
 
 
 def test_parse_argv_model_flag_and_prompt_last():

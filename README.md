@@ -246,13 +246,13 @@ pane_command = "claude"                           # default program for voice-cr
 confirm_destructive = true                        # y/n popup before close / close-others / broadcast
 confirm_timeout_s = 8.0                            # popup auto-cancels after this (s)
 confirm_create_threshold = 8                      # also pop the confirm for "create N panes" when N >= this (set high to disable)
-board_summarizer_cmd = "claude -p --model claude-haiku-4-5"  # `vupai board` summarizer; swap for codex/gemini/ollama. Haiku keeps cost low
+# board/read summarizer. Default: bundled streaming Haiku wrapper (speaks "read" token-by-token). Swap for codex/gemini/ollama.
+# board_summarizer_cmd = "python -m vupai.claude_summarize --model claude-haiku-4-5"   # the default (computed with this interpreter)
+# board_summarizer_cmd = "claude -p --model claude-haiku-4-5"   # plain claude: buffers, speaks once at the end
 # Offload to a (remote) Ollama box, skipping the ~3s `claude -p` CLI cold-start per call:
 # board_summarizer_cmd = "python3 /abs/path/scripts/ollama_summarize.py --host http://BOX:11434 --model qwen2.5:7b"
-# Stream Haiku word-by-word for "read" talk-back (plain claude -p buffers):
-# board_summarizer_cmd = "python3 /abs/path/scripts/claude_summarize.py --model claude-haiku-4-5"
 board_min_summary_interval = 30.0                 # per-pane floor (s) between board summaries; bounds cost
-tts_stream = true                                 # speak the "read" summary sentence-by-sentence as it streams (needs a streaming summarizer above)
+tts_stream = true                                 # speak the "read" summary sentence-by-sentence as it streams (needs a streaming summarizer)
 
 [programs]                                        # spoken token -> argv ("" = plain shell)
 claude = "claude"

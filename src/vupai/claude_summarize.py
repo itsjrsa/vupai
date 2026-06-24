@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
-"""Streaming claude summarizer adapter for vupai's board_summarizer_cmd.
+"""Streaming claude summarizer for vupai's board_summarizer_cmd (the default).
 
 Plain `claude -p` buffers: it prints the whole reply only when generation
 finishes, so vupai's streaming "read" has nothing to speak until the end. This
-wrapper runs claude in stream-json mode and relays the assistant's text deltas to
-stdout AS THEY ARRIVE, so the read command can speak sentence-by-sentence (first
-words out in ~1-2s, after claude's CLI cold-start). Thinking deltas are dropped
-(never spoken). For the board it is identical to plain claude: the last non-blank
-line is still the summary, it just streamed there.
+runs claude in stream-json mode and relays the assistant's text deltas to stdout
+AS THEY ARRIVE, so the read command can speak sentence-by-sentence (first words
+out in ~1-2s, after claude's CLI cold-start). Thinking deltas are dropped (never
+spoken). For the board it is identical to plain claude: the last non-blank line
+is still the summary, it just streamed there.
 
-Config (point board_summarizer_cmd at this; the prompt still rides last):
-
-    board_summarizer_cmd = \
-      "python3 /abs/path/scripts/claude_summarize.py --model claude-haiku-4-5"
-
-Model also reads from CLAUDE_MODEL when --model is absent. Failure is silent +
-non-zero (nothing relayed) so vupai degrades to its stdlib fallback.
+It is the default summarizer, invoked as `python -m vupai.claude_summarize
+--model claude-haiku-4-5` (the prompt rides last); --model also reads from
+$CLAUDE_MODEL. Failure is silent + non-zero (nothing relayed) so vupai degrades
+to its stdlib fallback. Swap board_summarizer_cmd for plain `claude -p`,
+`ollama_summarize.py`, etc. to opt out.
 """
 
 from __future__ import annotations
