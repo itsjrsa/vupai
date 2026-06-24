@@ -193,13 +193,11 @@ def summarize(tail: str, *, cmd: str, timeout: float = 20.0,
 # is about). Distinct from _INSTRUCTION, which is deliberately one terse line.
 _READ_INSTRUCTION = (
     "Below is the recent terminal output of an AI coding agent working in a "
-    "terminal pane. Give a SPOKEN status update of 2 to 4 sentences for someone "
-    "away from the screen: what the agent is working on, what it most recently "
-    "produced, concluded, or decided, and whether it is now waiting on the user. "
-    "Be concrete - name the actual files, commands, errors, or decisions rather "
-    "than speaking in generalities. Ignore input boxes, status timers, token "
-    "counts, and keyboard-shortcut or footer hints. Reply in plain spoken prose: "
-    "no preamble, no markdown, no bullet points, no quotes."
+    "terminal pane. In 1 to 2 sentences, give a SPOKEN status update for someone "
+    "away from the screen: lead with what the agent most recently concluded or "
+    "produced, and say if it is now waiting on the user. Ignore input boxes, "
+    "status timers, token counts, and keyboard-shortcut or footer hints. Reply in "
+    "plain spoken prose: no preamble, no markdown, no bullet points, no quotes."
 )
 
 

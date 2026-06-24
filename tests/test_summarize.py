@@ -292,6 +292,14 @@ def test_stream_run_kills_proc_when_cancelled():
     assert out is None  # nothing produced
 
 
+def test_read_instruction_asks_for_one_to_two_sentences():
+    from vupai import summarize
+    instr = summarize._READ_INSTRUCTION.lower()
+    assert "1 to 2 sentences" in instr
+    # The verbose "name the actual files/commands/errors" push is gone.
+    assert "name the actual" not in instr
+
+
 def _os_pipe_read_end():
     import os
     r, _w = os.pipe()
