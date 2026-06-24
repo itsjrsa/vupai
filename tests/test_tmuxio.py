@@ -223,14 +223,18 @@ def test_enable_pane_titles_runs_both_set_commands(monkeypatch):
     patch_run(monkeypatch, fake)
     tmuxio.enable_pane_titles()
     assert fake.calls[0]["args"] == ["tmux", "set", "-g", "pane-border-status", "top"]
-    assert fake.calls[1]["args"] == ["tmux", "set", "-g", "pane-border-lines", "heavy"]
+    assert fake.calls[1]["args"] == ["tmux", "set", "-g", "pane-border-lines", "double"]
     # name · program · pane_title, each segment conditional so it collapses when
     # its option is unset.
     assert fake.calls[2]["args"] == [
         "tmux", "set", "-g", "pane-border-format",
+        "#{?pane_active,"
+        "#[bold]#{?@vupai_name,#{@vupai_name} · ,}"
+        "#{?@vupai_program,#{@vupai_program} · ,}"
+        "#{pane_title},"
         "#{?@vupai_name,#[bold]#{@vupai_name}#[nobold] · ,}"
         "#{?@vupai_program,#{@vupai_program} · ,}"
-        "#{pane_title}",
+        "#{pane_title}}",
     ]
 
 
@@ -317,7 +321,7 @@ class ScriptedRun:
 
 # Middle segment that renders the focused pane's callsign (+ program), between
 # the indicator and the clock. tmux's own window list is hidden (_hide_window_list).
-PANE = ("#{?@vupai_name,#{@vupai_name},#{pane_current_command}}"
+PANE = ("#[fg=colour80]#{?@vupai_name,#{@vupai_name},#{pane_current_command}}#[default]"
         "#{?@vupai_program, · #{@vupai_program},}")
 
 

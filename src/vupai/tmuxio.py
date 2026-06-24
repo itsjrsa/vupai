@@ -246,19 +246,35 @@ def find_board_pane(session: str) -> str | None:
 
 def enable_pane_titles() -> None:
     run(["set", "-g", "pane-border-status", "top"])
-    # Thicker glyphs for the border lines. tmux draws borders with box-drawing
-    # characters; "heavy" swaps the thin single-line set for the bold/heavy one,
-    # making each pane edge read as a chunkier rule.
-    run(["set", "-g", "pane-border-lines", "heavy"])
+    # Chunkier glyphs for the border lines. tmux draws borders with box-drawing
+    # characters; "double" uses the two-stroke set (╔═╗), which reads heavier
+    # than the single heavy line and makes each pane edge a bolder rule.
+    run(["set", "-g", "pane-border-lines", "double"])
     # Three segments, each shown only when present: voice name (bold), program,
     # then the app's own title. So the border reads "sage · claude · ✳ Add help
     # command...", keeping the program visible even after the agent overwrites
     # pane_title with a conversation summary. Missing segments collapse cleanly:
     # name-only -> "sage · ✳ ...", program-only -> "claude · ✳ ...".
+    # No explicit colors in the format: text inherits the border style, so the
+    # whole title is teal on the active pane and gray on the rest - always
+    # cohesive. The active pane renders its ENTIRE title bold (name + program +
+    # summary as one teal block); unfocused panes bold only the callsign so the
+    # name still leads. Branch on #{?pane_active,<focused>,<unfocused>}.
     run(["set", "-g", "pane-border-format",
+         "#{?pane_active,"
+         "#[bold]#{?@vupai_name,#{@vupai_name} · ,}"
+         "#{?@vupai_program,#{@vupai_program} · ,}"
+         "#{pane_title},"
          "#{?@vupai_name,#[bold]#{@vupai_name}#[nobold] · ,}"
          "#{?@vupai_program,#{@vupai_program} · ,}"
-         "#{pane_title}"])
+         "#{pane_title}}"])
+    # Border colors: dim every inactive edge, then light the focused pane's
+    # border (and its title row) with a soft teal accent so the active pane
+    # reads at a glance without clashing with the yellow/green status accents.
+    # Style-only, no state captured - cleanup unsets these globals back to
+    # tmux's defaults (see _ALWAYS_ON_GLOBALS).
+    run(["set", "-g", "pane-border-style", "fg=colour250"])
+    run(["set", "-g", "pane-active-border-style", "fg=colour80"])
 
 
 def set_terminal_title() -> None:
@@ -359,7 +375,7 @@ _CLOCK_TAIL = "%H:%M "
 # after-select-pane hook (see install_status_indicator) refreshes it on focus
 # change. tmux's own window list is hidden (see _hide_window_list).
 _PANE_SEGMENT = (
-    "#{?@vupai_name,#{@vupai_name},#{pane_current_command}}"
+    "#[fg=colour80]#{?@vupai_name,#{@vupai_name},#{pane_current_command}}#[default]"
     "#{?@vupai_program, · #{@vupai_program},}"
 )
 
@@ -394,6 +410,13 @@ def install_status_indicator() -> None:
     modified live value - makes re-install idempotent (the segment never stacks)
     and reversible (see restore_status_right)."""
     run(["set", "-g", "@vupai_status", "#[fg=green]● vupai#[default]"])
+
+    # Cohesive dark status bar in the same accent family as the active border.
+    # Captured once into @vupai_status_style_orig (like status-right) so
+    # restore_status_right can hand the user's own status-style back.
+    if show_global("@vupai_status_style_orig") is None:
+        run(["set", "-g", "@vupai_status_style_orig", show_global("status-style") or ""])
+    run(["set", "-g", "status-style", "bg=colour235,fg=colour250"])
 
     saved = show_global("@vupai_status_orig")
     if saved is None:
@@ -465,6 +488,13 @@ def restore_status_right() -> None:
         else:
             run(["set", "-gu", "status-right"])  # revert to tmux's default
         run(["set", "-gu", "@vupai_status_orig"])
+    style = show_global("@vupai_status_style_orig")
+    if style is not None:
+        if style:
+            run(["set", "-g", "status-style", style])
+        else:
+            run(["set", "-gu", "status-style"])  # revert to tmux's default
+        run(["set", "-gu", "@vupai_status_style_orig"])
     _restore_window_list()
     run(["set-hook", "-gu", "after-select-pane"])  # drop the pane-refresh hook
     run(["set", "-gu", "@vupai_status"])
@@ -676,12 +706,13 @@ def kill_session(name: str) -> None:
 # install that predates the dedicated socket leaves no footprint behind.
 _ALWAYS_ON_GLOBALS = (
     "pane-border-status", "pane-border-format", "pane-border-lines",
+    "pane-border-style", "pane-active-border-style",
     "set-titles", "set-titles-string",
     "base-index", "pane-base-index", "extended-keys",
     "status-right-length", "status-left-length",
 )
 _VUPAI_GLOBAL_OPTIONS = (
-    "@vupai_status", "@vupai_status_orig",
+    "@vupai_status", "@vupai_status_orig", "@vupai_status_style_orig",
     "@vupai_tip", "@vupai_tip_orig",
     "@vupai_win_orig", "@vupai_wincur_orig",
 )
