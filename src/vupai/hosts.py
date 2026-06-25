@@ -38,13 +38,13 @@ def load_hosts(path: Path | None = None) -> dict[str, Host]:
     target = path if path is not None else HOSTS_PATH
     if not target.exists():
         return {}
-    with target.open("rb") as fh:
-        try:
+    try:
+        with target.open("rb") as fh:
             data = tomllib.load(fh)
-        except tomllib.TOMLDecodeError:
-            # Hand-edited file with a syntax error: degrade gracefully rather
-            # than crash daemon startup.
-            return {}
+    except (OSError, tomllib.TOMLDecodeError):
+        # Unreadable (bad perms, or a directory) or hand-edited with a syntax
+        # error: degrade gracefully rather than crash daemon startup.
+        return {}
     table = data.get("hosts")
     if not isinstance(table, dict):
         return {}

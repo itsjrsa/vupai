@@ -482,6 +482,9 @@ def _parse_body(body: str, macros: dict[str, list[str]],
         if " ".join(_tokens(key)) == norm and norm:
             return Command(kind="macro", actions=tuple(actions))
     toks = _tokens(body)
+    # Like board/swap, the ssh/connect verbs are matched BEFORE slash, so they
+    # would shadow a user slash command of the same name. Acceptable: these are
+    # uncommon verb names unlikely to collide with a configured slash command.
     # `read` is parsed AFTER slash so a user-configured slash verb named "read"
     # (or "red"/"reed") still wins - the built-in read never silently shadows a
     # configured slash command. Default config has no such collision.

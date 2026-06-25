@@ -76,6 +76,14 @@ def test_load_hosts_malformed_toml_returns_empty(tmp_path):
     assert load_hosts(path) == {}
 
 
+def test_load_hosts_unreadable_path_returns_empty(tmp_path):
+    # An existing-but-unreadable path (here a directory) makes .exists() true
+    # but open() raises OSError; must degrade gracefully, not crash startup.
+    p = tmp_path / "hosts.toml"
+    p.mkdir()
+    assert load_hosts(p) == {}
+
+
 _HOSTS = {
     "vm1": Host(name="vm1", host="10.0.0.5"),
     "gpubox": Host(name="gpubox", host="gpu.example.com"),
