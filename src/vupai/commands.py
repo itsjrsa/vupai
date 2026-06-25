@@ -783,7 +783,7 @@ def _many_result(done_label, done_names, misses, ok, *, spoken_label=None):
 
 def _exec_close(cmd: Command, registry, config, io) -> CommandResult:
     if cmd.names:
-        hits, misses = _resolve_each(cmd.names, registry.panes, config.fuzzy_cutoff)
+        hits, misses = _resolve_each(cmd.names, registry.panes, config.close_fuzzy_cutoff)
         closed = []
         for pid, name in hits:
             io.kill_pane(pid)

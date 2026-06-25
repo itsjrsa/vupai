@@ -535,6 +535,24 @@ def test_execute_close_trailing_syllable_mishearing():
     assert res.ok and io.calls == [("kill_pane", "%1")]
 
 
+def test_execute_close_multi_uses_looser_close_cutoff():
+    # Multi-close must use the same looser close cutoff as single-close, so a
+    # mishearing like "novel" (67 vs "nova") resolves at close cutoff (65) but
+    # not at global cutoff (82). This proves each target in a list benefits from
+    # the lenient fuzzy matching. Regression test: multi-close was using the
+    # stricter global cutoff instead of the looser close cutoff.
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    io = FakeTmux()
+    res = execute_command(Command(kind="close", names=("novel", "atlas")), reg, Config(), io=io)
+    assert res.ok
+    # Both panes are killed: "novel" resolves to "nova" via the looser cutoff,
+    # and "atlas" is exact; if the bug (using global cutoff) persisted, "novel"
+    # would not resolve and the command would partially fail.
+    assert io.calls == [("kill_pane", "%1"), ("kill_pane", "%2")]
+    assert res.message == "closed nova, atlas"
+
+
 def test_execute_close_unrelated_word_is_noop():
     # A word that resembles nothing open stays a safe no-op, even at the looser
     # close cutoff: no pane is killed.
