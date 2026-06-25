@@ -21,6 +21,24 @@ Built for a tmux-centric workflow where you keep several coding agents (Claude
 Code) and shells open at once and want to drive them by voice without reaching
 for the mouse.
 
+## Why not plain tmux?
+
+vupai *runs on* tmux: it doesn't replace it, it adds a voice layer on top. tmux
+already gives you panes, splits, and a way to keep many agents on screen. What it
+can't do is let you talk to them. That's the gap vupai fills.
+
+| With plain tmux | With vupai |
+|---|---|
+| Switch panes with `<prefix>`-arrow, then type | **Hold a key and talk** to the focused pane |
+| Manually track which pane is which agent | Panes **auto-name themselves**; address them by name (*"nova, run the tests"*) |
+| Re-type the same command in each pane | **Broadcast by voice** to every agent at once (*"everyone, pull main"*) |
+| Split / resize / re-layout with prefix chords | **Voice commands**: *"create 3 panes"*, *"focus nova"*, *"swap nova and atlas"*, *"tile"* |
+| Read each pane yourself to see what agents are doing | **Supervision board** + *"read nova"* speaks a one-line summary aloud |
+| n/a | **On-device speech** (Parakeet via Apple MLX) - no cloud, no API keys |
+
+If you only have one shell open, you don't need vupai. It earns its keep when you
+are juggling several agents and want to drive them hands-on-keyboard-optional.
+
 ## How it works
 
 ```
@@ -141,21 +159,16 @@ vupai kill backend    # kill the "backend" session
 > your default server, run **`vupai cleanup`** once to revert the settings it
 > left there.
 
-`vupai` starts the push-to-talk daemon as a **detached background process**
-(not a tmux window — it must run under your terminal app to receive global key
-events) and attaches you to a tmux session. Sessions follow tmux-style verbs:
-bare `vupai` attaches-or-creates a session named after the current directory's
-basename (so each repo gets its own); `attach`/`new`/`kill` target a session by
-name (the name defaults to the cwd basename when omitted). The daemon is
-**global** (one per machine, shared across all sessions) and survives
-detach/reattach; see its status with `vupai status`.
+`vupai` does two things: starts the voice daemon and drops you into a tmux
+session. The session is named after the current directory, so each repo gets its
+own (use `attach`/`new`/`kill` to target one by name). The daemon is global (one
+per machine) and survives detach/reattach; check it with `vupai status`.
 
 Then:
 
-1. **Panes name themselves.** Every pane you create gets an auto-assigned callsign
-   (the daemon installs tmux hooks for this), so you can address it by voice right
-   away. To rename one, focus it and run `vupai name nova` (or target it:
-   `vupai name nova %3`), or press **`<prefix>` + R** to rename the active pane.
+1. **Panes name themselves.** Every new pane gets an auto-assigned callsign, so
+   you can address it by voice right away. Rename one with `vupai name nova` (focus
+   it first, or target it: `vupai name nova %3`) or **`<prefix>` + R**.
 2. **Hold Right-Option, speak, release.** What you said is typed into the target
    pane and submitted.
 
@@ -176,6 +189,24 @@ Beyond dictation, vupai has a small command layer. Hold the **system key** (the
 instead of typing it into a pane. The key is the signal, so there is no spoken
 control word. Run `vupai voice-commands` for a cheat sheet tailored to your config.
 
+| Say | What happens |
+|---|---|
+| *"create 3 panes"* | Spin up N auto-named panes, tiled (up to 30; *"create 2 shell panes"* picks the program) |
+| *"focus nova"* | Focus the **nova** pane (also *"switch to / go to"*) |
+| *"swap nova and atlas"* | Swap two named panes |
+| *"zoom nova"* / *"unzoom"* | Maximize a pane / restore the layout |
+| *"tile"* / *"layout …"* | Re-layout the window (tiled, main-vertical, …) |
+| *"close nova"* / *"kill nova"* | Close a pane (asks y/n by default) |
+| *"board"* | Open the **supervision board** (one per session) |
+| *"read nova"* / *"read all"* | Speak a pane's summary aloud (`read board` for a digest) |
+| *"clear nova"* / *"clear all"* | Send a slash command (`/clear`) to a pane or every agent |
+| *"everyone, pull main"* | **Broadcast** the message to every named agent |
+| *"connect to box"* / *"ssh box"* | SSH the focused pane into a configured host |
+| *"mute"* / *"unmute"* / *"stop"* | Silence/restore talk-back, or cut off the current read |
+| *"nova, run the tests"* | Not a command → falls through to **name addressing** |
+
+Details and nuances worth knowing:
+
 - *"create 3 panes"* → spin up 3 auto-named panes, tiled (add a program:
   *"…create 2 shell panes"*). The noun is **optional** — *"create two"* or
   *"create a"* works — and *"agent(s)"* / *"split(s)"* are synonyms for *"pane(s)"*
@@ -183,11 +214,6 @@ control word. Run `vupai voice-commands` for a cheat sheet tailored to your conf
   batch (>= `confirm_create_threshold`, default 8) first asks for a y/n
   confirmation, since tiling many panes is cramped and voice-addressing degrades
   past ~16 names.
-- *"focus nova"* → focus the **nova** pane (also: *"switch to / go to …"*).
-- *"swap nova and atlas"* → swap two named panes.
-- *"close nova"* → close a pane.
-- *"board"* / *"open board"* → open the **supervision board** pane (one per session;
-  repeating it focuses the existing board).
 - *"clear"* / *"clear nova"* / *"clear all"* → send a **slash command** (`/clear`)
   to the focused pane, a named pane, or every named agent. Extend the spoken verbs
   via `slash_commands` in the config.
