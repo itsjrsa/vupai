@@ -687,7 +687,7 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
     if len(assigned) == 1:
         spoken = f"{assigned[0]} is up"
     else:
-        spoken = f"{len(assigned)} agents up: {', '.join(assigned)}"
+        spoken = f"{len(assigned)} agents up: {_speak_join(assigned)}"
     return CommandResult(True, f"created {cmd.count} panes: {' '.join(assigned)}{note}",
                          spoken=spoken)
 

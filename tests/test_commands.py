@@ -1776,7 +1776,11 @@ def test_execute_create_has_say_friendly_spoken_ack(monkeypatch):
     reg = FakeRegistry([focused], focused=focused)
     two = execute_command(Command(kind="create", count=2, unit="pane"), reg,
                           Config(), io=FakeTmux(new_ids=["%1", "%2"]))
-    assert two.spoken == "2 agents up: astra, atlas"
+    assert two.spoken == "2 agents up: astra and atlas"
+    reg = FakeRegistry([focused], focused=focused)
+    three = execute_command(Command(kind="create", count=3, unit="pane"), reg,
+                            Config(), io=FakeTmux(new_ids=["%1", "%2", "%3"]))
+    assert three.spoken == "3 agents up: astra, atlas, and sage"
 
 
 def test_execute_swap_and_broadcast_spoken_drops_symbols():
