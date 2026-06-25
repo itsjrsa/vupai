@@ -1939,3 +1939,82 @@ def test_summarize_destructive_broadcast_subset():
     assert _summarize_destructive(
         Command(kind="broadcast", text="run tests"), None
     ) == "broadcast to all agents: run tests"
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (subset broadcast): _process detects 2+ leading names and fans out
+# ---------------------------------------------------------------------------
+
+
+def _subset_lines():
+    return [
+        "\t".join(["%1", "@1", "main", "0", "echo", "claude", "1", "main"]),
+        "\t".join(["%2", "@1", "main", "1", "sage", "claude", "0", "main"]),
+    ]
+
+
+def _subset_broadcast_daemon(tmp_path, *, confirm_answer=True):
+    """Daemon wired with the real execute_command and a capturing inject_fn, for
+    subset-broadcast integration tests. Two panes: echo (%1, focused) + sage (%2).
+    confirm_destructive is on; confirm_fn auto-returns `confirm_answer`."""
+    from vupai.commands import execute_command as real_execute
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    cfg = Config(confirm_destructive=True)
+    registry = make_registry(_subset_lines(), "%1")
+    feedback = FakeFeedback()
+    inject_calls: list[tuple] = []
+    confirms: list = []
+
+    def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05, **kw):
+        inject_calls.append((pane_id, text))
+        return True
+
+    def confirm_fn(summary, *, timeout, disable_hint=None):
+        confirms.append((summary, timeout, disable_hint))
+        return confirm_answer
+
+    d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber(""), registry, feedback,
+               execute_fn=real_execute, inject_fn=inject_fn, confirm_fn=confirm_fn,
+               async_fn=lambda fn, *a: fn(*a))
+    return d, feedback, inject_calls, confirms, wav
+
+
+def test_process_subset_broadcast_system_key(tmp_path):
+    # echo (%1, focused) + sage (%2); "echo and sage run tests" on the system key.
+    # confirm_destructive on with auto-yes confirm stub.
+    # Assert: "run tests" injected into both %1 and %2; confirm called with summary
+    # that names echo and sage.
+    d, feedback, inject_calls, confirms, wav = _subset_broadcast_daemon(tmp_path)
+    _say(d, wav, "echo and sage run tests", "system")
+
+    injected_panes = [c[0] for c in inject_calls]
+    assert "%1" in injected_panes and "%2" in injected_panes
+    assert len(inject_calls) == 2
+    assert all(c[1] == "run tests" for c in inject_calls)
+    assert confirms, "confirm popup must be shown for a broadcast"
+    summary = confirms[0][0]
+    assert "echo" in summary and "sage" in summary
+
+
+def test_process_subset_broadcast_keyword_mode(tmp_path):
+    # Same utterance with mode="keyword" still fans to both panes.
+    d, feedback, inject_calls, confirms, wav = _subset_broadcast_daemon(tmp_path)
+    _say(d, wav, "echo and sage run tests", "keyword")
+
+    injected_panes = [c[0] for c in inject_calls]
+    assert "%1" in injected_panes and "%2" in injected_panes
+    assert len(inject_calls) == 2
+
+
+def test_process_two_names_empty_message_falls_through_to_route(tmp_path):
+    # "echo and sage" (no message) must NOT trigger subset broadcast; it falls
+    # through to route() per the existing single-name behavior.
+    # Assert: no multi-pane inject (sage / %2 must not receive any text).
+    d, feedback, inject_calls, confirms, wav = _subset_broadcast_daemon(tmp_path)
+    _say(d, wav, "echo and sage", "system")
+
+    injected_panes = [c[0] for c in inject_calls]
+    assert "%2" not in injected_panes, (
+        "empty message must not fan out to sage - subset broadcast requires a non-empty message"
+    )
