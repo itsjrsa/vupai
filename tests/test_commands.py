@@ -267,7 +267,8 @@ def test_parse_create_explicit_codex_program():
 def test_parse_create_codex_homophone():
     # "codex" mishears as "codecs"/"codec" - the curated alias recovers it. This
     # is the reported failure: "open two codex" lands as "open two codecs".
-    for spoken in ("open two codecs panes", "open two codec", "create a codecs"):
+    for spoken in ("open two codecs panes", "open two codec", "create a codecs",
+                   "open one colex", "open one co"):
         c = _parse_btn(spoken)
         assert c is not None and c.kind == "create" and c.program == "codex", spoken
 
@@ -542,6 +543,14 @@ def test_parse_close_misheard_verb_rose():
     assert c.kind == "close" and c.name == "nova"
 
 
+def test_parse_close_misheard_verb_closed():
+    # Past-tense mishearing seen in the wild ("close juno" -> "closed juno").
+    c = _parse_btn("closed nova")
+    assert c.kind == "close" and c.name == "nova"
+    # Bare "closed" has no target -> non-destructive fall-through.
+    assert _parse_btn("closed") is None
+
+
 def test_parse_close_misheard_verb_all_target():
     assert _parse_btn("clothes all").kind == "close_others"
 
@@ -732,12 +741,17 @@ def test_parse_zoom_synonyms():
 def test_parse_zoom_misheard_verb_zoo():
     assert _parse_btn("zoo").kind == "zoom"
     assert _parse_btn("zoo nova") == Command(kind="zoom", name="nova")
+    # "zoom atlas" lands as "boom atlas" in the wild.
+    assert _parse_btn("boom").kind == "zoom"
+    assert _parse_btn("boom atlas") == Command(kind="zoom", name="atlas")
 
 
 def test_parse_unzoom_synonyms():
     assert _parse_btn("unzoom").kind == "unzoom"
     assert _parse_btn("minimize").kind == "unzoom"
     assert _parse_btn("restore").kind == "unzoom"
+    # "minimize" lands as the single token "miniways" in the wild.
+    assert _parse_btn("miniways").kind == "unzoom"
 
 
 def test_parse_unzoom_misheard_split():

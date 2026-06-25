@@ -39,13 +39,18 @@ _CLOSE_VERBS = ("close", "kill")
 # after the verb (a bare verb is None), and execution resolves that target to a
 # real pane or returns "no pane named ..." - so a misfire can't silently kill a
 # pane, and "rose" is not a CALLSIGN so it never shadows an auto-named pane.
-# "kill" has no clean homophone -> omitted.
-_CLOSE_VERB_ALIASES = frozenset({"clothes", "cloze", "rose"})
+# "kill" has no clean homophone -> omitted. "closed" is the past-tense mishearing
+# seen in the wild ("close juno" -> "closed juno"); contained by the same logic as
+# "rose" (a target must still resolve to a real pane, so it can't silently kill).
+_CLOSE_VERB_ALIASES = frozenset({"clothes", "cloze", "rose", "closed"})
 _ZOOM_VERBS = ("zoom", "maximize")
-# Curated ASR mishearing of "zoom" (zoo). View-only action, so low risk; same
-# explicit-set pattern as the other verb aliases.
-_ZOOM_VERB_ALIASES = frozenset({"zoo"})
+# Curated ASR mishearings of "zoom" (zoo, boom - rhyme/onset confusion). View-only
+# action, so low risk; same explicit-set pattern as the other verb aliases.
+_ZOOM_VERB_ALIASES = frozenset({"zoo", "boom"})
 _UNZOOM_VERBS = ("unzoom", "minimize", "restore")
+# Curated ASR mishearing of "minimize" (lands as the single token "miniways").
+# View-only, so a miss is harmless; same explicit-set pattern as the verb aliases.
+_UNZOOM_VERB_ALIASES = frozenset({"miniways"})
 # Parakeet splits "unzoom" into two tokens ("and zoom" / "un zoom"). Curated,
 # deterministic - the leading token is implausible as a literal command on its
 # own, so matching it here can't shadow a real utterance.
@@ -137,7 +142,10 @@ _UNIT_ALIASES = {
 # count, so a misfire falls through to `unknown`, never injected). "codex" lands as
 # "codecs"/"codec" (the reported bug). Single-token aliases only; multi-token
 # splits live in _PROGRAM_PHRASE_ALIASES. Extend with a one-liner + a test.
-_PROGRAM_ALIASES = {"codecs": "codex", "codec": "codex"}
+# "colex"/"co" join "codecs"/"codec" from the wild ("open one codex" -> "open one
+# colex" / "open one co"). All implausible-as-literal program tokens after a count.
+_PROGRAM_ALIASES = {"codecs": "codex", "codec": "codex", "colex": "codex",
+                    "co": "codex"}
 # Program names the ASR splits into two tokens. "opencode" comes back as the
 # literal phrase "open code" - and since "open" is itself a create verb, this can
 # never match the single-token program check, so the whole phrase is mapped here.
@@ -295,7 +303,8 @@ def _parse_swap(toks: list[str]) -> Command | None:
 def _parse_zoom(toks: list[str]) -> Command | None:
     if not toks:
         return None
-    if toks[0] in _UNZOOM_VERBS or toks[:2] in _UNZOOM_PHRASES:
+    if (toks[0] in _UNZOOM_VERBS or toks[0] in _UNZOOM_VERB_ALIASES
+            or toks[:2] in _UNZOOM_PHRASES):
         return Command(kind="unzoom")
     if toks[0] in _ZOOM_VERBS or toks[0] in _ZOOM_VERB_ALIASES:
         rest = toks[1:]
