@@ -546,6 +546,21 @@ class CommandResult:
     spoken: str = ""
 
 
+def _speak_join(names) -> str:
+    """Join names for SPEECH with a natural "and" so TTS reads them as a list.
+
+    The status line joins with ", " (compact, and the comma is visible), but the
+    spoken twin must say "sage and orion" - a comma is silent in TTS, so
+    ", ".join would read as "sage orion". Oxford form for 3+ ("a, b, and c").
+    """
+    names = list(names)
+    if len(names) <= 1:
+        return "".join(names)
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    return ", ".join(names[:-1]) + f", and {names[-1]}"
+
+
 def intent_phrase(cmd: Command) -> str:
     """Present-tense spoken phrase voiced the INSTANT a command is recognized,
     before the confirm popup and execution - so feedback feels immediate instead
@@ -557,7 +572,7 @@ def intent_phrase(cmd: Command) -> str:
         return "opening an agent" if cmd.count == 1 else f"opening {cmd.count} agents"
     if cmd.kind == "close":
         if cmd.names:
-            return f"closing {', '.join(cmd.names)}"
+            return f"closing {_speak_join(cmd.names)}"
         return f"closing {cmd.name}"
     if cmd.kind == "close_others":
         return "closing the other agents"
@@ -767,19 +782,20 @@ def _resolve_each(names, panes, cutoff):
 def _many_result(done_label, done_names, misses, ok, *, spoken_label=None):
     """Assemble a best-effort multi-target CommandResult.
 
-    Renders "<label> a, b" for the acted-on names and appends a single
-    " - <miss>, <miss>" clause for failures. spoken_label overrides the label in
-    the spoken twin (slash drops the leading slash for speech).
+    The status `message` renders "<label> a, b" (comma-joined, compact); the
+    spoken twin renders "<label> a and b" via _speak_join so TTS reads the names
+    as a list rather than running them together. spoken_label overrides the label
+    in the spoken twin (slash drops the leading slash for speech).
     """
-    def render(label):
+    def render(label, join):
         parts = []
         if done_names:
-            parts.append(f"{label} {', '.join(done_names)}")
+            parts.append(f"{label} {join(done_names)}")
         if misses:
             parts.append(", ".join(misses))
         return " - ".join(parts)
-    msg = render(done_label)
-    spoken = render(spoken_label) if spoken_label is not None else msg
+    msg = render(done_label, ", ".join)
+    spoken = render(done_label if spoken_label is None else spoken_label, _speak_join)
     return CommandResult(ok, msg, spoken=spoken)
 
 

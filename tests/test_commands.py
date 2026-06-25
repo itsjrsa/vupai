@@ -570,7 +570,19 @@ def test_execute_close_multi_kills_each():
     res = execute_command(Command(kind="close", names=("echo", "sage")), reg, Config(), io=io)
     assert res.ok
     assert io.calls == [("kill_pane", "%1"), ("kill_pane", "%2")]
+    # Status line is comma-joined (compact); the spoken twin says "and" so TTS
+    # does not run the names together ("echo sage").
     assert res.message == "closed echo, sage"
+    assert res.spoken == "closed echo and sage"
+
+
+def test_execute_close_multi_speaks_oxford_and_for_three():
+    panes = [_pane("%1", "echo", active=True), _pane("%2", "sage"), _pane("%3", "orion")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    res = execute_command(
+        Command(kind="close", names=("echo", "sage", "orion")), reg, Config(), io=FakeTmux())
+    assert res.message == "closed echo, sage, orion"
+    assert res.spoken == "closed echo, sage, and orion"
 
 
 def test_execute_close_multi_best_effort_reports_miss():
@@ -1102,7 +1114,7 @@ def test_execute_slash_multi_injects_each():
         io=FakeTmux(), inject_fn=lambda pid, txt, **k: sent.append((pid, txt)) or True)
     assert res.ok and sent == [("%1", "/clear"), ("%2", "/clear")]
     assert res.message == "sent /clear to echo, sage"
-    assert res.spoken == "sent clear to echo, sage"
+    assert res.spoken == "sent clear to echo and sage"
 
 
 def test_execute_slash_multi_best_effort_reports_miss():
@@ -1740,7 +1752,7 @@ def test_intent_phrase_ssh():
 
 def test_intent_phrase_close_multi():
     from vupai.commands import intent_phrase
-    assert intent_phrase(Command(kind="close", names=("echo", "sage"))) == "closing echo, sage"
+    assert intent_phrase(Command(kind="close", names=("echo", "sage"))) == "closing echo and sage"
     assert intent_phrase(Command(kind="close", name="echo")) == "closing echo"
 
 
