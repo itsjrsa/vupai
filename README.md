@@ -155,29 +155,6 @@ vupai kill backend    # kill the "backend" session
 > setup. The trade-off: its sessions don't show in a plain `tmux ls` — reach them
 > with `vupai attach`. (Set `tmux_socket = ""` to share your default server.)
 
-`vupai` does two things: starts the voice daemon and drops you into a tmux
-session. The session is named after the current directory, so each repo gets its
-own (use `attach`/`new`/`kill` to target one by name). The daemon is global (one
-per machine) and survives detach/reattach; check it with `vupai status`.
-
-Then:
-
-1. **Panes name themselves.** Every new pane gets an auto-assigned callsign, so
-   you can address it by voice right away. Rename one with `vupai name nova` (focus
-   it first, or target it: `vupai name nova %3`) or **`<prefix>` + R**.
-2. **Hold Right-Option, speak, release.** What you said is typed into the target
-   pane and submitted.
-
-Examples (Right-Option held while speaking):
-
-- *"run the tests"* → the **focused** pane.
-- *"nova, deploy to staging"* → the pane named **nova**, wherever it is.
-- *"two, git status"* → pane **2** in the current window.
-
-> [!NOTE]
-> If two names are too close to tell apart, vupai won't guess: it shows the
-> candidates so you can re-say.
-
 ### Voice commands
 
 Beyond dictation, vupai has a small command layer. Hold the **system key** (the
@@ -236,23 +213,37 @@ Details and nuances worth knowing:
 | `vupai voice-commands` | Print the spoken-command cheat sheet for your config |
 | `vupai doctor` | Check permissions and print fix steps |
 
-### Supervision board
-
-`vupai board` splits a dedicated pane (right, ~40%) that shows, per named agent
-pane, a one-line summary of its main conclusion or pending action — handy when
-several panes each drive an agent on a different part of a project. It works with
-any agentic tool, not just Claude Code: pane activity is detected from terminal
-output churn, and the summarizer is a swappable command. To keep it cheap,
-summaries are produced only when a pane *settles* (finishes a burst of work),
-skipped when nothing changed, and throttled per pane. Close the pane to stop it.
-
 The push-to-talk daemon runs as a **detached background process** under your
 terminal app (not inside tmux — that's required for the global hotkey to work).
 It logs to `~/.config/vupai/daemon.log` and survives detach/reattach.
 
+## Supervision board
+
+When you have several agents running at once, you can't watch them all. The
+**supervision board** does it for you: `vupai board` (or just say *"board"*)
+splits a dedicated pane (right, ~40%) that shows, per named agent pane, a
+one-line summary of its main conclusion or pending action — so a glance tells you
+who's done, who's stuck, and who needs you.
+
+- **Tool-agnostic.** Works with any agentic CLI, not just Claude Code: pane
+  activity is detected from terminal-output churn, and the summarizer is a
+  swappable command (`board_summarizer_cmd` — Haiku by default, or point it at
+  codex/gemini/ollama).
+- **Cheap by design.** A pane is summarized only when it *settles* (finishes a
+  burst of work), skipped when nothing changed, and throttled per pane
+  (`board_min_summary_interval`).
+- **Speak it too.** *"read board"* reads the digest aloud; *"read nova"* reads a
+  single pane.
+
+One board per session. Close the pane to stop it.
+
 ## Configuration
 
-Optional TOML at `~/.config/vupai/config.toml` (every field has a default):
+`vupai setup` creates `~/.config/vupai/config.toml` on first run, pre-filled with
+every field at its default value (so the file below is what you start with); it's
+left untouched if one already exists. Editing it is optional. You can also create
+or top it up at any time with `vupai config --init`, which adds any keys a newer
+version introduced without disturbing your edits.
 
 ```toml
 hotkey = ["alt_r"]                                # pynput key name(s); alt_r = Right-Option (dictation key in button mode). List several to bind aliases across keyboards
@@ -328,41 +319,6 @@ bind -T copy-mode-vi WheelDownPane send -X scroll-down
 > voice-name border) or rebind `<prefix> + R` (vupai uses it to rename a pane).
 > These apply **inside vupai's own session** (tmux still sources your
 > `~/.tmux.conf` on vupai's dedicated server); your default tmux is untouched.
-
-## Scope & limitations
-
-- **v1 targets Claude Code panes** (and plain shells). Codex/OpenCode have known
-  TUI submit bugs and are out of scope for now.
-- **Talk-back is read-on-request only** — say `read <name>` and vupai speaks that
-  pane's summary aloud (macOS `say`, swap via `tts_cmd`). There is no unprompted
-  narration: agents speak only when you ask.
-- **Recognizer name-biasing is currently a no-op** — the installed `parakeet-mlx`
-  doesn't accept hotwords, so vupai relies on fuzzy + phonetic matching of the
-  spoken name instead (which handles most ASR slips). Pick distinctive,
-  non-dictionary names for best results.
-
-## Development
-
-```bash
-uv run pytest -m "not integration and not slow"   # fast unit suite (no tmux/mic/model)
-uv run pytest -m integration                      # needs a real tmux
-uv run pytest -m slow                             # needs the real model + tests/fixtures/tiny.wav
-uv run ruff check .                               # lint
-```
-
-> [!TIP]
-> The daemon loads vupai's modules once at spawn, so a live one runs stale code
-> after you edit the source. `uv run vupai --reload` respawns it and re-attaches
-> in one step.
-
-Install it as an editable tool to drop the `uv run` prefix entirely:
-
-```bash
-uv tool install --editable .   # then just: vupai --reload
-```
-
-Architecture, module map, and the invariants to preserve are documented in
-[`AGENTS.md`](AGENTS.md).
 
 ## License
 
