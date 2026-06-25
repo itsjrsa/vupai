@@ -85,9 +85,9 @@ works the same way.) The Parakeet model (~0.6B, ~2 GB) downloads automatically o
 first transcription.
 
 To upgrade later: `uv tool upgrade vupai`. Not on PyPI yet; install from git or
-[from source](#from-source-development--dogfooding).
+[from source](#from-source-development).
 
-### From source (development / dogfooding)
+### From source (development)
 
 ```bash
 git clone git@github.com:itsjrsa/vupai.git
@@ -95,7 +95,7 @@ cd vupai
 uv sync            # creates .venv and installs everything (incl. the MLX runtime)
 ```
 
-Run the CLI with `uv run vupai …` from the repo, or see the dogfooding loop
+Run the CLI with `uv run vupai …` from the repo, or see the live-reload loop
 (`vupai reload` / `vupai --reload`) in [AGENTS.md](AGENTS.md).
 
 > [!NOTE]
@@ -236,53 +236,22 @@ One board per session. Close the pane to stop it.
 
 ## Configuration
 
-`vupai setup` creates `~/.config/vupai/config.toml` on first run, pre-filled with
-every field at its default value (so the file below is what you start with); it's
-left untouched if one already exists. Editing it is optional. You can also create
-or top it up at any time with `vupai config --init`, which adds any keys a newer
-version introduced without disturbing your edits.
+vupai reads `~/.config/vupai/config.toml`. `vupai setup` writes it on first run,
+pre-filled with **every key at its default and an inline comment explaining it**, so
+the file itself is the reference. It's left untouched if one already exists, and
+`vupai config --init` tops it up with any keys a newer version added without
+disturbing your edits. Editing is optional; open the file to see them all.
 
-```toml
-hotkey = ["alt_r"]                                # pynput key name(s); alt_r = Right-Option (dictation key in button mode). List several to bind aliases across keyboards
-addressing = "button"                             # "button" (two keys, default) | "keyword" (one key, no command layer)
-command_hotkey = ["cmd_r"]                         # button mode: the "system" key(s) (Right-Command). Also a list of alternatives
-broadcast_word = "everyone"                       # leading word that injects to all named agents
-model_id = "mlx-community/parakeet-tdt-0.6b-v2"   # English-only (v3 is multilingual and drifts to Russian on short clips)
-sample_rate = 16000
-mic_device = ""                                   # CoreAudio input name; "" = system default. Set via `vupai mic`
-fuzzy_cutoff = 82                                 # name-match strictness (0-100)
-poll_interval = 0.5                               # pane-registry refresh (s)
-inject_confirm_timeout = 2.0                      # wait for pasted text before Enter (s)
-inject_poll_interval = 0.05
-pane_command = "claude"                           # default program for voice-created panes
-confirm_destructive = true                        # y/n popup before close / close-others / broadcast
-confirm_timeout_s = 8.0                            # popup auto-cancels after this (s)
-confirm_create_threshold = 8                      # also pop the confirm for "create N panes" when N >= this (set high to disable)
-# board/read summarizer. The pane tail rides as the final arg; the last stdout line is the summary.
-# Any such CLI works, so this is where you pick the backend AND the model. Examples (uncomment one):
-# board_summarizer_cmd = "python -m vupai.claude_summarize --model claude-haiku-4-5"   # default: streaming Haiku wrapper, speaks "read" token-by-token
-# board_summarizer_cmd = "claude -p --model claude-haiku-4-5"   # plain claude: buffers, speaks once at the end
-# board_summarizer_cmd = "codex exec"                           # Codex (model set via your Codex config/profile)
-# board_summarizer_cmd = "gemini -p"                            # Gemini CLI
-# Offload to a (remote) Ollama box, skipping the ~3s `claude -p` CLI cold-start per call:
-# board_summarizer_cmd = "python3 /abs/path/scripts/ollama_summarize.py --host http://BOX:11434 --model qwen2.5:7b"
-board_min_summary_interval = 30.0                 # per-pane floor (s) between board summaries; bounds cost
-tts_stream = true                                 # speak the "read" summary sentence-by-sentence as it streams (needs a streaming summarizer)
+The keys most people touch:
 
-[programs]                                        # spoken token -> argv ("" = plain shell)
-claude = "claude"
-shell = ""
-
-[aliases]                                         # spoken alias -> pane name
-# bot = "atlas"
-
-[macros]                                          # spoken phrase -> list of actions
-# "start the squad" = ["create 3 panes", "tile"]
-
-[slash_commands]                                  # spoken verb -> literal injected into the pane(s)
-clear = "/clear"                                  # system key: "clear [name|all]"
-compact = "/compact"
-```
+| Key | What it does |
+|---|---|
+| `hotkey` / `command_hotkey` | The dictation and system push-to-talk keys (pynput names; each a list, so you can bind several). |
+| `addressing` | `button` (two keys, default) or `keyword` (legacy single key, no command layer). |
+| `pane_command` | Default program for voice-created panes (e.g. `claude`). |
+| `broadcast_word` | Leading word that injects to every named agent (default `everyone`). |
+| `board_summarizer_cmd` | Command that summarizes panes for the board and `read` (see [Supervision board](#supervision-board)). |
+| `[programs]` / `[aliases]` / `[macros]` / `[slash_commands]` | Spoken-token tables: program names, pane-name aliases, phrase macros, and slash verbs. |
 
 **Addressing modes.** In `button` mode (default) you hold one of two keys: the
 dictation key (`hotkey`) types your words verbatim into the focused pane, while the
@@ -319,6 +288,26 @@ bind -T copy-mode-vi WheelDownPane send -X scroll-down
 > voice-name border) or rebind `<prefix> + R` (vupai uses it to rename a pane).
 > These apply **inside vupai's own session** (tmux still sources your
 > `~/.tmux.conf` on vupai's dedicated server); your default tmux is untouched.
+
+## Uninstall
+
+```bash
+vupai down                       # stop the background daemon
+vupai cleanup                    # revert any leftover settings on your default tmux server
+uv tool uninstall vupai          # remove the CLI (use `pipx uninstall vupai` if you installed with pipx)
+```
+
+That removes the program. To also delete what it created on disk:
+
+```bash
+rm -rf ~/.config/vupai           # config, hosts, daemon log, journal
+rm -rf ~/.cache/huggingface/hub/models--mlx-community--parakeet-tdt-0.6b-v2   # the ~2 GB speech model
+```
+
+The Homebrew tools (`tmux`, `sox`) are general-purpose; remove them only if nothing
+else needs them (`brew uninstall tmux sox`). The macOS permissions were granted to
+your terminal app, not to vupai, so leave them unless you want to revoke them by
+hand under **System Settings → Privacy & Security**.
 
 ## License
 
