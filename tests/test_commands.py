@@ -1385,6 +1385,21 @@ def test_parse_read_all_is_a_digest():
     assert _parse_btn("read everyone") == Command(kind="read", to_all=True)
 
 
+def test_parse_read_multi_target():
+    c = _parse_btn("read echo and sage")
+    assert c.kind == "read" and c.names == ("echo", "sage")
+
+
+def test_parse_read_single_target_unchanged():
+    c = _parse_btn("read nova")
+    assert c.kind == "read" and c.name == "nova" and c.names == ()
+
+
+def test_parse_read_board_in_list_is_digest():
+    c = _parse_btn("read echo and board")
+    assert c.kind == "read" and c.to_all is True
+
+
 # --- read command: execution ------------------------------------------------
 
 
@@ -1433,6 +1448,22 @@ def test_execute_read_unnamed_focused_pane_has_no_prefix():
         speak_fn=lambda t: spoken.append(t))
     assert res.ok and res.message == "idle shell"  # no "<label>: " prefix
     assert spoken == ["idle shell"]
+
+
+def test_execute_read_multi_speaks_each_in_order():
+    panes = [_pane("%1", "echo", active=True), _pane("%2", "sage")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    spoken = []
+    res = execute_command(
+        Command(kind="read", names=("echo", "sage")), reg, Config(), io=FakeTmux(),
+        capture_fn=lambda pid: f"tail-{pid}",
+        summarize_fn=lambda tail, title: _summary(f"sum-{tail}"),
+        title_fn=lambda pid: f"title-{pid}",
+        speak_fn=lambda text: spoken.append(text))
+    assert res.ok
+    # Each named pane summarized and its label-prefixed line in the joined message.
+    assert "echo:" in res.message and "sage:" in res.message
+    assert res.message.index("echo:") < res.message.index("sage:")
 
 
 def test_execute_read_unknown_pane():

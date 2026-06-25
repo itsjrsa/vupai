@@ -393,20 +393,20 @@ _READ_VERB_ALIASES = frozenset({"reed", "red", "reve", "reeve", "wreath"})
 
 
 def _parse_read(toks: list[str]) -> Command | None:
-    """`read [name|board|all]` -> speak a summary aloud.
+    """`read [name... | board | all]` -> speak a summary aloud.
 
-    Strips a leading article/filler after the verb ("read me nova", "read the
-    atlas", "read out nova"). A bare "read" targets the focused pane; "read board"
-    (or "read all") speaks a board-style digest of every agent.
-    """
+    Strips a leading article/filler ("read me nova", "read the atlas", "read out
+    nova") and the "and" connector. A bare "read" targets the focused pane;
+    "read board" / "read all" (or either word anywhere in the list) speaks a
+    board-style digest; 2+ names speak each pane's summary in turn."""
     if not toks or (toks[0] not in _READ_VERBS and toks[0] not in _READ_VERB_ALIASES):
         return None
-    rest = [t for t in toks[1:] if t not in ("the", "me", "out")]
-    # "read board" / "read all" -> a spoken digest of every agent, not a pane named
-    # "board" (the visual board pane need not even be open). to_all carries it.
-    if rest and (rest[0] == "board" or rest[0] in _ALL_TARGETS):
+    rest = [t for t in toks[1:] if t not in ("the", "me", "out", "and")]
+    if any(t == "board" or t in _ALL_TARGETS for t in rest):
         return Command(kind="read", to_all=True)
-    return Command(kind="read", name=rest[0] if rest else "")
+    if len(rest) <= 1:
+        return Command(kind="read", name=rest[0] if rest else "")
+    return Command(kind="read", names=tuple(rest))
 
 
 # Talk-back toggle: silence/restore ALL spoken feedback (command acks + read).
@@ -1046,6 +1046,19 @@ def _exec_read(cmd: Command, registry, config, io, *, capture_fn=None,
     the summary is generated. An injected summarize_fn forces the original
     one-shot path - the unit suite drives that, deterministic and audio-free.
     """
+    if cmd.names:
+        seams = dict(capture_fn=capture_fn, summarize_fn=summarize_fn,
+                     speak_fn=speak_fn, title_fn=title_fn, statuses_fn=statuses_fn,
+                     stream_fn=stream_fn, cancel=cancel)
+        msgs: list[str] = []
+        ok = True
+        for raw in cmd.names:
+            res = _exec_read(Command(kind="read", name=raw), registry, config, io, **seams)
+            ok = ok and res.ok
+            msgs.append(res.message)
+            if cancel is not None and cancel.is_set():
+                break  # barge-in: stop reading the rest of the list
+        return CommandResult(ok, "; ".join(msgs))
     if cmd.to_all:  # "read board" / "read all": a digest of every agent
         return _exec_read_board(registry, config, io, speak_fn=speak_fn,
                                 statuses_fn=statuses_fn, cancel=cancel)
