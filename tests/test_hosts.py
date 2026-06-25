@@ -103,3 +103,10 @@ def test_resolve_host_miss_returns_none():
 
 def test_resolve_host_empty_inventory():
     assert resolve_host("vm1", {}) is None
+
+
+def test_resolve_host_custom_cutoff_allows_loose_match():
+    # A low cutoff lets a weaker fuzzy match through that the default would reject.
+    # "vm one" -> "vm-one" scores ~44 vs "vm1": rejected at default 82, accepted at 40.
+    assert resolve_host("vm one", _HOSTS) is None
+    assert resolve_host("vm one", _HOSTS, cutoff=40).name == "vm1"
