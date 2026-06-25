@@ -1943,7 +1943,8 @@ def test_exec_ssh_unknown_host_fails():
     reg = _Reg(focused, [focused])
     res = _exec_ssh(Command(kind="ssh", name="nope"), reg, _scfg(), io, {})
     assert not res.ok
-    assert res.spoken == "no host named nope" or "no host" in res.message
+    assert res.spoken == "no host named nope"
+    assert res.message == "no host named nope"
 
 
 def test_exec_ssh_no_focus_fails():
