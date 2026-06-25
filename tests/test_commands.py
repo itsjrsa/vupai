@@ -1555,6 +1555,11 @@ def test_intent_phrase_is_present_tense_per_kind():
     assert intent_phrase(Command(kind="talkback", enable=True)) == ""
 
 
+def test_intent_phrase_ssh():
+    from vupai.commands import intent_phrase
+    assert intent_phrase(Command(kind="ssh", name="vm1")) == "connecting to vm1"
+
+
 def test_execute_talkback_reports_state_and_speaks_only_on_unmute():
     on = execute_command(Command(kind="talkback", enable=True), FakeRegistry([]),
                          Config(), io=FakeTmux())

@@ -564,6 +564,8 @@ def intent_phrase(cmd: Command) -> str:
         return "broadcasting"
     if cmd.kind == "slash":
         return f"sending {cmd.text.lstrip('/')}"
+    if cmd.kind == "ssh":
+        return f"connecting to {cmd.name}"
     return ""
 
 

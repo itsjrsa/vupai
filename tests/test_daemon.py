@@ -743,7 +743,7 @@ def test_command_path_skips_route_and_inject(tmp_path):
     def parse_fn(text, **kw):
         return Command(kind="create", count=2) if text.startswith("computer") else None
 
-    def execute_fn(cmd, registry, config, *, inject_fn):
+    def execute_fn(cmd, registry, config, *, inject_fn, **kwargs):
         return CommandResult(True, "created")
 
     d = Daemon(Config(), _Rec(), _Tx("computer create two panes"), _Reg(_panes()),
@@ -799,7 +799,7 @@ def test_create_success_speaks_say_friendly_callsign(tmp_path, monkeypatch):
     monkeypatch.setattr("vupai.daemon.speech.speak",
                         lambda text, *, cmd: spoken.append(text))
 
-    def execute_fn(cmd, registry, config, *, inject_fn):
+    def execute_fn(cmd, registry, config, *, inject_fn, **kwargs):
         return CommandResult(True, "created 1 panes: sage", spoken="sage is up")
 
     d = Daemon(Config(), _Rec(), _Tx("x"), _Reg(_panes()), _Fb(),
@@ -845,7 +845,7 @@ def test_single_target_success_is_silent_intent_already_spoke(tmp_path, monkeypa
     monkeypatch.setattr("vupai.daemon.speech.speak",
                         lambda text, *, cmd: spoken.append(text))
 
-    def execute_fn(cmd, registry, config, *, inject_fn):
+    def execute_fn(cmd, registry, config, *, inject_fn, **kwargs):
         return CommandResult(True, "focused nova", spoken="switched to nova")
 
     d = Daemon(Config(), _Rec(), _Tx("x"), _Reg(_panes()), _Fb(),
@@ -859,7 +859,7 @@ def test_failure_always_speaks_even_for_single_target(tmp_path, monkeypatch):
     monkeypatch.setattr("vupai.daemon.speech.speak",
                         lambda text, *, cmd: spoken.append(text))
 
-    def execute_fn(cmd, registry, config, *, inject_fn):
+    def execute_fn(cmd, registry, config, *, inject_fn, **kwargs):
         return CommandResult(False, "no pane named sage")
 
     d = Daemon(Config(), _Rec(), _Tx("x"), _Reg(_panes()), _Fb(),
@@ -873,7 +873,7 @@ def test_create_success_ack_silent_when_muted(tmp_path, monkeypatch):
     monkeypatch.setattr("vupai.daemon.speech.speak",
                         lambda text, *, cmd: spoken.append(text))
 
-    def execute_fn(cmd, registry, config, *, inject_fn):
+    def execute_fn(cmd, registry, config, *, inject_fn, **kwargs):
         return CommandResult(True, "created 1 panes: sage", spoken="sage is up")
 
     d = Daemon(Config(), _Rec(), _Tx("x"), _Reg(_panes()), _Fb(),
@@ -890,7 +890,7 @@ def test_announced_command_speaks_intent_immediately_then_silent_on_success(tmp_
     monkeypatch.setattr("vupai.daemon.speech.speak",
                         lambda text, *, cmd: spoken.append(text))
 
-    def execute_fn(cmd, registry, config, *, inject_fn):
+    def execute_fn(cmd, registry, config, *, inject_fn, **kwargs):
         return CommandResult(True, "sent /clear to nova")
 
     d = Daemon(Config(), _Rec(), _Tx("clear nova"), _Reg(_panes()), _Fb(),
@@ -909,7 +909,7 @@ def test_view_verb_is_silent_on_success_but_speaks_on_failure(tmp_path, monkeypa
 
     outcome = {"ok": True, "msg": "focused nova"}
 
-    def execute_fn(cmd, registry, config, *, inject_fn):
+    def execute_fn(cmd, registry, config, *, inject_fn, **kwargs):
         return CommandResult(outcome["ok"], outcome["msg"])
 
     d = Daemon(Config(), _Rec(), _Tx("focus nova"), _Reg(_panes()), _Fb(),
@@ -933,7 +933,7 @@ def test_destructive_speaks_intent_before_popup_then_failure(tmp_path, monkeypat
         order.append(("popup", summary))
         return True
 
-    def execute_fn(cmd, registry, config, *, inject_fn):
+    def execute_fn(cmd, registry, config, *, inject_fn, **kwargs):
         order.append(("execute", cmd.name))
         return CommandResult(False, "no pane named sage")
 
@@ -1116,7 +1116,7 @@ def test_command_unknown_rejects_on_pane(tmp_path):
     def parse_fn(text, **kw):
         return Command(kind="focus", name="ghost")
 
-    def execute_fn(cmd, registry, config, *, inject_fn):
+    def execute_fn(cmd, registry, config, *, inject_fn, **kwargs):
         return CommandResult(False, "no pane named ghost")
 
     fb = FakeFeedback()
@@ -1157,7 +1157,7 @@ def _confirm_daemon(tmp_path, *, confirm_destructive=True, answer=True,
     executed: list = []
     confirms: list = []
 
-    def execute_fn(cmd, reg, config, *, inject_fn):
+    def execute_fn(cmd, reg, config, *, inject_fn, **kwargs):
         executed.append(cmd)
         return CommandResult(True, f"did {cmd.kind} {cmd.name}".strip())
 
@@ -1287,7 +1287,7 @@ def test_button_system_command_executes(tmp_path):
         seen["addressing"] = addressing
         return Command(kind="create", count=2)
 
-    def execute_fn(cmd, registry, config, *, inject_fn):
+    def execute_fn(cmd, registry, config, *, inject_fn, **kwargs):
         return CommandResult(True, "created 2 panes")
 
     d = Daemon(Config(), _Rec(), _Tx("create two panes"), _Reg(_panes()),
@@ -1914,3 +1914,10 @@ def test_run_read_does_not_clear_newer_read_cancel(tmp_path):
     # Worker A's finally must have detected _read_cancel is not cancel_a and left it.
     assert daemon._read_cancel is newer_event, (
         "worker A must not clobber a newer Event set by a concurrent _dispatch_read")
+
+
+
+def test_ssh_kind_in_ack_sets():
+    from vupai import daemon
+    assert "ssh" in daemon._ANNOUNCE_INTENT
+    assert "ssh" in daemon._SPEAK_ON_SUCCESS
