@@ -75,6 +75,7 @@ def build_tips(cfg) -> list[str]:
             f"{_CLOSE_VERBS[0]} nova",
             "swap nova and atlas",
             "open board",
+            "ssh vm1",  # ssh to a configured host (hosts.toml)
         ]
         commands += [f"{verb} all" for verb in sorted(cfg.slash_commands)]
         commands += list(cfg.macros)

@@ -57,6 +57,18 @@ def test_short_tip_is_unchanged():
     assert tips._render("focus nova") == "tip: focus nova"
 
 
+def test_button_pool_includes_ssh_example():
+    cfg = _cfg(addressing="button")
+    pool = tips.build_tips(cfg)
+    assert any("ssh" in t for t in pool)
+
+
+def test_keyword_mode_excludes_ssh_example():
+    cfg = _cfg(addressing="keyword", hotkey="alt_r")
+    pool = tips.build_tips(cfg)
+    assert not any("ssh" in t for t in pool)
+
+
 def test_order_is_deterministic():
     cfg = _cfg(addressing="button")
     assert tips.build_tips(cfg) == tips.build_tips(cfg)
