@@ -1796,7 +1796,11 @@ def _hosts_args(init):
 
 
 def test_cmd_hosts_lists(monkeypatch, capsys):
+    from types import SimpleNamespace
+
     from vupai.hosts import Host
+    monkeypatch.setattr(
+        cli, "load_config", lambda: SimpleNamespace(pane_command="claude"))
     monkeypatch.setattr(cli, "load_hosts", lambda: {
         "vm1": Host(name="vm1", host="10.0.0.5", user="jose", program="codex"),
     })
@@ -1804,6 +1808,26 @@ def test_cmd_hosts_lists(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "vm1" in out and "jose@10.0.0.5" in out and "codex" in out
+
+
+def test_cmd_hosts_lists_program_column(monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    from vupai.hosts import Host
+    monkeypatch.setattr(
+        cli, "load_config", lambda: SimpleNamespace(pane_command="claude"))
+    monkeypatch.setattr(cli, "load_hosts", lambda: {
+        "a": Host(name="a", host="1.1.1.1", program="codex"),
+        "b": Host(name="b", host="2.2.2.2", program=None),
+        "c": Host(name="c", host="3.3.3.3", program=""),
+    })
+    rc = cli._cmd_hosts(_hosts_args(init=False))
+    out = capsys.readouterr().out
+    assert rc == 0
+    lines = {ln.split("\t")[0]: ln for ln in out.strip().splitlines()}
+    assert "codex" in lines["a"]
+    assert "claude" in lines["b"]      # None -> global default
+    assert "(shell)" in lines["c"]     # "" -> plain shell
 
 
 def test_cmd_hosts_empty(monkeypatch, capsys):
