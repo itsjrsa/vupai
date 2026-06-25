@@ -356,11 +356,13 @@ def _parse_board(toks: list[str]) -> Command | None:
 
 
 _READ_VERBS = ("read",)
-# Curated ASR mishearings of "read": the homophone "reed" and the past-tense
-# spelling "red". Reading only SPEAKS a summary (no state change), so a misfire is
+# Curated ASR mishearings of "read": the homophone "reed", the past-tense
+# spelling "red", and the parakeet mishearings "reve" / "reeve" / "wreath" seen
+# in the journal (these otherwise fall through to routing and report
+# not_addressed). Reading only SPEAKS a summary (no state change), so a misfire is
 # harmless - at worst it reads the focused pane - but the set stays tight per the
 # alias convention. "read" itself transcribes cleanly.
-_READ_VERB_ALIASES = frozenset({"reed", "red"})
+_READ_VERB_ALIASES = frozenset({"reed", "red", "reve", "reeve", "wreath"})
 
 
 def _parse_read(toks: list[str]) -> Command | None:

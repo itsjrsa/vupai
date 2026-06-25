@@ -1213,6 +1213,15 @@ def test_parse_read_misheard_verbs():
     assert _parse_btn("red nova") == Command(kind="read", name="nova")
 
 
+def test_parse_read_misheard_as_reve_reeve_wreath():
+    # Real ASR mishearings of "read <name>" seen in the journal: parakeet lands
+    # "read" as "reve" / "reeve" / "wreath", which otherwise fall through to
+    # routing and report not_addressed.
+    assert _parse_btn("reve echo") == Command(kind="read", name="echo")
+    assert _parse_btn("reeve echo") == Command(kind="read", name="echo")
+    assert _parse_btn("wreath sage") == Command(kind="read", name="sage")
+
+
 def test_parse_read_only_on_button_key():
     # Read is a system-key command; the dictation/keyword key types verbatim.
     assert _parse("read nova") is None
