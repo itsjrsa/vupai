@@ -19,11 +19,11 @@ from vupai.router import (
     _peel_fillers,
     next_callsign,
     resolve_pane_by_name,
+    strip_marks,
     word_to_int,
 )
 from vupai.tmuxio import TmuxError
 
-_STRIP = ".,!?;:'\"()[]{}"
 _CREATE_VERBS = ("create", "make", "add", "open", "new")
 # Curated ASR mishearings of the lead verb "create" (ate/hate/eight/crate). Same
 # rationale as _UNIT_ALIASES: scoring would over-match, so the set is explicit.
@@ -45,13 +45,15 @@ _CLOSE_VERBS = ("close", "kill")
 # "rose" (a target must still resolve to a real pane, so it can't silently kill).
 _CLOSE_VERB_ALIASES = frozenset({"clothes", "cloze", "rose", "closed"})
 _ZOOM_VERBS = ("zoom", "maximize")
-# Curated ASR mishearings of "zoom" (zoo, boom - rhyme/onset confusion). View-only
-# action, so low risk; same explicit-set pattern as the other verb aliases.
-_ZOOM_VERB_ALIASES = frozenset({"zoo", "boom"})
+# Curated ASR mishearings of "zoom" (zoo, boom - rhyme/onset confusion) plus the
+# British "-ise" spelling Parakeet emits ("maximise"). View-only action, so low
+# risk; same explicit-set pattern as the other verb aliases.
+_ZOOM_VERB_ALIASES = frozenset({"zoo", "boom", "maximise"})
 _UNZOOM_VERBS = ("unzoom", "minimize", "restore")
-# Curated ASR mishearing of "minimize" (lands as the single token "miniways").
-# View-only, so a miss is harmless; same explicit-set pattern as the verb aliases.
-_UNZOOM_VERB_ALIASES = frozenset({"miniways"})
+# Curated ASR mishearing of "minimize" (lands as the single token "miniways") and
+# the British "-ise" spelling Parakeet emits ("minimise"). View-only, so a miss is
+# harmless; same explicit-set pattern as the verb aliases.
+_UNZOOM_VERB_ALIASES = frozenset({"miniways", "minimise"})
 # Parakeet splits "unzoom" into two tokens ("and zoom" / "un zoom"). Curated,
 # deterministic - the leading token is implausible as a literal command on its
 # own, so matching it here can't shadow a real utterance.
@@ -231,14 +233,14 @@ class Command:
 
 
 def _tokens(s: str) -> list[str]:
-    return [t for t in (tok.strip(_STRIP).lower() for tok in s.split()) if t]
+    return [t for t in (strip_marks(tok).lower() for tok in s.split()) if t]
 
 
 def _lead(text: str) -> tuple[str, str]:
     parts = text.strip().split(None, 1)
     if not parts:
         return "", ""
-    return parts[0].strip(_STRIP).lower(), (parts[1] if len(parts) > 1 else "")
+    return strip_marks(parts[0]).lower(), (parts[1] if len(parts) > 1 else "")
 
 
 def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
@@ -735,7 +737,8 @@ def _exec_swap(cmd: Command, registry, config, io) -> CommandResult:
 
 
 def _exec_close(cmd: Command, registry, config, io) -> CommandResult:
-    m = resolve_pane_by_name(cmd.name, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
+    m = resolve_pane_by_name(
+        cmd.name, registry.panes, fuzzy_cutoff=config.close_fuzzy_cutoff)
     if m.candidates:
         msg = "ambiguous: " + " / ".join(m.candidates) + " - say the name again"
         return CommandResult(False, msg)

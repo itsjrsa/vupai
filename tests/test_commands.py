@@ -84,7 +84,7 @@ def test_execute_create_splits_names_and_tiles(monkeypatch):
     assert res.ok
     # default program, wrapped so the pane survives the agent's exit
     assert ("split_window", "@1", "claude; exec ${SHELL:-/bin/sh} -i") in io.calls
-    assert ("set_pane_name", "%1", "nova") in io.calls
+    assert ("set_pane_name", "%1", "astra") in io.calls
     assert ("set_pane_name", "%2", "atlas") in io.calls
     # program label stored separately so the border survives the agent
     # overwriting pane_title with its own summary
@@ -122,7 +122,7 @@ def test_execute_create_falls_back_to_shell_when_program_missing(monkeypatch):
     assert res.ok
     assert ("split_window", "@1", "") in io.calls   # degraded to a plain shell
     assert "codex" in res.message and "shell" in res.message
-    assert ("set_pane_name", "%1", "nova") in io.calls
+    assert ("set_pane_name", "%1", "astra") in io.calls
     # degraded to a shell -> empty program label (border omits the segment)
     assert ("set_pane_program", "%1", "") in io.calls
 
@@ -525,6 +525,26 @@ def test_execute_close_named_pane():
     assert res.ok and io.calls == [("kill_pane", "%2")]
 
 
+def test_execute_close_trailing_syllable_mishearing():
+    # "close nova" misheard as "close novel": ~67 vs "nova", below the global
+    # cutoff (82) but above the looser close cutoff (65), so it still closes.
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    io = FakeTmux()
+    res = execute_command(Command(kind="close", name="novel"), reg, Config(), io=io)
+    assert res.ok and io.calls == [("kill_pane", "%1")]
+
+
+def test_execute_close_unrelated_word_is_noop():
+    # A word that resembles nothing open stays a safe no-op, even at the looser
+    # close cutoff: no pane is killed.
+    panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    io = FakeTmux()
+    res = execute_command(Command(kind="close", name="banana"), reg, Config(), io=io)
+    assert res.ok is False and io.calls == []
+
+
 def test_parse_bare_close_falls_through():
     # "close" with no target is not a command -> None (not swallowed).
     assert _parse_btn("close") is None
@@ -760,6 +780,23 @@ def test_parse_unzoom_misheard_split():
     assert _parse_btn("and zoom").kind == "unzoom"
     assert _parse_btn("un zoom").kind == "unzoom"
     assert _parse_btn("and zoom sage").kind == "unzoom"
+
+
+def test_parse_zoom_british_spelling():
+    # Parakeet emits the British "-ise" spelling ("maximise" / "minimise"),
+    # which the American-only verb lists would otherwise miss.
+    assert _parse_btn("maximise").kind == "zoom"
+    assert _parse_btn("minimise").kind == "unzoom"
+
+
+def test_parse_command_strips_trailing_unicode_punctuation():
+    # Parakeet appends sentence punctuation to a spoken command. ASCII marks and
+    # Unicode marks (ellipsis, smart quotes) must both be trimmed before the verb
+    # match, else the command silently fails (journal: "Minimise." -> not_addressed).
+    assert _parse_btn("minimise.").kind == "unzoom"
+    assert _parse_btn("minimise…").kind == "unzoom"   # ellipsis
+    assert _parse_btn("“minimise”").kind == "unzoom"  # smart quotes
+    assert _parse_btn("zoom nova!").kind == "zoom"
 
 
 def test_execute_zoom_focused_selects_then_zooms():
@@ -1576,11 +1613,11 @@ def test_execute_create_has_say_friendly_spoken_ack(monkeypatch):
     reg = FakeRegistry([focused], focused=focused)
     one = execute_command(Command(kind="create", count=1, unit="pane"), reg,
                           Config(), io=FakeTmux(new_ids=["%1"]))
-    assert one.spoken == "nova is up"
+    assert one.spoken == "astra is up"
     reg = FakeRegistry([focused], focused=focused)
     two = execute_command(Command(kind="create", count=2, unit="pane"), reg,
                           Config(), io=FakeTmux(new_ids=["%1", "%2"]))
-    assert two.spoken == "2 agents up: nova, atlas"
+    assert two.spoken == "2 agents up: astra, atlas"
 
 
 def test_execute_swap_and_broadcast_spoken_drops_symbols():

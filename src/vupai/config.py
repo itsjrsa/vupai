@@ -48,6 +48,11 @@ class Config:
     # if the device is absent (see audio.resolve_device).
     mic_device: str = ""
     fuzzy_cutoff: int = 82                 # rapidfuzz score 0..100
+    # Lower cutoff for the destructive `close` command only, so a trailing-syllable
+    # mishearing ("close novel" -> nova, ~67) still resolves. Kept below
+    # fuzzy_cutoff: the curated callsign pool is mutually distinct down to this
+    # value, so a looser bar here cannot confuse two open panes for each other.
+    close_fuzzy_cutoff: int = 65
     poll_interval: float = 0.5             # registry refresh cadence (s)
     inject_confirm_timeout: float = 2.0    # s to wait for pasted text to appear
     inject_poll_interval: float = 0.05
@@ -262,6 +267,10 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
     ("fuzzy_cutoff",
      '# rapidfuzz name-match score, 0..100. Higher = stricter.\n'
      '# fuzzy_cutoff = 82\n'),
+    ("close_fuzzy_cutoff",
+     '# Looser name-match score for the destructive `close` command only, so a\n'
+     '# trailing-syllable mishearing still resolves. Keep below fuzzy_cutoff.\n'
+     '# close_fuzzy_cutoff = 65\n'),
     ("poll_interval",
      '# tmux pane-registry refresh cadence (seconds).\n'
      '# poll_interval = 0.5\n'),

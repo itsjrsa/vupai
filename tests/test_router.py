@@ -7,8 +7,22 @@ from vupai.router import (
     next_callsign,
     resolve_pane_by_name,
     route,
+    strip_marks,
     word_to_int,
 )
+
+
+def test_strip_marks_trims_edges_keeps_meaningful():
+    # ASCII marks and the Unicode marks Parakeet emits (ellipsis, smart quotes)
+    # go; internal chars and the meaningful symbols (% @ # / - _) stay so tmux
+    # pseudo-ids, slash verbs, and hyphenated tokens survive.
+    assert strip_marks("minimise.") == "minimise"
+    assert strip_marks("minimise…") == "minimise"
+    assert strip_marks("“nova”") == "nova"
+    assert strip_marks("/clear") == "/clear"
+    assert strip_marks("co-op") == "co-op"
+    assert strip_marks("don't") == "don't"
+    assert strip_marks("%2") == "%2"
 
 
 def test_word_to_int_digits_and_words():
@@ -273,6 +287,21 @@ def test_callsign_pool_yields_30_distinct_from_empty():
         assert name is not None, f"pool exhausted after {len(used)} of {MAX_CREATE_COUNT}"
         used.append(name)
     assert len(set(used)) == MAX_CREATE_COUNT
+
+
+def test_callsign_pool_mutually_distinct_at_close_cutoff():
+    # `close` matches at a looser cutoff (Config.close_fuzzy_cutoff). Guard that
+    # no two callsigns score at/above it against each other, so the looser bar
+    # can never make one open pane resolve to another. If a new name is added
+    # that collides here, either drop the cutoff's claim or pick a clearer name.
+    from rapidfuzz import fuzz
+
+    from vupai.config import Config
+
+    cutoff = Config().close_fuzzy_cutoff
+    for i, a in enumerate(CALLSIGNS):
+        for b in CALLSIGNS[i + 1:]:
+            assert fuzz.ratio(a, b) < cutoff, f"{a}/{b} collide at {cutoff}"
 
 
 # ---------------------------------------------------------------------------

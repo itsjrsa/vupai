@@ -29,8 +29,23 @@ def word_to_int(token: str) -> int | None:
         return int(token)
     return _NUMBER_WORDS.get(token)
 
-# Characters stripped from the leading token before comparison (ASR punctuation).
-_STRIP = ".,!?;:'\"()[]{}"
+# Edge punctuation Parakeet appends to a spoken token ("minimize?", "minimise.")
+# is stripped before matching, else the verb/name never resolves. Covers the
+# ASCII sentence/quote/bracket marks plus the two Unicode marks English
+# Parakeet actually emits: the ellipsis and smart quotes. Edge-only: internal
+# chars are kept, and the symbols the grammar relies on (% @ # / - _) are
+# deliberately NOT listed, so tmux pseudo-ids ("%2") and slash verbs ("/clear")
+# survive intact.
+_MARKS = (
+    ".,!?;:'\"()[]{}"
+    "\u2026"                     # ellipsis
+    "\u201c\u201d\u2018\u2019"  # smart double / single quotes
+)
+
+
+def strip_marks(token: str) -> str:
+    """Strip leading/trailing punctuation marks from a token (ASR artefacts)."""
+    return token.strip(_MARKS)
 
 # Leading vocative / transition fillers peeled before addressing ("okay Atlas ...",
 # "hey Nova ..."). Curated to be disjoint from CALLSIGNS, the broadcast word, the
@@ -98,7 +113,7 @@ def _first_token(transcript: str) -> tuple[str, str]:
     parts = stripped.split(None, 1)
     raw = parts[0]
     remainder = parts[1] if len(parts) == 2 else ""
-    token = raw.strip(_STRIP).lower()
+    token = strip_marks(raw).lower()
     return token, remainder
 
 
@@ -159,7 +174,7 @@ def resolve_pane_by_name(
     Returns a NameMatch; pane_id is None on no match or an ambiguous near-tie
     (candidates non-empty only in the ambiguous case).
     """
-    token = token.strip(_STRIP).lower()
+    token = strip_marks(token).lower()
     if not token:
         return NameMatch(None, None, 0.0)
     hit = _exact(token, panes)
@@ -252,8 +267,8 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
 # grows (more names = more ASR confusion), which is what the large-create popup
 # warns about. Order is preserved: existing panes keep their callsigns.
 CALLSIGNS: tuple[str, ...] = (
-    "nova", "atlas", "sage", "echo", "orion", "ember",
-    "lyra", "vega", "koda", "slate", "raven", "quill", "tango", "pixel",
+    "astra", "atlas", "sage", "echo", "orion", "ember",
+    "lyra", "vega", "koda", "frost", "raven", "quill", "tango", "pixel",
     "delta", "comet", "jasper", "willow", "onyx", "cobalt", "maple", "flint",
     "harbor", "zephyr", "indigo", "basil", "cedar", "lumen", "sierra", "marlin",
     "otter", "piper", "cosmo", "banjo", "mocha", "granite", "falcon", "hazel",
@@ -281,7 +296,7 @@ def name_collides(candidate: str, existing: list[str],
     is an exact (case-insensitive) match, a rapidfuzz ratio >= cutoff, or an
     equal double-metaphone primary code.
     """
-    cand = candidate.strip(_STRIP).lower()
+    cand = strip_marks(candidate).lower()
     cand_code = doublemetaphone(cand)[0]
     for name in existing:
         # Skip pseudo-titles that tmux sets when no real name is assigned (%N).
