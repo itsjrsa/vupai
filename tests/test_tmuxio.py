@@ -72,6 +72,23 @@ def test_list_panes_ignores_blank_lines(monkeypatch):
     assert tmuxio.list_panes() == ["%1\t@1\twin\t0\tname\tzsh\t1\trepo"]
 
 
+@pytest.mark.parametrize("stderr", [
+    "no server running on /private/tmp/tmux-501/vupai",
+    "error connecting to /private/tmp/tmux-501/vupai (No such file or directory)",
+])
+def test_list_panes_returns_empty_when_server_down(monkeypatch, stderr):
+    fake = FakeRun(returncode=1, stderr=stderr)
+    patch_run(monkeypatch, fake)
+    assert tmuxio.list_panes() == []
+
+
+def test_list_panes_reraises_unexpected_error(monkeypatch):
+    fake = FakeRun(returncode=1, stderr="some other tmux failure")
+    patch_run(monkeypatch, fake)
+    with pytest.raises(tmuxio.TmuxError):
+        tmuxio.list_panes()
+
+
 def test_list_sessions_argv_and_parses_attached_flag(monkeypatch):
     # session_attached is a client count: 0 = detached, >=1 = attached.
     fake = FakeRun(stdout="vupai\t1\nmy-app\t0\nscratch\t2\n")

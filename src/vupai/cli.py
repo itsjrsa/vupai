@@ -518,6 +518,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
     for p in registry.panes:
         by_session.setdefault(p.session, []).append(p)
     print("panes:")
+    if not by_session:
+        print("  (none - vupai's tmux server isn't running)")
     for session in sorted(by_session, key=lambda s: (s != focused_session, s)):
         tag = "  (focused)" if session == focused_session else ""
         print(f"  {session or '-'}{tag}")

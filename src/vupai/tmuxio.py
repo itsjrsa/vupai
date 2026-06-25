@@ -33,6 +33,18 @@ class TmuxError(RuntimeError):
     """Raised when a tmux command exits nonzero."""
 
 
+def _is_no_server(exc: TmuxError) -> bool:
+    """True when the error just means vupai's tmux server isn't up.
+
+    tmux phrases this two ways: "no server running on <socket>" when the socket
+    exists but the server is gone, and "error connecting to <socket> (No such
+    file or directory)" when the socket was never created. Both mean zero panes,
+    not a real failure.
+    """
+    msg = str(exc)
+    return "no server running" in msg or "error connecting to" in msg
+
+
 def _base_argv() -> list[str]:
     # vupai runs on its OWN tmux server, pinned by VTMUX_TMUX_SOCKET (seeded once
     # in cli.main from config, default "vupai"), so every global option/hook/
@@ -98,7 +110,14 @@ def run(args: list[str], *, stdin: str | None = None) -> str:
 
 
 def list_panes() -> list[str]:
-    out = run(["list-panes", "-a", "-F", PANE_FORMAT])
+    # A down server has no panes, which is a normal state (e.g. `vupai status`
+    # before anything starts), not an error worth surfacing as a traceback.
+    try:
+        out = run(["list-panes", "-a", "-F", PANE_FORMAT])
+    except TmuxError as exc:
+        if _is_no_server(exc):
+            return []
+        raise
     return [line for line in out.splitlines() if line.strip()]
 
 
