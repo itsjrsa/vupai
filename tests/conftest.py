@@ -4,6 +4,31 @@ import os
 import pytest
 
 
+class _FakeHandle:
+    """Stand-in for a `say` Popen handle: the daemon waits on / terminates it."""
+
+    def wait(self, *a, **k):
+        return 0
+
+    def terminate(self):
+        pass
+
+    def poll(self):
+        return 0
+
+
+@pytest.fixture(autouse=True)
+def _mute_tts(monkeypatch):
+    """Stop any test from shelling out to the real macOS `say`.
+
+    `Config()` defaults to tts_enabled=True/tts_cmd="say", so a Daemon (or the
+    command layer's _default_speaker) built with defaults will spawn `say` for
+    every ack unless the test stubs it. Most do; this guarantees the rest stay
+    silent. Tests that assert on speech inject their own capture (speak_fn) or
+    monkeypatch speech.speak again, which simply overrides this no-op."""
+    monkeypatch.setattr("vupai.speech.speak", lambda *a, **k: _FakeHandle())
+
+
 @pytest.fixture(autouse=True)
 def _isolate_tmux_env():
     """vupai's main() exports VTMUX_TMUX_SOCKET (so the detached daemon inherits
