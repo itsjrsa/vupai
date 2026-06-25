@@ -13,6 +13,7 @@ import shutil
 from dataclasses import dataclass
 
 from vupai import board, speech, summarize, tmuxio
+from vupai.hosts import resolve_host
 from vupai.injector import inject
 from vupai.router import (
     _peel_fillers,
@@ -641,6 +642,40 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
                          spoken=spoken)
 
 
+def _exec_ssh(cmd: Command, registry, config, io, hosts) -> CommandResult:
+    host = resolve_host(cmd.name, hosts, cutoff=config.fuzzy_cutoff)
+    if host is None:
+        msg = f"no host named {cmd.name}"
+        return CommandResult(False, msg, spoken=msg)
+    focused = registry.focused()
+    if focused is None:
+        return CommandResult(False, "no focused pane to split")
+    target = focused.window_id
+    remote_program = config.pane_command if host.program is None else host.program
+    # Wrap the remote agent so exiting it drops to a remote shell, then wrap the
+    # whole ssh locally so the pane survives disconnect. We can't `which` a remote
+    # PATH, so the remote shell-wrap is also the missing-agent fallback.
+    remote_inner = wrap_agent_command(remote_program)  # "" stays plain shell
+    dest = f"{host.user}@{host.host}" if host.user else host.host
+    parts = ["ssh", "-t"]
+    if host.port:
+        parts += ["-p", str(host.port)]
+    parts.append(dest)
+    if remote_inner:
+        parts.append(remote_inner)
+    pane_cmd = wrap_agent_command(shlex.join(parts))
+    used = [p.name for p in registry.panes if p.name != p.id]
+    callsign = next_callsign(used, fuzzy_cutoff=config.fuzzy_cutoff)
+    if callsign is None:
+        return CommandResult(False, "callsign pool exhausted")
+    new_id = io.split_window(target, pane_cmd)
+    io.set_pane_name(new_id, callsign)
+    io.set_pane_program(new_id, f"{program_label(remote_program)}@{host.name}")
+    io.select_layout(target, "tiled")
+    return CommandResult(True, f"connected to {host.name}: {callsign}",
+                         spoken=f"{callsign} is up")
+
+
 def _exec_focus(cmd: Command, registry, config, io) -> CommandResult:
     m = resolve_pane_by_name(cmd.name, registry.panes, fuzzy_cutoff=config.fuzzy_cutoff)
     if m.candidates:
@@ -1072,13 +1107,15 @@ def execute_command(cmd: Command, registry, config, *,
                     io=tmuxio, inject_fn=inject,
                     capture_fn=None, summarize_fn=None,
                     speak_fn=None, title_fn=None, statuses_fn=None,
-                    stream_fn=None, cancel=None) -> CommandResult:
+                    stream_fn=None, cancel=None, hosts=None) -> CommandResult:
     # capture_fn/summarize_fn/speak_fn/title_fn/statuses_fn/stream_fn are read-command
     # seams (None -> built from config); only the read path consumes them. Mirrors the
     # inject_fn seam, which only the slash/broadcast paths consume.
     try:
         if cmd.kind == "create":
             return _exec_create(cmd, registry, config, io)
+        if cmd.kind == "ssh":
+            return _exec_ssh(cmd, registry, config, io, hosts or {})
         if cmd.kind == "macro":
             return _exec_macro(cmd, registry, config, io)
         if cmd.kind == "focus":

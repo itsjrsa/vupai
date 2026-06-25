@@ -1827,3 +1827,137 @@ def test_parse_ssh_no_phrase_returns_none():
 
 def test_parse_ssh_non_verb_returns_none():
     assert _parse_ssh(["focus", "nova"]) is None
+
+
+# ---------------------------------------------------------------------------
+# _exec_ssh tests
+# ---------------------------------------------------------------------------
+
+from vupai.commands import _exec_ssh  # noqa: E402
+from vupai.hosts import Host  # noqa: E402
+
+
+class _RecIO:
+    def __init__(self):
+        self.calls = []
+        self._next = 0
+
+    def split_window(self, target, command, **_kw):
+        self._next += 1
+        self.calls.append(("split", target, command))
+        return f"%{self._next}"
+
+    def set_pane_name(self, pane_id, name):
+        self.calls.append(("name", pane_id, name))
+
+    def set_pane_program(self, pane_id, program):
+        self.calls.append(("program", pane_id, program))
+
+    def select_layout(self, target, layout):
+        self.calls.append(("layout", target, layout))
+
+
+class _Pane:
+    def __init__(self, pid, name, window_id="@0"):
+        self.id = pid
+        self.name = name
+        self.window_id = window_id
+
+
+class _Reg:
+    def __init__(self, focused, panes):
+        self._focused = focused
+        self.panes = panes
+
+    def focused(self):
+        return self._focused
+
+
+def _scfg(**kw):
+    from types import SimpleNamespace
+    return SimpleNamespace(pane_command="claude", fuzzy_cutoff=82, **kw)
+
+
+def test_exec_ssh_program_case_builds_wrapped_command():
+    io = _RecIO()
+    focused = _Pane("%0", "nova", "@0")
+    reg = _Reg(focused, [focused])
+    hosts = {"vm1": Host(name="vm1", host="10.0.0.5", user="jose")}
+    res = _exec_ssh(Command(kind="ssh", name="vm1"), reg, _scfg(), io, hosts)
+    assert res.ok
+    split = next(c for c in io.calls if c[0] == "split")
+    assert split[2] == (
+        "ssh -t jose@10.0.0.5 'claude; exec ${SHELL:-/bin/sh} -i'; "
+        "exec ${SHELL:-/bin/sh} -i"
+    )
+    prog = next(c for c in io.calls if c[0] == "program")
+    assert prog[2] == "claude@vm1"
+
+
+def test_exec_ssh_per_host_override():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    hosts = {"vm1": Host(name="vm1", host="10.0.0.5", user="jose", program="codex")}
+    _exec_ssh(Command(kind="ssh", name="vm1"), reg, _scfg(), io, hosts)
+    split = next(c for c in io.calls if c[0] == "split")
+    assert "ssh -t jose@10.0.0.5 'codex; exec ${SHELL:-/bin/sh} -i'" in split[2]
+
+
+def test_exec_ssh_plain_shell_host():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    hosts = {"box": Host(name="box", host="1.2.3.4", program="")}
+    _exec_ssh(Command(kind="ssh", name="box"), reg, _scfg(), io, hosts)
+    split = next(c for c in io.calls if c[0] == "split")
+    # Empty remote program -> no remote command arg; just the local wrap.
+    assert split[2] == "ssh -t 1.2.3.4; exec ${SHELL:-/bin/sh} -i"
+    prog = next(c for c in io.calls if c[0] == "program")
+    assert prog[2] == "@box"
+
+
+def test_exec_ssh_user_omitted_uses_bare_dest():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    hosts = {"box": Host(name="box", host="gpu.example.com")}
+    _exec_ssh(Command(kind="ssh", name="box"), reg, _scfg(), io, hosts)
+    split = next(c for c in io.calls if c[0] == "split")
+    assert split[2].startswith("ssh -t gpu.example.com '")
+
+
+def test_exec_ssh_port_flag():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    hosts = {"box": Host(name="box", host="gpu.example.com", port=2222)}
+    _exec_ssh(Command(kind="ssh", name="box"), reg, _scfg(), io, hosts)
+    split = next(c for c in io.calls if c[0] == "split")
+    assert split[2].startswith("ssh -t -p 2222 gpu.example.com '")
+
+
+def test_exec_ssh_unknown_host_fails():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    res = _exec_ssh(Command(kind="ssh", name="nope"), reg, _scfg(), io, {})
+    assert not res.ok
+    assert res.spoken == "no host named nope" or "no host" in res.message
+
+
+def test_exec_ssh_no_focus_fails():
+    io = _RecIO()
+    reg = _Reg(None, [])
+    hosts = {"vm1": Host(name="vm1", host="1.2.3.4")}
+    res = _exec_ssh(Command(kind="ssh", name="vm1"), reg, _scfg(), io, hosts)
+    assert not res.ok
+
+
+def test_execute_command_routes_ssh_kind():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    hosts = {"vm1": Host(name="vm1", host="1.2.3.4")}
+    res = execute_command(Command(kind="ssh", name="vm1"), reg, _scfg(), io=io, hosts=hosts)
+    assert res.ok
