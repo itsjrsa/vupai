@@ -185,7 +185,9 @@ Invariants) and talks to tmux purely via the CLI.
   unknown key names) falls back to a single keyword `Hotkey` with a feedback error.
 - **No control word.** Commands are signalled by the *key* (button mode's system
   key), not a spoken magic word - `control_word` was removed. Only `broadcast_word`
-  (default "everyone") still leads as a spoken word, in both modes.
+  (default "everyone") still leads as a spoken word, in both modes. Subset broadcast
+  also leads with a 2+ and-joined name phrase (e.g., "echo and sage, run the tests"),
+  targeting just those panes instead of all agents.
 - **Vocative filler peel (exact-anchor).** Leading fillers ("okay Atlas ...", "um
   create two panes") are peeled before addressing, in two places that share
   `router._FILLERS` + `router._peel_fillers` (cap 2 tokens): (1) `route()` retries
@@ -226,7 +228,15 @@ Invariants) and talks to tmux purely via the CLI.
   commas collapse in tokenization) and run best-effort - each target resolves
   independently, hits act, misses are reported ("closed echo - no pane named ghost"). An
   all-target word anywhere in the list falls back to the existing all-path. focus/zoom/swap
-  stay single-target; subset broadcast is deferred.
+  stay single-target. Subset broadcast extends this to addressing: a leading run of 2+ named panes
+  joined by "and" followed by a message ("echo and sage, run the tests") fans the
+  message to just those panes (router.match_leading_names detects the run; the
+  daemon synthesizes a broadcast Command). It is confirm-gated like the all-agents
+  broadcast, works in both addressing modes, and - unlike the session-scoped
+  broadcast_word fan-out - targets the named panes across the server (they were
+  named explicitly). One name, or 2+ names with no message, falls through to
+  single-pane routing. The connector is the word "and" (a bare comma chains only
+  when paired with "and").
 - **Slash commands** (`slash_commands` config map, default `clear`->`/clear`,
   `compact`->`/compact`): grammar is `<verb> [name|all]` (verb leads, matching
   focus/close/swap); also accepts an and-joined list of names ("clear echo and sage").
