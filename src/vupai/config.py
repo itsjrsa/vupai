@@ -361,13 +361,25 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# board_enabled = false\n'),
     ("board_summarizer_cmd",
      '# Command that turns a pane\'s scrollback tail into a one-line summary.\n'
-     '# Default: the bundled streaming Haiku wrapper, so "read" talk-back speaks\n'
-     '# token-by-token. The prompt rides as the final argument; the last non-blank\n'
-     '# stdout line is the summary. Degrades to a non-LLM last-line summary if\n'
-     '# absent or it fails. Swap for "claude -p ..." (buffers), "codex exec", etc.\n'
+     '# The pane tail rides as the final argument; the last non-blank stdout line\n'
+     '# is the summary. Any CLI that reads a prompt as its last arg and prints one\n'
+     '# line works, so this is also where you pick the model (it is whatever the\n'
+     '# command uses). Degrades to a non-LLM last-line summary if absent or it\n'
+     '# fails. Examples (uncomment one):\n'
+     '#\n'
+     '#   Default: bundled streaming Haiku wrapper, so "read" talk-back speaks\n'
+     '#   token-by-token. Change the model via its --model flag.\n'
      '# board_summarizer_cmd = "python -m vupai.claude_summarize --model claude-haiku-4-5"\n'
-     '# Remote Ollama (model on another host, skips the CLI cold-start) - point at\n'
-     '# scripts/ollama_summarize.py with flags: --host http://BOX:11434 --model M.\n'),
+     '#   Plain Claude (buffers, no streaming):\n'
+     '# board_summarizer_cmd = "claude -p --model claude-haiku-4-5"\n'
+     '#   Codex (model set via your Codex config/profile):\n'
+     '# board_summarizer_cmd = "codex exec"\n'
+     '#   Gemini CLI:\n'
+     '# board_summarizer_cmd = "gemini -p"\n'
+     '#   Local Ollama:\n'
+     '# board_summarizer_cmd = "ollama run llama3.2"\n'
+     '#   Remote Ollama (model on another host, skips the CLI cold-start):\n'
+     '# board_summarizer_cmd = "python scripts/ollama_summarize.py --host http://BOX:11434 --model llama3.2"\n'),
     ("board_poll_interval",
      '# Board tick cadence (seconds).\n'
      '# board_poll_interval = 2.0\n'),

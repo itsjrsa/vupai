@@ -212,8 +212,20 @@ who's done, who's stuck, and who needs you.
 
 - **Tool-agnostic.** Works with any agentic CLI, not just Claude Code: pane
   activity is detected from terminal-output churn, and the summarizer is a
-  swappable command (`board_summarizer_cmd` — Haiku by default, or point it at
-  codex/gemini/ollama).
+  swappable command, not a fixed model. The pane's scrollback tail is appended as
+  the final argument and the last stdout line becomes the summary, so any CLI that
+  fits picks both the **backend and the model**:
+
+  | To summarize with… | Set `board_summarizer_cmd` to |
+  |---|---|
+  | Claude Haiku (default, streaming) | `python -m vupai.claude_summarize --model claude-haiku-4-5` |
+  | Claude (plain, buffered) | `claude -p --model claude-haiku-4-5` |
+  | Codex | `codex exec` |
+  | Gemini | `gemini -p` |
+  | Ollama (local/remote) | `python scripts/ollama_summarize.py --host http://BOX:11434 --model qwen2.5:7b` |
+
+  The model is whatever that command uses (e.g. Codex's own config/profile). If the
+  command is missing or fails, the board falls back to a non-LLM last-line summary.
 - **Cheap by design.** A pane is summarized only when it *settles* (finishes a
   burst of work), skipped when nothing changed, and throttled per pane
   (`board_min_summary_interval`).
@@ -246,9 +258,12 @@ pane_command = "claude"                           # default program for voice-cr
 confirm_destructive = true                        # y/n popup before close / close-others / broadcast
 confirm_timeout_s = 8.0                            # popup auto-cancels after this (s)
 confirm_create_threshold = 8                      # also pop the confirm for "create N panes" when N >= this (set high to disable)
-# board/read summarizer. Default: bundled streaming Haiku wrapper (speaks "read" token-by-token). Swap for codex/gemini/ollama.
-# board_summarizer_cmd = "python -m vupai.claude_summarize --model claude-haiku-4-5"   # the default (computed with this interpreter)
+# board/read summarizer. The pane tail rides as the final arg; the last stdout line is the summary.
+# Any such CLI works, so this is where you pick the backend AND the model. Examples (uncomment one):
+# board_summarizer_cmd = "python -m vupai.claude_summarize --model claude-haiku-4-5"   # default: streaming Haiku wrapper, speaks "read" token-by-token
 # board_summarizer_cmd = "claude -p --model claude-haiku-4-5"   # plain claude: buffers, speaks once at the end
+# board_summarizer_cmd = "codex exec"                           # Codex (model set via your Codex config/profile)
+# board_summarizer_cmd = "gemini -p"                            # Gemini CLI
 # Offload to a (remote) Ollama box, skipping the ~3s `claude -p` CLI cold-start per call:
 # board_summarizer_cmd = "python3 /abs/path/scripts/ollama_summarize.py --host http://BOX:11434 --model qwen2.5:7b"
 board_min_summary_interval = 30.0                 # per-pane floor (s) between board summaries; bounds cost
