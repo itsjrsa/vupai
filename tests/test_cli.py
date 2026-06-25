@@ -1173,6 +1173,35 @@ def test_cmd_daemon_threads_hud_flag(monkeypatch, tmp_path):
     assert captured.get("hud_enabled") is False
 
 
+def test_cmd_daemon_passes_hosts(monkeypatch, tmp_path):
+    from vupai.config import Config
+    monkeypatch.setattr(cli, "tmuxio", FakeTmux())
+    monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
+    monkeypatch.setattr(cli, "STATEFILE", tmp_path / "daemon.state")
+    monkeypatch.setattr(cli, "load_config", lambda: Config())
+    monkeypatch.setattr(cli.audio, "resolve_device", lambda d: ("", None))
+
+    sentinel = {"vm1": object()}
+    monkeypatch.setattr(cli, "load_hosts", lambda: sentinel)
+    built = {}
+
+    class FakeDaemon:
+        def __init__(self, *a, hosts=None, **k):
+            built["hosts"] = hosts
+
+        def run(self):
+            ...
+
+    monkeypatch.setattr(cli, "Daemon", FakeDaemon)
+    monkeypatch.setattr(cli, "Recorder", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "ParakeetTranscriber", lambda model_id: object())
+    monkeypatch.setattr(cli, "PaneRegistry", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "Feedback", lambda *a, **k: object())
+    assert cli.main(["_daemon"]) == 0
+    assert built["hosts"] is sentinel
+    assert "vm1" in built["hosts"]
+
+
 # ---------------------------------------------------------------------------
 # voice-commands subcommand
 # ---------------------------------------------------------------------------

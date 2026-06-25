@@ -33,6 +33,7 @@ from vupai.config import (
 )
 from vupai.daemon import Daemon
 from vupai.feedback import Feedback
+from vupai.hosts import load_hosts
 from vupai.hotkey import PTT_KEYS, capture_key, valid_key
 from vupai.permissions import (
     check_permissions,
@@ -1177,6 +1178,7 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     if cfg.status_tips:
         tip_rotator = TipRotator(build_tips(cfg), interval=cfg.status_tips_interval)
     daemon = Daemon(cfg, recorder, transcriber, registry, feedback,
+                    hosts=load_hosts(),
                     state_writer=lambda phase: write_daemon_state(phase, pid=pid),
                     watcher=watcher, tip_rotator=tip_rotator)
     # `vupai down` sends SIGTERM; the default disposition kills the process
