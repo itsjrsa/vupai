@@ -593,6 +593,26 @@ def wrap_agent_command(program: str) -> str:
     return f"{program}; exec ${{SHELL:-/bin/sh}} -i"
 
 
+def wrap_remote_command(program: str) -> str:
+    """Build the remote command for `ssh -t host <cmd>` that starts `program`.
+
+    Empty `program` returns "" so the caller omits the remote command entirely
+    and ssh opens a normal login shell. That is the default: connect and leave
+    the user at a prompt (so they can cd into a project before starting an agent
+    themselves) rather than launching one in the home directory.
+
+    A named program runs through a LOGIN + INTERACTIVE shell (`-lic`) so the
+    user's PATH from ~/.zshrc / ~/.zprofile is loaded. ssh's command mode
+    otherwise runs a non-interactive, non-login shell where tools installed via
+    nvm/fnm/npm are not on PATH (the classic "command not found" over ssh). The
+    program is wrapped (wrap_agent_command) so exiting it drops to an interactive
+    remote shell instead of closing the pane.
+    """
+    if not program:
+        return program
+    return f"${{SHELL:-/bin/sh}} -lic {shlex.quote(wrap_agent_command(program))}"
+
+
 def program_label(program: str) -> str:
     """The short program name shown on the pane border (e.g. "claude").
 
@@ -656,11 +676,13 @@ def _exec_ssh(cmd: Command, registry, config, io, hosts) -> CommandResult:
     if focused is None:
         return CommandResult(False, "no focused pane to split")
     target = focused.window_id
-    remote_program = config.pane_command if host.program is None else host.program
-    # Wrap the remote agent so exiting it drops to a remote shell, then wrap the
-    # whole ssh locally so the pane survives disconnect. We can't `which` a remote
-    # PATH, so the remote shell-wrap is also the missing-agent fallback.
-    remote_inner = wrap_agent_command(remote_program)  # "" stays plain shell
+    # Only an explicitly configured program starts an agent; with none, just open
+    # a login shell so the user lands at a prompt and can cd into a project before
+    # starting an agent themselves. The remote agent is run through a login shell
+    # (wrap_remote_command) so its PATH resolves, then the whole ssh is wrapped
+    # locally so the pane survives disconnect.
+    remote_program = host.program or ""
+    remote_inner = wrap_remote_command(remote_program)  # "" stays plain shell
     dest = f"{host.user}@{host.host}" if host.user else host.host
     parts = ["ssh", "-t"]
     if host.port:
@@ -675,7 +697,8 @@ def _exec_ssh(cmd: Command, registry, config, io, hosts) -> CommandResult:
         return CommandResult(False, "callsign pool exhausted")
     new_id = io.split_window(target, pane_cmd)
     io.set_pane_name(new_id, callsign)
-    io.set_pane_program(new_id, f"{program_label(remote_program)}@{host.name}")
+    label = program_label(remote_program) or "ssh"
+    io.set_pane_program(new_id, f"{label}@{host.name}")
     io.select_layout(target, "tiled")
     return CommandResult(True, f"connected to {host.name}: {callsign}",
                          spoken=f"{callsign} is up")

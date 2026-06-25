@@ -989,13 +989,16 @@ def _prompt_hotkey_setup(*, reader=None, capture=None,
 
 _HOSTS_TEMPLATE = """\
 # vupai remote machines. Say "ssh <name>" (or "connect to <name>") to open a
-# pane, SSH in, and start your agent there. SSH key auth must already be set up.
+# pane and SSH in. SSH key auth must already be set up.
+#
+# By default you land at a login shell (so you can cd into a project first).
+# Set `program` on a host to auto-start that agent instead.
 #
 # [hosts.vm1]
 # user = "jose"          # optional; omit to use ~/.ssh/config defaults
 # host = "10.0.0.5"      # required: hostname/IP or an ssh-config Host alias
 # port = 22              # optional
-# program = "codex"      # optional; overrides the global default agent
+# program = "claude"     # optional; omit for a plain shell (the default)
 """
 
 
@@ -1013,14 +1016,12 @@ def _cmd_hosts(args: argparse.Namespace) -> int:
     if not hosts:
         print("no hosts configured")
         return 0
-    default_program = load_config().pane_command or "(shell)"
+    # No configured program means "just open a shell" (the default), so an unset
+    # or empty program both render as (shell); only a named program shows.
     for name in sorted(hosts):
         h = hosts[name]
         dest = f"{h.user}@{h.host}" if h.user else h.host
-        if h.program is None:
-            program = default_program
-        else:
-            program = h.program or "(shell)"
+        program = h.program or "(shell)"
         print(f"{name}\t{dest}\t{program}")
     return 0
 

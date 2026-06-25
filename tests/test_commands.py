@@ -1883,7 +1883,21 @@ def _scfg(**kw):
     return SimpleNamespace(pane_command="claude", fuzzy_cutoff=82, **kw)
 
 
-def test_exec_ssh_program_case_builds_wrapped_command():
+def test_wrap_remote_command_empty_is_plain_shell():
+    from vupai.commands import wrap_remote_command
+    # Empty -> "" so the caller omits the remote command and ssh opens a shell.
+    assert wrap_remote_command("") == ""
+
+
+def test_wrap_remote_command_named_uses_login_interactive():
+    from vupai.commands import wrap_remote_command
+    # Login+interactive shell so the remote PATH loads; agent wrapped to survive.
+    assert wrap_remote_command("claude") == (
+        "${SHELL:-/bin/sh} -lic 'claude; exec ${SHELL:-/bin/sh} -i'"
+    )
+
+
+def test_exec_ssh_no_program_opens_login_shell():
     io = _RecIO()
     focused = _Pane("%0", "nova", "@0")
     reg = _Reg(focused, [focused])
@@ -1891,35 +1905,43 @@ def test_exec_ssh_program_case_builds_wrapped_command():
     res = _exec_ssh(Command(kind="ssh", name="vm1"), reg, _scfg(), io, hosts)
     assert res.ok
     split = next(c for c in io.calls if c[0] == "split")
-    assert split[2] == (
-        "ssh -t jose@10.0.0.5 'claude; exec ${SHELL:-/bin/sh} -i'; "
-        "exec ${SHELL:-/bin/sh} -i"
-    )
+    # No configured program -> connect and land at a login shell (no agent); the
+    # local wrap keeps the pane alive after the ssh session ends.
+    assert split[2] == "ssh -t jose@10.0.0.5; exec ${SHELL:-/bin/sh} -i"
+    prog = next(c for c in io.calls if c[0] == "program")
+    assert prog[2] == "ssh@vm1"
+
+
+def test_exec_ssh_explicit_program_runs_in_login_interactive_shell():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    hosts = {"vm1": Host(name="vm1", host="10.0.0.5", user="jose", program="claude")}
+    res = _exec_ssh(Command(kind="ssh", name="vm1"), reg, _scfg(), io, hosts)
+    assert res.ok
+    cmd = next(c for c in io.calls if c[0] == "split")[2]
+    # A named program runs through a login+interactive shell so the remote PATH
+    # (nvm/fnm/npm) is loaded, then wraps so exit drops to an interactive shell.
+    assert cmd.startswith("ssh -t jose@10.0.0.5 ")
+    assert "-lic" in cmd
+    assert "claude; exec ${SHELL:-/bin/sh} -i" in cmd
+    # The whole ssh is wrapped locally so the pane survives disconnect.
+    assert cmd.endswith("; exec ${SHELL:-/bin/sh} -i")
     prog = next(c for c in io.calls if c[0] == "program")
     assert prog[2] == "claude@vm1"
 
 
-def test_exec_ssh_per_host_override():
-    io = _RecIO()
-    focused = _Pane("%0", "nova")
-    reg = _Reg(focused, [focused])
-    hosts = {"vm1": Host(name="vm1", host="10.0.0.5", user="jose", program="codex")}
-    _exec_ssh(Command(kind="ssh", name="vm1"), reg, _scfg(), io, hosts)
-    split = next(c for c in io.calls if c[0] == "split")
-    assert "ssh -t jose@10.0.0.5 'codex; exec ${SHELL:-/bin/sh} -i'" in split[2]
-
-
-def test_exec_ssh_plain_shell_host():
+def test_exec_ssh_empty_program_string_opens_shell():
     io = _RecIO()
     focused = _Pane("%0", "nova")
     reg = _Reg(focused, [focused])
     hosts = {"box": Host(name="box", host="1.2.3.4", program="")}
     _exec_ssh(Command(kind="ssh", name="box"), reg, _scfg(), io, hosts)
     split = next(c for c in io.calls if c[0] == "split")
-    # Empty remote program -> no remote command arg; just the local wrap.
+    # An explicit "" is the same as unset: just open a shell, no agent.
     assert split[2] == "ssh -t 1.2.3.4; exec ${SHELL:-/bin/sh} -i"
     prog = next(c for c in io.calls if c[0] == "program")
-    assert prog[2] == "@box"
+    assert prog[2] == "ssh@box"
 
 
 def test_exec_ssh_user_omitted_uses_bare_dest():
@@ -1929,7 +1951,7 @@ def test_exec_ssh_user_omitted_uses_bare_dest():
     hosts = {"box": Host(name="box", host="gpu.example.com")}
     _exec_ssh(Command(kind="ssh", name="box"), reg, _scfg(), io, hosts)
     split = next(c for c in io.calls if c[0] == "split")
-    assert split[2].startswith("ssh -t gpu.example.com '")
+    assert split[2] == "ssh -t gpu.example.com; exec ${SHELL:-/bin/sh} -i"
 
 
 def test_exec_ssh_port_flag():
@@ -1939,7 +1961,7 @@ def test_exec_ssh_port_flag():
     hosts = {"box": Host(name="box", host="gpu.example.com", port=2222)}
     _exec_ssh(Command(kind="ssh", name="box"), reg, _scfg(), io, hosts)
     split = next(c for c in io.calls if c[0] == "split")
-    assert split[2].startswith("ssh -t -p 2222 gpu.example.com '")
+    assert split[2] == "ssh -t -p 2222 gpu.example.com; exec ${SHELL:-/bin/sh} -i"
 
 
 def test_exec_ssh_unknown_host_fails():
