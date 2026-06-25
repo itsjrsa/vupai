@@ -65,6 +65,11 @@ _LAYOUT_VERBS = ("layout",)
 # the two-token split "lay out" is handled separately in _parse_layout. Extend
 # with a one-liner + a test when a real mishearing shows up.
 _LAYOUT_VERB_ALIASES = frozenset({"layouts"})
+# ssh/connect lead verbs. "connect" optionally takes a "to". Keep aliases tiny
+# and precision-first: a misfire with no host phrase returns None and falls
+# through to verbatim inject.
+_SSH_VERBS = frozenset({"ssh", "connect"})
+_SSH_VERB_ALIASES: frozenset[str] = frozenset()  # add confirmed mishearings only
 # Name-phrase (after the mandatory lead verb) -> (tmux layout, focus-aware main).
 # The aliases are real English words; they are SAFE ONLY as the name token(s)
 # after the verb, never as a toks[0] verb-alias. NEVER move a key here into a
@@ -207,8 +212,8 @@ MAX_CREATE_COUNT = 30
 
 @dataclass(frozen=True)
 class Command:
-    # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|board|read|
-    # talkback|stop|slash|broadcast|unknown
+    # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|ssh|board|
+    # read|talkback|stop|slash|broadcast|unknown
     kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
@@ -339,6 +344,21 @@ def _parse_layout(toks: list[str]) -> Command | None:
     return Command(kind="layout", layout=layout, main_focus=main_focus)
 
 
+def _parse_ssh(toks: list[str]) -> Command | None:
+    """`ssh <host>` / `connect [to] <host>` -> open an SSH session in a new pane."""
+    if not toks:
+        return None
+    verb = toks[0]
+    if verb not in _SSH_VERBS and verb not in _SSH_VERB_ALIASES:
+        return None
+    rest = toks[1:]
+    if verb == "connect" and rest[:1] == ["to"]:
+        rest = rest[1:]
+    if not rest:
+        return None
+    return Command(kind="ssh", name=" ".join(rest))
+
+
 # Lead verbs that may precede "board" ("open board", "create board", "show
 # board"). Bare "board" works too. The create verbs already fail _parse_create
 # on "<verb> board" (no count follows), so they fall through to here cleanly.
@@ -466,7 +486,8 @@ def _parse_body(body: str, macros: dict[str, list[str]],
     # configured slash command. Default config has no such collision.
     return (_parse_create(toks, programs) or _parse_close(toks)
             or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks)
-            or _parse_layout(toks) or _parse_board(toks) or _parse_talkback(toks)
+            or _parse_layout(toks) or _parse_ssh(toks)
+            or _parse_board(toks) or _parse_talkback(toks)
             or _parse_stop(toks)
             or _parse_slash(toks, slash_commands) or _parse_read(toks))
 

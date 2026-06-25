@@ -1,6 +1,6 @@
 import pytest
 
-from vupai.commands import Command, execute_command, handle_command, parse_command
+from vupai.commands import Command, _parse_ssh, execute_command, handle_command, parse_command
 from vupai.config import Config
 from vupai.registry import Pane
 
@@ -1798,3 +1798,32 @@ def test_execute_stop_returns_stopped():
     from vupai.config import Config
     res = execute_command(Command(kind="stop"), registry=None, config=Config())
     assert res.ok and res.message == "stopped"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: ssh/connect command parsing
+# ---------------------------------------------------------------------------
+
+
+def test_parse_ssh_basic():
+    cmd = _parse_ssh(["ssh", "vm1"])
+    assert cmd is not None and cmd.kind == "ssh" and cmd.name == "vm1"
+
+
+def test_parse_ssh_connect_to():
+    cmd = _parse_ssh(["connect", "to", "gpu", "box"])
+    assert cmd is not None and cmd.kind == "ssh" and cmd.name == "gpu box"
+
+
+def test_parse_ssh_connect_without_to():
+    cmd = _parse_ssh(["connect", "staging"])
+    assert cmd is not None and cmd.name == "staging"
+
+
+def test_parse_ssh_no_phrase_returns_none():
+    assert _parse_ssh(["ssh"]) is None
+    assert _parse_ssh(["connect", "to"]) is None
+
+
+def test_parse_ssh_non_verb_returns_none():
+    assert _parse_ssh(["focus", "nova"]) is None
