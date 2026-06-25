@@ -13,6 +13,7 @@ import shutil
 from dataclasses import dataclass
 
 from vupai import board, speech, summarize, tmuxio
+from vupai.hosts import resolve_host
 from vupai.injector import inject
 from vupai.router import (
     _peel_fillers,
@@ -65,6 +66,11 @@ _LAYOUT_VERBS = ("layout",)
 # the two-token split "lay out" is handled separately in _parse_layout. Extend
 # with a one-liner + a test when a real mishearing shows up.
 _LAYOUT_VERB_ALIASES = frozenset({"layouts"})
+# ssh/connect lead verbs. "connect" optionally takes a "to". Keep aliases tiny
+# and precision-first: a misfire with no host phrase returns None and falls
+# through to verbatim inject.
+_SSH_VERBS = frozenset({"ssh", "connect"})
+_SSH_VERB_ALIASES: frozenset[str] = frozenset()  # add confirmed mishearings only
 # Name-phrase (after the mandatory lead verb) -> (tmux layout, focus-aware main).
 # The aliases are real English words; they are SAFE ONLY as the name token(s)
 # after the verb, never as a toks[0] verb-alias. NEVER move a key here into a
@@ -207,8 +213,8 @@ MAX_CREATE_COUNT = 30
 
 @dataclass(frozen=True)
 class Command:
-    # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|board|read|
-    # talkback|stop|slash|broadcast|unknown
+    # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|ssh|board|
+    # read|talkback|stop|slash|broadcast|unknown
     kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
@@ -339,6 +345,21 @@ def _parse_layout(toks: list[str]) -> Command | None:
     return Command(kind="layout", layout=layout, main_focus=main_focus)
 
 
+def _parse_ssh(toks: list[str]) -> Command | None:
+    """`ssh <host>` / `connect [to] <host>` -> open an SSH session in a new pane."""
+    if not toks:
+        return None
+    verb = toks[0]
+    if verb not in _SSH_VERBS and verb not in _SSH_VERB_ALIASES:
+        return None
+    rest = toks[1:]
+    if verb == "connect" and rest[:1] == ["to"]:
+        rest = rest[1:]
+    if not rest:
+        return None
+    return Command(kind="ssh", name=" ".join(rest))
+
+
 # Lead verbs that may precede "board" ("open board", "create board", "show
 # board"). Bare "board" works too. The create verbs already fail _parse_create
 # on "<verb> board" (no count follows), so they fall through to here cleanly.
@@ -461,12 +482,16 @@ def _parse_body(body: str, macros: dict[str, list[str]],
         if " ".join(_tokens(key)) == norm and norm:
             return Command(kind="macro", actions=tuple(actions))
     toks = _tokens(body)
+    # Like board/swap, the ssh/connect verbs are matched BEFORE slash, so they
+    # would shadow a user slash command of the same name. Acceptable: these are
+    # uncommon verb names unlikely to collide with a configured slash command.
     # `read` is parsed AFTER slash so a user-configured slash verb named "read"
     # (or "red"/"reed") still wins - the built-in read never silently shadows a
     # configured slash command. Default config has no such collision.
     return (_parse_create(toks, programs) or _parse_close(toks)
             or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks)
-            or _parse_layout(toks) or _parse_board(toks) or _parse_talkback(toks)
+            or _parse_layout(toks) or _parse_ssh(toks)
+            or _parse_board(toks) or _parse_talkback(toks)
             or _parse_stop(toks)
             or _parse_slash(toks, slash_commands) or _parse_read(toks))
 
@@ -542,6 +567,8 @@ def intent_phrase(cmd: Command) -> str:
         return "broadcasting"
     if cmd.kind == "slash":
         return f"sending {cmd.text.lstrip('/')}"
+    if cmd.kind == "ssh":
+        return f"connecting to {cmd.name}"
     return ""
 
 
@@ -564,6 +591,26 @@ def wrap_agent_command(program: str) -> str:
     if not program:
         return program
     return f"{program}; exec ${{SHELL:-/bin/sh}} -i"
+
+
+def wrap_remote_command(program: str) -> str:
+    """Build the remote command for `ssh -t host <cmd>` that starts `program`.
+
+    Empty `program` returns "" so the caller omits the remote command entirely
+    and ssh opens a normal login shell. That is the default: connect and leave
+    the user at a prompt (so they can cd into a project before starting an agent
+    themselves) rather than launching one in the home directory.
+
+    A named program runs through a LOGIN + INTERACTIVE shell (`-lic`) so the
+    user's PATH from ~/.zshrc / ~/.zprofile is loaded. ssh's command mode
+    otherwise runs a non-interactive, non-login shell where tools installed via
+    nvm/fnm/npm are not on PATH (the classic "command not found" over ssh). The
+    program is wrapped (wrap_agent_command) so exiting it drops to an interactive
+    remote shell instead of closing the pane.
+    """
+    if not program:
+        return program
+    return f"${{SHELL:-/bin/sh}} -lic {shlex.quote(wrap_agent_command(program))}"
 
 
 def program_label(program: str) -> str:
@@ -618,6 +665,43 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
         spoken = f"{len(assigned)} agents up: {', '.join(assigned)}"
     return CommandResult(True, f"created {cmd.count} panes: {' '.join(assigned)}{note}",
                          spoken=spoken)
+
+
+def _exec_ssh(cmd: Command, registry, config, io, hosts) -> CommandResult:
+    host = resolve_host(cmd.name, hosts, cutoff=config.fuzzy_cutoff)
+    if host is None:
+        msg = f"no host named {cmd.name}"
+        return CommandResult(False, msg, spoken=msg)
+    focused = registry.focused()
+    if focused is None:
+        return CommandResult(False, "no focused pane to split")
+    target = focused.window_id
+    # Only an explicitly configured program starts an agent; with none, just open
+    # a login shell so the user lands at a prompt and can cd into a project before
+    # starting an agent themselves. The remote agent is run through a login shell
+    # (wrap_remote_command) so its PATH resolves, then the whole ssh is wrapped
+    # locally so the pane survives disconnect.
+    remote_program = host.program or ""
+    remote_inner = wrap_remote_command(remote_program)  # "" stays plain shell
+    dest = f"{host.user}@{host.host}" if host.user else host.host
+    parts = ["ssh", "-t"]
+    if host.port:
+        parts += ["-p", str(host.port)]
+    parts.append(dest)
+    if remote_inner:
+        parts.append(remote_inner)
+    pane_cmd = wrap_agent_command(shlex.join(parts))
+    used = [p.name for p in registry.panes if p.name != p.id]
+    callsign = next_callsign(used, fuzzy_cutoff=config.fuzzy_cutoff)
+    if callsign is None:
+        return CommandResult(False, "callsign pool exhausted")
+    new_id = io.split_window(target, pane_cmd)
+    io.set_pane_name(new_id, callsign)
+    label = program_label(remote_program) or "ssh"
+    io.set_pane_program(new_id, f"{label}@{host.name}")
+    io.select_layout(target, "tiled")
+    return CommandResult(True, f"connected to {host.name}: {callsign}",
+                         spoken=f"{callsign} is up")
 
 
 def _exec_focus(cmd: Command, registry, config, io) -> CommandResult:
@@ -1051,13 +1135,15 @@ def execute_command(cmd: Command, registry, config, *,
                     io=tmuxio, inject_fn=inject,
                     capture_fn=None, summarize_fn=None,
                     speak_fn=None, title_fn=None, statuses_fn=None,
-                    stream_fn=None, cancel=None) -> CommandResult:
+                    stream_fn=None, cancel=None, hosts=None) -> CommandResult:
     # capture_fn/summarize_fn/speak_fn/title_fn/statuses_fn/stream_fn are read-command
     # seams (None -> built from config); only the read path consumes them. Mirrors the
     # inject_fn seam, which only the slash/broadcast paths consume.
     try:
         if cmd.kind == "create":
             return _exec_create(cmd, registry, config, io)
+        if cmd.kind == "ssh":
+            return _exec_ssh(cmd, registry, config, io, hosts or {})
         if cmd.kind == "macro":
             return _exec_macro(cmd, registry, config, io)
         if cmd.kind == "focus":

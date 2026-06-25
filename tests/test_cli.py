@@ -1173,6 +1173,35 @@ def test_cmd_daemon_threads_hud_flag(monkeypatch, tmp_path):
     assert captured.get("hud_enabled") is False
 
 
+def test_cmd_daemon_passes_hosts(monkeypatch, tmp_path):
+    from vupai.config import Config
+    monkeypatch.setattr(cli, "tmuxio", FakeTmux())
+    monkeypatch.setattr(cli, "PIDFILE", tmp_path / "daemon.pid")
+    monkeypatch.setattr(cli, "STATEFILE", tmp_path / "daemon.state")
+    monkeypatch.setattr(cli, "load_config", lambda: Config())
+    monkeypatch.setattr(cli.audio, "resolve_device", lambda d: ("", None))
+
+    sentinel = {"vm1": object()}
+    monkeypatch.setattr(cli, "load_hosts", lambda: sentinel)
+    built = {}
+
+    class FakeDaemon:
+        def __init__(self, *a, hosts=None, **k):
+            built["hosts"] = hosts
+
+        def run(self):
+            ...
+
+    monkeypatch.setattr(cli, "Daemon", FakeDaemon)
+    monkeypatch.setattr(cli, "Recorder", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "ParakeetTranscriber", lambda model_id: object())
+    monkeypatch.setattr(cli, "PaneRegistry", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "Feedback", lambda *a, **k: object())
+    assert cli.main(["_daemon"]) == 0
+    assert built["hosts"] is sentinel
+    assert "vm1" in built["hosts"]
+
+
 # ---------------------------------------------------------------------------
 # voice-commands subcommand
 # ---------------------------------------------------------------------------
@@ -1755,3 +1784,65 @@ def test_ls_lists_sessions_with_counts_and_attached_state(
     assert lines[1] == "  * my-app   1 agent/2 panes   detached"
     assert lines[2] == "    scratch  0 agents/0 panes  attached"
     assert lines[3] == "    vupai    2 agents/2 panes  attached"
+
+
+# ---------------------------------------------------------------------------
+# _cmd_hosts
+# ---------------------------------------------------------------------------
+
+def _hosts_args(init):
+    import argparse
+    return argparse.Namespace(init=init)
+
+
+def test_cmd_hosts_lists(monkeypatch, capsys):
+    from vupai.hosts import Host
+    monkeypatch.setattr(cli, "load_hosts", lambda: {
+        "vm1": Host(name="vm1", host="10.0.0.5", user="jose", program="codex"),
+    })
+    rc = cli._cmd_hosts(_hosts_args(init=False))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "vm1" in out and "jose@10.0.0.5" in out and "codex" in out
+
+
+def test_cmd_hosts_lists_program_column(monkeypatch, capsys):
+    from vupai.hosts import Host
+    monkeypatch.setattr(cli, "load_hosts", lambda: {
+        "a": Host(name="a", host="1.1.1.1", program="codex"),
+        "b": Host(name="b", host="2.2.2.2", program=None),
+        "c": Host(name="c", host="3.3.3.3", program=""),
+    })
+    rc = cli._cmd_hosts(_hosts_args(init=False))
+    out = capsys.readouterr().out
+    assert rc == 0
+    lines = {ln.split("\t")[0]: ln for ln in out.strip().splitlines()}
+    assert "codex" in lines["a"]
+    assert "(shell)" in lines["b"]     # unset -> plain shell (the default)
+    assert "(shell)" in lines["c"]     # "" -> plain shell
+
+
+def test_cmd_hosts_empty(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "load_hosts", lambda: {})
+    rc = cli._cmd_hosts(_hosts_args(init=False))
+    assert rc == 0
+    assert "no hosts configured" in capsys.readouterr().out
+
+
+def test_cmd_hosts_init_writes_template(monkeypatch, tmp_path, capsys):
+    target = tmp_path / "hosts.toml"
+    monkeypatch.setattr(cli, "HOSTS_PATH", target)
+    rc = cli._cmd_hosts(_hosts_args(init=True))
+    assert rc == 0
+    assert target.exists()
+    body = target.read_text()
+    assert "[hosts." in body and "host =" in body
+
+
+def test_cmd_hosts_init_preserves_existing(monkeypatch, tmp_path, capsys):
+    target = tmp_path / "hosts.toml"
+    target.write_text("# mine\n")
+    monkeypatch.setattr(cli, "HOSTS_PATH", target)
+    rc = cli._cmd_hosts(_hosts_args(init=True))
+    assert rc == 0
+    assert target.read_text() == "# mine\n"  # untouched

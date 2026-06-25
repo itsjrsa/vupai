@@ -1,6 +1,6 @@
 import pytest
 
-from vupai.commands import Command, execute_command, handle_command, parse_command
+from vupai.commands import Command, _parse_ssh, execute_command, handle_command, parse_command
 from vupai.config import Config
 from vupai.registry import Pane
 
@@ -1555,6 +1555,11 @@ def test_intent_phrase_is_present_tense_per_kind():
     assert intent_phrase(Command(kind="talkback", enable=True)) == ""
 
 
+def test_intent_phrase_ssh():
+    from vupai.commands import intent_phrase
+    assert intent_phrase(Command(kind="ssh", name="vm1")) == "connecting to vm1"
+
+
 def test_execute_talkback_reports_state_and_speaks_only_on_unmute():
     on = execute_command(Command(kind="talkback", enable=True), FakeRegistry([]),
                          Config(), io=FakeTmux())
@@ -1798,3 +1803,189 @@ def test_execute_stop_returns_stopped():
     from vupai.config import Config
     res = execute_command(Command(kind="stop"), registry=None, config=Config())
     assert res.ok and res.message == "stopped"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: ssh/connect command parsing
+# ---------------------------------------------------------------------------
+
+
+def test_parse_ssh_basic():
+    cmd = _parse_ssh(["ssh", "vm1"])
+    assert cmd is not None and cmd.kind == "ssh" and cmd.name == "vm1"
+
+
+def test_parse_ssh_connect_to():
+    cmd = _parse_ssh(["connect", "to", "gpu", "box"])
+    assert cmd is not None and cmd.kind == "ssh" and cmd.name == "gpu box"
+
+
+def test_parse_ssh_connect_without_to():
+    cmd = _parse_ssh(["connect", "staging"])
+    assert cmd is not None and cmd.name == "staging"
+
+
+def test_parse_ssh_no_phrase_returns_none():
+    assert _parse_ssh(["ssh"]) is None
+    assert _parse_ssh(["connect", "to"]) is None
+
+
+def test_parse_ssh_non_verb_returns_none():
+    assert _parse_ssh(["focus", "nova"]) is None
+
+
+# ---------------------------------------------------------------------------
+# _exec_ssh tests
+# ---------------------------------------------------------------------------
+
+from vupai.commands import _exec_ssh  # noqa: E402
+from vupai.hosts import Host  # noqa: E402
+
+
+class _RecIO:
+    def __init__(self):
+        self.calls = []
+        self._next = 0
+
+    def split_window(self, target, command, **_kw):
+        self._next += 1
+        self.calls.append(("split", target, command))
+        return f"%{self._next}"
+
+    def set_pane_name(self, pane_id, name):
+        self.calls.append(("name", pane_id, name))
+
+    def set_pane_program(self, pane_id, program):
+        self.calls.append(("program", pane_id, program))
+
+    def select_layout(self, target, layout):
+        self.calls.append(("layout", target, layout))
+
+
+class _Pane:
+    def __init__(self, pid, name, window_id="@0"):
+        self.id = pid
+        self.name = name
+        self.window_id = window_id
+
+
+class _Reg:
+    def __init__(self, focused, panes):
+        self._focused = focused
+        self.panes = panes
+
+    def focused(self):
+        return self._focused
+
+
+def _scfg(**kw):
+    from types import SimpleNamespace
+    return SimpleNamespace(pane_command="claude", fuzzy_cutoff=82, **kw)
+
+
+def test_wrap_remote_command_empty_is_plain_shell():
+    from vupai.commands import wrap_remote_command
+    # Empty -> "" so the caller omits the remote command and ssh opens a shell.
+    assert wrap_remote_command("") == ""
+
+
+def test_wrap_remote_command_named_uses_login_interactive():
+    from vupai.commands import wrap_remote_command
+    # Login+interactive shell so the remote PATH loads; agent wrapped to survive.
+    assert wrap_remote_command("claude") == (
+        "${SHELL:-/bin/sh} -lic 'claude; exec ${SHELL:-/bin/sh} -i'"
+    )
+
+
+def test_exec_ssh_no_program_opens_login_shell():
+    io = _RecIO()
+    focused = _Pane("%0", "nova", "@0")
+    reg = _Reg(focused, [focused])
+    hosts = {"vm1": Host(name="vm1", host="10.0.0.5", user="jose")}
+    res = _exec_ssh(Command(kind="ssh", name="vm1"), reg, _scfg(), io, hosts)
+    assert res.ok
+    split = next(c for c in io.calls if c[0] == "split")
+    # No configured program -> connect and land at a login shell (no agent); the
+    # local wrap keeps the pane alive after the ssh session ends.
+    assert split[2] == "ssh -t jose@10.0.0.5; exec ${SHELL:-/bin/sh} -i"
+    prog = next(c for c in io.calls if c[0] == "program")
+    assert prog[2] == "ssh@vm1"
+
+
+def test_exec_ssh_explicit_program_runs_in_login_interactive_shell():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    hosts = {"vm1": Host(name="vm1", host="10.0.0.5", user="jose", program="claude")}
+    res = _exec_ssh(Command(kind="ssh", name="vm1"), reg, _scfg(), io, hosts)
+    assert res.ok
+    cmd = next(c for c in io.calls if c[0] == "split")[2]
+    # A named program runs through a login+interactive shell so the remote PATH
+    # (nvm/fnm/npm) is loaded, then wraps so exit drops to an interactive shell.
+    assert cmd.startswith("ssh -t jose@10.0.0.5 ")
+    assert "-lic" in cmd
+    assert "claude; exec ${SHELL:-/bin/sh} -i" in cmd
+    # The whole ssh is wrapped locally so the pane survives disconnect.
+    assert cmd.endswith("; exec ${SHELL:-/bin/sh} -i")
+    prog = next(c for c in io.calls if c[0] == "program")
+    assert prog[2] == "claude@vm1"
+
+
+def test_exec_ssh_empty_program_string_opens_shell():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    hosts = {"box": Host(name="box", host="1.2.3.4", program="")}
+    _exec_ssh(Command(kind="ssh", name="box"), reg, _scfg(), io, hosts)
+    split = next(c for c in io.calls if c[0] == "split")
+    # An explicit "" is the same as unset: just open a shell, no agent.
+    assert split[2] == "ssh -t 1.2.3.4; exec ${SHELL:-/bin/sh} -i"
+    prog = next(c for c in io.calls if c[0] == "program")
+    assert prog[2] == "ssh@box"
+
+
+def test_exec_ssh_user_omitted_uses_bare_dest():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    hosts = {"box": Host(name="box", host="gpu.example.com")}
+    _exec_ssh(Command(kind="ssh", name="box"), reg, _scfg(), io, hosts)
+    split = next(c for c in io.calls if c[0] == "split")
+    assert split[2] == "ssh -t gpu.example.com; exec ${SHELL:-/bin/sh} -i"
+
+
+def test_exec_ssh_port_flag():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    hosts = {"box": Host(name="box", host="gpu.example.com", port=2222)}
+    _exec_ssh(Command(kind="ssh", name="box"), reg, _scfg(), io, hosts)
+    split = next(c for c in io.calls if c[0] == "split")
+    assert split[2] == "ssh -t -p 2222 gpu.example.com; exec ${SHELL:-/bin/sh} -i"
+
+
+def test_exec_ssh_unknown_host_fails():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    res = _exec_ssh(Command(kind="ssh", name="nope"), reg, _scfg(), io, {})
+    assert not res.ok
+    assert res.spoken == "no host named nope"
+    assert res.message == "no host named nope"
+
+
+def test_exec_ssh_no_focus_fails():
+    io = _RecIO()
+    reg = _Reg(None, [])
+    hosts = {"vm1": Host(name="vm1", host="1.2.3.4")}
+    res = _exec_ssh(Command(kind="ssh", name="vm1"), reg, _scfg(), io, hosts)
+    assert not res.ok
+
+
+def test_execute_command_routes_ssh_kind():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    hosts = {"vm1": Host(name="vm1", host="1.2.3.4")}
+    res = execute_command(Command(kind="ssh", name="vm1"), reg, _scfg(), io=io, hosts=hosts)
+    assert res.ok

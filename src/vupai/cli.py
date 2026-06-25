@@ -33,6 +33,7 @@ from vupai.config import (
 )
 from vupai.daemon import Daemon
 from vupai.feedback import Feedback
+from vupai.hosts import HOSTS_PATH, load_hosts
 from vupai.hotkey import PTT_KEYS, capture_key, valid_key
 from vupai.permissions import (
     check_permissions,
@@ -986,6 +987,45 @@ def _prompt_hotkey_setup(*, reader=None, capture=None,
         print("  Run `vupai reload` for the daemon to pick it up.")
 
 
+_HOSTS_TEMPLATE = """\
+# vupai remote machines. Say "ssh <name>" (or "connect to <name>") to open a
+# pane and SSH in. SSH key auth must already be set up.
+#
+# By default you land at a login shell (so you can cd into a project first).
+# Set `program` on a host to auto-start that agent instead.
+#
+# [hosts.vm1]
+# user = "jose"          # optional; omit to use ~/.ssh/config defaults
+# host = "10.0.0.5"      # required: hostname/IP or an ssh-config Host alias
+# port = 22              # optional
+# program = "claude"     # optional; omit for a plain shell (the default)
+"""
+
+
+def _cmd_hosts(args: argparse.Namespace) -> int:
+    """`vupai hosts`: list configured SSH machines; `--init` writes a template."""
+    if getattr(args, "init", False):
+        if HOSTS_PATH.exists():
+            print(f"{HOSTS_PATH} already exists - left untouched")
+            return 0
+        HOSTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        HOSTS_PATH.write_text(_HOSTS_TEMPLATE)
+        print(f"wrote template {HOSTS_PATH}")
+        return 0
+    hosts = load_hosts()
+    if not hosts:
+        print("no hosts configured")
+        return 0
+    # No configured program means "just open a shell" (the default), so an unset
+    # or empty program both render as (shell); only a named program shows.
+    for name in sorted(hosts):
+        h = hosts[name]
+        dest = f"{h.user}@{h.host}" if h.user else h.host
+        program = h.program or "(shell)"
+        print(f"{name}\t{dest}\t{program}")
+    return 0
+
+
 def _cmd_config(args) -> int:
     """`vupai config --init`: ensure config.toml lists every available key.
 
@@ -1177,6 +1217,7 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     if cfg.status_tips:
         tip_rotator = TipRotator(build_tips(cfg), interval=cfg.status_tips_interval)
     daemon = Daemon(cfg, recorder, transcriber, registry, feedback,
+                    hosts=load_hosts(),
                     state_writer=lambda phase: write_daemon_state(phase, pid=pid),
                     watcher=watcher, tip_rotator=tip_rotator)
     # `vupai down` sends SIGTERM; the default disposition kills the process
@@ -1324,6 +1365,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--force", action="store_true",
         help="pin even if the capture probe fails")
     p_mic.set_defaults(func=_cmd_mic)
+
+    p_hosts = sub.add_parser(
+        "hosts", help="list configured SSH machines (--init writes a template)")
+    p_hosts.add_argument(
+        "--init", action="store_true",
+        help="write a commented hosts.toml template if none exists")
+    p_hosts.set_defaults(func=_cmd_hosts)
 
     sub.add_parser(
         "keys", help="show / change the push-to-talk trigger keys (interactive)"

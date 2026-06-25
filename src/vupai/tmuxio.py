@@ -287,10 +287,12 @@ def enable_pane_titles() -> None:
     run(["set", "-g", "pane-border-format",
          "#{?pane_active,"
          "#[bold]#{?@vupai_name,"
-         "#[bg=colour30]#[fg=colour231] #{@vupai_name}#{?@vupai_program, · #{@vupai_program},} #[default]#[bold] · #{pane_title},"
+         "#[bg=colour30]#[fg=colour231] #{@vupai_name}"
+         "#{?@vupai_program, · #{@vupai_program},} #[default]#[bold] · #{pane_title},"
          "#{?@vupai_program,#{@vupai_program} · ,}#{pane_title}},"
          "#{?@vupai_name,"
-         "#[bg=colour238]#[fg=colour253]#[bold] #{@vupai_name}#{?@vupai_program, · #{@vupai_program},} #[default] · #{pane_title},"
+         "#[bg=colour238]#[fg=colour253]#[bold] #{@vupai_name}"
+         "#{?@vupai_program, · #{@vupai_program},} #[default] · #{pane_title},"
          "#{?@vupai_program,#{@vupai_program} · ,}#{pane_title}}}"])
     # Border colors: dim every inactive edge, then light the focused pane's
     # border (and its title row) with a soft teal accent so the active pane

@@ -49,13 +49,13 @@ _SHUTDOWN = object()
 # speak on FAILURE (every kind does, in _run_command) - that is the eyes-off case
 # you cannot see. read / talkback are handled on their own paths, not here.
 _ANNOUNCE_INTENT = frozenset(
-    {"create", "close", "close_others", "broadcast", "slash", "board"})
+    {"create", "close", "close_others", "broadcast", "slash", "board", "ssh"})
 
 # Subset of _ANNOUNCE_INTENT whose SUCCESS also voices the result, because it
 # carries information the intent could not (a create's assigned callsign; a
 # talkback toggle's confirmation). Every other announced kind is intent-only on
 # success - the present-tense ack already said it.
-_SPEAK_ON_SUCCESS = frozenset({"create", "talkback"})
+_SPEAK_ON_SUCCESS = frozenset({"create", "talkback", "ssh"})
 
 # Shown on every empty capture. Covers BOTH causes (a denied Microphone grant
 # AND a disconnected/muted/name-collided device) and is emitted unconditionally -
@@ -102,13 +102,14 @@ class Daemon:
 
     def __init__(self, config: Config, recorder: Recorder, transcriber: Transcriber,
                  registry: PaneRegistry, feedback: Feedback,
-                 *, route_fn=route, inject_fn=inject,
+                 *, hosts=None, route_fn=route, inject_fn=inject,
                  parse_fn=parse_command, execute_fn=execute_command,
                  confirm_fn=popup_confirm,
                  journal: Journal | None = None, async_fn=None,
                  state_writer=None, watcher=None, tip_rotator=None,
                  read_registry_factory=None) -> None:
         self._config = config
+        self._hosts = hosts or {}
         self._recorder = recorder
         self._transcriber = transcriber
         self._registry = registry
@@ -505,7 +506,8 @@ class Daemon:
         """Execute a parsed command and record the result. `confirmed` marks a
         destructive command that went through the confirmation gate."""
         result = self._execute_fn(
-            cmd, self._registry, self._config, inject_fn=self._inject_fn)
+            cmd, self._registry, self._config,
+            inject_fn=self._inject_fn, hosts=self._hosts)
         entry["decision"] = "command"
         entry["command"] = result.message
         if confirmed:
