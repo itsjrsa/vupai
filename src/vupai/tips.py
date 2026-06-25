@@ -73,6 +73,7 @@ def build_tips(cfg) -> list[str]:
             "focus nova",
             "zoom nova",
             f"{_CLOSE_VERBS[0]} nova",
+            f"{_CLOSE_VERBS[0]} nova and atlas",  # and-joined multi-target list
             "swap nova and atlas",
             "open board",
             "ssh vm1",  # ssh to a configured host (hosts.toml)
