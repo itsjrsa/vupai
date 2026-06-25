@@ -67,3 +67,10 @@ host = "1.2.3.4"
 program = ""
 """)
     assert load_hosts(path)["shellbox"].program == ""
+
+
+def test_load_hosts_malformed_toml_returns_empty(tmp_path):
+    # Users hand-edit this file; a syntax error must degrade gracefully,
+    # not crash daemon startup. Unclosed table header is invalid TOML.
+    path = _write(tmp_path, '[hosts.vm1\nhost = "x"\n')
+    assert load_hosts(path) == {}

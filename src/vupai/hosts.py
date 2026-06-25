@@ -37,7 +37,12 @@ def load_hosts(path: Path | None = None) -> dict[str, Host]:
     if not target.exists():
         return {}
     with target.open("rb") as fh:
-        data = tomllib.load(fh)
+        try:
+            data = tomllib.load(fh)
+        except tomllib.TOMLDecodeError:
+            # Hand-edited file with a syntax error: degrade gracefully rather
+            # than crash daemon startup.
+            return {}
     table = data.get("hosts")
     if not isinstance(table, dict):
         return {}
