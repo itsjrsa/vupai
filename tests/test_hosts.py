@@ -86,14 +86,15 @@ def test_resolve_host_exact():
     assert resolve_host("vm1", _HOSTS).name == "vm1"
 
 
-def test_resolve_host_slugifies_phrase():
-    assert resolve_host("GPU Box", _HOSTS) is None  # "gpu-box" != "gpubox" exactly...
-    # ...but fuzzy recovers it:
-    assert resolve_host("gpubox", _HOSTS).name == "gpubox"
+def test_resolve_host_fuzzy_recovers_spacing():
+    # "GPU Box" slugifies to "gpu-box"; fuzzy ratio to "gpubox" is ~92, above
+    # the default cutoff, so a spoken-with-spaces host name still resolves.
+    assert resolve_host("GPU Box", _HOSTS).name == "gpubox"
 
 
-def test_resolve_host_fuzzy_recovers_near_miss():
-    assert resolve_host("vm one", _HOSTS, cutoff=50).name == "vm1"
+def test_resolve_host_below_cutoff_returns_none():
+    # "vm one" -> "vm-one" scores only ~44 against "vm1"; below cutoff -> no match.
+    assert resolve_host("vm one", _HOSTS) is None
 
 
 def test_resolve_host_miss_returns_none():
