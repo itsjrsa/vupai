@@ -984,6 +984,21 @@ def test_button_slash_verb_not_in_map_falls_through():
     assert _parse_btn("model") is None
 
 
+def test_parse_slash_multi_target():
+    c = _parse_btn("clear echo and sage")
+    assert c.kind == "slash" and c.text == "/clear" and c.names == ("echo", "sage")
+
+
+def test_parse_slash_single_target_unchanged():
+    c = _parse_btn("clear atlas")
+    assert c.kind == "slash" and c.name == "atlas" and c.names == ()
+
+
+def test_parse_slash_all_in_list_falls_back_to_all():
+    c = _parse_btn("clear echo and everyone")
+    assert c.kind == "slash" and c.to_all is True
+
+
 def test_execute_slash_to_all_named_panes():
     panes = [_pane("%1", "nova", active=True), _pane("%2", "atlas"),
              _pane("%3", "%3")]  # %3 unnamed -> skipped
@@ -1076,6 +1091,29 @@ def test_execute_slash_injection_failure_reports_not_ok():
     res = execute_command(Command(kind="slash", text="/clear"), reg, Config(),
                           io=FakeTmux(), inject_fn=lambda *a, **k: False)
     assert res.ok is False
+
+
+def test_execute_slash_multi_injects_each():
+    panes = [_pane("%1", "echo", active=True), _pane("%2", "sage"), _pane("%3", "nova")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    sent = []
+    res = execute_command(
+        Command(kind="slash", text="/clear", names=("echo", "sage")), reg, Config(),
+        io=FakeTmux(), inject_fn=lambda pid, txt, **k: sent.append((pid, txt)) or True)
+    assert res.ok and sent == [("%1", "/clear"), ("%2", "/clear")]
+    assert res.message == "sent /clear to echo, sage"
+    assert res.spoken == "sent clear to echo, sage"
+
+
+def test_execute_slash_multi_best_effort_reports_miss():
+    panes = [_pane("%1", "echo", active=True), _pane("%2", "sage")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    sent = []
+    res = execute_command(
+        Command(kind="slash", text="/clear", names=("echo", "ghost")), reg, Config(),
+        io=FakeTmux(), inject_fn=lambda pid, txt, **k: sent.append(pid) or True)
+    assert res.ok and sent == ["%1"]
+    assert res.message == "sent /clear to echo - no pane named ghost"
 
 
 # --- vocative filler peel before command verbs (button mode) ------------------

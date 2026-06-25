@@ -462,20 +462,22 @@ def _parse_stop(toks: list[str]) -> Command | None:
 
 
 def _parse_slash(toks: list[str], slash_commands: dict[str, str]) -> Command | None:
-    """`<verb> [target]` where verb is a configured slash command.
+    """`<verb> [target...]` where verb is a configured slash command.
 
-    No target -> focused pane; "all"/"everyone"/"everybody" -> all named panes;
-    any other token -> that pane name. Returns None when the leading token is not
-    a configured slash verb (the caller decides unknown vs fall-through)."""
+    No target -> focused pane; an all-target word anywhere -> all named panes;
+    one name -> that pane; 2+ names (joined by "and") -> a best-effort list.
+    Returns None when the leading token is not a configured slash verb."""
     if not toks or toks[0] not in slash_commands:
         return None
     literal = slash_commands[toks[0]]
-    rest = [t for t in toks[1:] if t != "the"]
+    rest = [t for t in toks[1:] if t not in ("the", "and")]
     if not rest:
         return Command(kind="slash", text=literal)
-    if rest[0] in _ALL_TARGETS:
+    if any(t in _ALL_TARGETS for t in rest):
         return Command(kind="slash", text=literal, to_all=True)
-    return Command(kind="slash", text=literal, name=rest[0])
+    if len(rest) == 1:
+        return Command(kind="slash", text=literal, name=rest[0])
+    return Command(kind="slash", text=literal, names=tuple(rest))
 
 
 def _parse_body(body: str, macros: dict[str, list[str]],
@@ -1156,6 +1158,17 @@ def _inject(inject_fn, pane_id, text, config) -> bool:
 
 
 def _exec_slash(cmd: Command, registry, config, inject_fn) -> CommandResult:
+    if cmd.names:
+        literal = cmd.text
+        hits, misses = _resolve_each(cmd.names, registry.panes, config.fuzzy_cutoff)
+        sent = []
+        for pid, name in hits:
+            if _inject(inject_fn, pid, literal, config):
+                sent.append(name)
+            else:
+                misses.append(f"failed to send to {name}")
+        return _many_result(f"sent {literal} to", sent, misses, bool(sent),
+                            spoken_label=f"sent {literal.lstrip('/')} to")
     literal = cmd.text
     if cmd.to_all:
         focused = registry.focused()
