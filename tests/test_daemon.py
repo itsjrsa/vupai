@@ -1928,3 +1928,14 @@ def test_summarize_destructive_close_multi():
     from vupai.daemon import _summarize_destructive
     result = _summarize_destructive(Command(kind="close", names=("echo", "sage")), None)
     assert result == "close echo, sage"
+
+
+def test_summarize_destructive_broadcast_subset():
+    from vupai.commands import Command
+    from vupai.daemon import _summarize_destructive
+    assert _summarize_destructive(
+        Command(kind="broadcast", names=("echo", "sage"), text="run tests"), None
+    ) == "broadcast to echo, sage: run tests"
+    assert _summarize_destructive(
+        Command(kind="broadcast", text="run tests"), None
+    ) == "broadcast to all agents: run tests"

@@ -776,6 +776,45 @@ def test_execute_broadcast_partial_success():
     assert sent == ["%1", "%2"]
 
 
+def test_execute_broadcast_subset_injects_to_each():
+    panes = [_pane("%1", "echo", active=True), _pane("%2", "sage"), _pane("%3", "nova")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    sent = []
+    res = execute_command(
+        Command(kind="broadcast", names=("echo", "sage"), text="run tests"), reg, Config(),
+        io=FakeTmux(), inject_fn=lambda pid, txt, **k: sent.append((pid, txt)) or True)
+    assert res.ok and sent == [("%1", "run tests"), ("%2", "run tests")]
+    assert res.message == "broadcast to echo, sage"
+    assert res.spoken == "broadcast to echo and sage"
+
+
+def test_execute_broadcast_subset_best_effort_reports_miss():
+    panes = [_pane("%1", "echo", active=True), _pane("%2", "sage")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    sent = []
+    res = execute_command(
+        Command(kind="broadcast", names=("echo", "ghost"), text="go"), reg, Config(),
+        io=FakeTmux(), inject_fn=lambda pid, txt, **k: sent.append(pid) or True)
+    assert res.ok and sent == ["%1"]
+    assert res.message == "broadcast to echo - no pane named ghost"
+
+
+def test_execute_broadcast_subset_empty_text():
+    panes = [_pane("%1", "echo", active=True), _pane("%2", "sage")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    res = execute_command(
+        Command(kind="broadcast", names=("echo", "sage"), text="  "), reg, Config(),
+        io=FakeTmux(), inject_fn=lambda *a, **k: True)
+    assert res.ok is False and res.message == "nothing to broadcast"
+
+
+def test_intent_phrase_broadcast_subset():
+    from vupai.commands import intent_phrase
+    cmd = Command(kind="broadcast", names=("echo", "sage"), text="x")
+    assert intent_phrase(cmd) == "broadcasting to echo and sage"
+    assert intent_phrase(Command(kind="broadcast", text="x")) == "broadcasting"
+
+
 def test_button_create():
     c = _parse_btn("create two panes")
     assert c is not None and c.kind == "create" and c.count == 2

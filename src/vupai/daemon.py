@@ -82,6 +82,8 @@ def _summarize_destructive(cmd: Command, registry) -> str:
                   if focused is None or p.id != focused.id]
         return f"close {len(others)} other pane(s)"
     if cmd.kind == "broadcast":
+        if cmd.names:
+            return f"broadcast to {', '.join(cmd.names)}: {cmd.text[:30]}"
         return f"broadcast to all agents: {cmd.text[:30]}"
     if cmd.kind == "create":
         return f"open {cmd.count} panes"
