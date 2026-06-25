@@ -1784,3 +1784,49 @@ def test_ls_lists_sessions_with_counts_and_attached_state(
     assert lines[1] == "  * my-app   1 agent/2 panes   detached"
     assert lines[2] == "    scratch  0 agents/0 panes  attached"
     assert lines[3] == "    vupai    2 agents/2 panes  attached"
+
+
+# ---------------------------------------------------------------------------
+# _cmd_hosts
+# ---------------------------------------------------------------------------
+
+def _hosts_args(init):
+    import argparse
+    return argparse.Namespace(init=init)
+
+
+def test_cmd_hosts_lists(monkeypatch, capsys):
+    from vupai.hosts import Host
+    monkeypatch.setattr(cli, "load_hosts", lambda: {
+        "vm1": Host(name="vm1", host="10.0.0.5", user="jose", program="codex"),
+    })
+    rc = cli._cmd_hosts(_hosts_args(init=False))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "vm1" in out and "jose@10.0.0.5" in out and "codex" in out
+
+
+def test_cmd_hosts_empty(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "load_hosts", lambda: {})
+    rc = cli._cmd_hosts(_hosts_args(init=False))
+    assert rc == 0
+    assert "no hosts configured" in capsys.readouterr().out
+
+
+def test_cmd_hosts_init_writes_template(monkeypatch, tmp_path, capsys):
+    target = tmp_path / "hosts.toml"
+    monkeypatch.setattr(cli, "HOSTS_PATH", target)
+    rc = cli._cmd_hosts(_hosts_args(init=True))
+    assert rc == 0
+    assert target.exists()
+    body = target.read_text()
+    assert "[hosts." in body and "host =" in body
+
+
+def test_cmd_hosts_init_preserves_existing(monkeypatch, tmp_path, capsys):
+    target = tmp_path / "hosts.toml"
+    target.write_text("# mine\n")
+    monkeypatch.setattr(cli, "HOSTS_PATH", target)
+    rc = cli._cmd_hosts(_hosts_args(init=True))
+    assert rc == 0
+    assert target.read_text() == "# mine\n"  # untouched
