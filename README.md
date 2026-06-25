@@ -13,7 +13,7 @@
 *vupai* (say "voo-pie") is a **V**oice **U**I for your AI **pa**nes.
 
 Hold a key, speak, and what you say is typed into the right tmux pane: the one
-you're looking at, or an agent you call by name (*"nova, run the tests"*).
+you're looking at, or an agent you call by name (*"atlas, run the tests"*).
 Speech-to-text runs on-device with NVIDIA Parakeet (via Apple MLX): no cloud,
 no API keys.
 
@@ -30,10 +30,10 @@ can't do is let you talk to them. That's the gap vupai fills.
 | With plain tmux | With vupai |
 |---|---|
 | Switch panes with `<prefix>`-arrow, then type | **Hold a key and talk** to the focused pane |
-| Manually track which pane is which agent | Panes **auto-name themselves**; address them by name (*"nova, run the tests"*) |
+| Manually track which pane is which agent | Panes **auto-name themselves**; address them by name (*"atlas, run the tests"*) |
 | Re-type the same command in each pane | **Broadcast by voice** to every agent at once (*"everyone, pull main"*) |
-| Split / resize / re-layout with prefix chords | **Voice commands**: *"create 3 panes"*, *"focus nova"*, *"swap nova and atlas"*, *"tile"* |
-| Read each pane yourself to see what agents are doing | **Supervision board** + *"read nova"* speaks a one-line summary aloud |
+| Split / resize / re-layout with prefix chords | **Voice commands**: *"create 3 panes"*, *"focus atlas"*, *"swap atlas and sage"*, *"tile"* |
+| Read each pane yourself to see what agents are doing | **Supervision board** + *"read atlas"* speaks a one-line summary aloud |
 | n/a | **On-device speech** (Parakeet via Apple MLX) - no cloud, no API keys |
 
 If you only have one shell open, you don't need vupai. It earns its keep when you
@@ -143,6 +143,10 @@ missing.
 
 ## Usage
 
+Start vupai inside a project, open a few agent panes, and drive them by voice. The
+push-to-talk daemon runs in the background, so you stay in tmux and just hold a key
+to talk. Launch (or re-attach to) a session with:
+
 ```bash
 vupai                 # attach-or-create the session named after the cwd
 vupai attach backend  # attach to "backend" (create it if absent)
@@ -152,48 +156,39 @@ vupai kill backend    # kill the "backend" session
 
 > [!NOTE]
 > **vupai runs on its own tmux server**, so it never touches your existing tmux
-> setup. The trade-off: its sessions don't show in a plain `tmux ls` — reach them
+> setup. The trade-off: its sessions don't show in a plain `tmux ls`; reach them
 > with `vupai attach`. (Set `tmux_socket = ""` to share your default server.)
+
+Once attached, you talk to vupai with **two push-to-talk keys**:
+
+| Key | Config | Default | Hold and speak to… |
+|---|---|---|---|
+| **Dictation key** | `hotkey` | Right-Option | Type your words into the **focused** pane. |
+| **System key** | `command_hotkey` | Right-Command | Run a **voice command** (below). The key is the signal, so there is no spoken control word; vupai acts on the panes instead of typing. |
+
+Both defaults are customizable: set `hotkey` / `command_hotkey` in the config (each
+takes a list, so you can bind several keys to one action).
 
 ### Voice commands
 
-Beyond dictation, vupai has a small command layer. Hold the **system key** (the
-`command_hotkey`, Right-Command by default) and speak; vupai executes the command
-instead of typing it into a pane. The key is the signal, so there is no spoken
-control word. Run `vupai voice-commands` for a cheat sheet tailored to your config.
+Hold the **system key** and say any of these. Run `vupai voice-commands` for a
+cheat sheet tailored to your config.
 
 | Say | What happens |
 |---|---|
 | *"create 3 panes"* | Spin up N auto-named panes, tiled (up to 30; *"create 2 shell panes"* picks the program) |
-| *"focus nova"* | Focus the **nova** pane (also *"switch to / go to"*) |
-| *"swap nova and atlas"* | Swap two named panes |
-| *"zoom nova"* / *"unzoom"* | Maximize a pane / restore the layout |
+| *"focus atlas"* | Focus the **atlas** pane (also *"switch to / go to"*) |
+| *"swap atlas and sage"* | Swap two named panes |
+| *"zoom atlas"* / *"unzoom"* | Maximize a pane / restore the layout |
 | *"tile"* / *"layout …"* | Re-layout the window (tiled, main-vertical, …) |
-| *"close nova"* / *"kill nova"* | Close a pane (asks y/n by default) |
+| *"close atlas"* / *"kill atlas"* | Close a pane (asks y/n by default) |
 | *"board"* | Open the **supervision board** (one per session) |
-| *"read nova"* / *"read all"* | Speak a pane's summary aloud (`read board` for a digest) |
-| *"clear nova"* / *"clear all"* | Send a slash command (`/clear`) to a pane or every agent |
+| *"read atlas"* / *"read all"* | Speak a pane's summary aloud (`read board` for a digest) |
+| *"clear atlas"* / *"clear all"* | Send a slash command (`/clear`) to a pane or every agent |
 | *"everyone, pull main"* | **Broadcast** the message to every named agent |
 | *"connect to box"* / *"ssh box"* | SSH the focused pane into a configured host |
 | *"mute"* / *"unmute"* / *"stop"* | Silence/restore talk-back, or cut off the current read |
-| *"nova, run the tests"* | Not a command → falls through to **name addressing** |
-
-Details and nuances worth knowing:
-
-- *"create 3 panes"* → spin up 3 auto-named panes, tiled (add a program:
-  *"…create 2 shell panes"*). The noun is **optional** — *"create two"* or
-  *"create a"* works — and *"agent(s)"* / *"split(s)"* are synonyms for *"pane(s)"*
-  if "pane" gets misheard. Counts go up to **30** (spoken or digits); a large
-  batch (>= `confirm_create_threshold`, default 8) first asks for a y/n
-  confirmation, since tiling many panes is cramped and voice-addressing degrades
-  past ~16 names.
-- *"clear"* / *"clear nova"* / *"clear all"* → send a **slash command** (`/clear`)
-  to the focused pane, a named pane, or every named agent. Extend the spoken verbs
-  via `slash_commands` in the config.
-- *"everyone, pull main"* → broadcast the message to **every named agent**.
-- A non-command on the system key (e.g. *"nova, run the tests"*) falls through to
-  name addressing, so the same key both commands and addresses agents.
-- Define your own **macros** (phrase → list of actions) in the config.
+| *"atlas, run the tests"* | Not a command, so it falls through to **name addressing** |
 
 ## Commands
 
@@ -222,7 +217,7 @@ who's done, who's stuck, and who needs you.
 - **Cheap by design.** A pane is summarized only when it *settles* (finishes a
   burst of work), skipped when nothing changed, and throttled per pane
   (`board_min_summary_interval`).
-- **Speak it too.** *"read board"* reads the digest aloud; *"read nova"* reads a
+- **Speak it too.** *"read board"* reads the digest aloud; *"read atlas"* reads a
   single pane.
 
 One board per session. Close the pane to stop it.
@@ -264,7 +259,7 @@ claude = "claude"
 shell = ""
 
 [aliases]                                         # spoken alias -> pane name
-# bot = "nova"
+# bot = "atlas"
 
 [macros]                                          # spoken phrase -> list of actions
 # "start the squad" = ["create 3 panes", "tile"]
@@ -277,7 +272,7 @@ compact = "/compact"
 **Addressing modes.** In `button` mode (default) you hold one of two keys: the
 dictation key (`hotkey`) types your words verbatim into the focused pane, while the
 system key (`command_hotkey`) interprets them as a command, a broadcast, or a
-name-addressed message ("nova, are you there?"). The key is the control signal, so
+name-addressed message ("atlas, are you there?"). The key is the control signal, so
 no spoken control word is needed. Each key field is a list, so you can bind several
 keys to the same action (any one triggers it) and keep one config that works across
 keyboards with different layouts. `keyword` mode is the legacy single-key mode: it
