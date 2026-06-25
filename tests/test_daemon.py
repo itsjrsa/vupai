@@ -1921,3 +1921,10 @@ def test_ssh_kind_in_ack_sets():
     from vupai import daemon
     assert "ssh" in daemon._ANNOUNCE_INTENT
     assert "ssh" in daemon._SPEAK_ON_SUCCESS
+
+
+def test_summarize_destructive_close_multi():
+    from vupai.commands import Command
+    from vupai.daemon import _summarize_destructive
+    result = _summarize_destructive(Command(kind="close", names=("echo", "sage")), None)
+    assert result == "close echo, sage"

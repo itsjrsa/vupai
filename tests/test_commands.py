@@ -545,6 +545,34 @@ def test_execute_close_unrelated_word_is_noop():
     assert res.ok is False and io.calls == []
 
 
+def test_execute_close_multi_kills_each():
+    panes = [_pane("%1", "echo", active=True), _pane("%2", "sage"), _pane("%3", "nova")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    io = FakeTmux()
+    res = execute_command(Command(kind="close", names=("echo", "sage")), reg, Config(), io=io)
+    assert res.ok
+    assert io.calls == [("kill_pane", "%1"), ("kill_pane", "%2")]
+    assert res.message == "closed echo, sage"
+
+
+def test_execute_close_multi_best_effort_reports_miss():
+    panes = [_pane("%1", "echo", active=True), _pane("%2", "sage")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    io = FakeTmux()
+    res = execute_command(Command(kind="close", names=("echo", "ghost")), reg, Config(), io=io)
+    assert res.ok and io.calls == [("kill_pane", "%1")]
+    assert res.message == "closed echo - no pane named ghost"
+
+
+def test_execute_close_multi_all_unresolved_is_not_ok():
+    panes = [_pane("%1", "echo", active=True)]
+    reg = FakeRegistry(panes, focused=panes[0])
+    io = FakeTmux()
+    res = execute_command(Command(kind="close", names=("ghost", "zzzz")), reg, Config(), io=io)
+    assert res.ok is False and io.calls == []
+    assert res.message == "no pane named ghost, no pane named zzzz"
+
+
 def test_parse_bare_close_falls_through():
     # "close" with no target is not a command -> None (not swallowed).
     assert _parse_btn("close") is None
@@ -588,6 +616,32 @@ def test_parse_close_the_others():
     assert _parse_btn("close all").kind == "close_others"
     assert _parse_btn("close all panes").kind == "close_others"
     assert not _parse_btn("close the others").name
+
+
+def test_parse_close_multi_target():
+    c = _parse_btn("close echo and sage")
+    assert c.kind == "close" and c.names == ("echo", "sage") and c.name == ""
+
+
+def test_parse_close_three_targets():
+    c = _parse_btn("close echo and sage and nova")
+    assert c.names == ("echo", "sage", "nova")
+
+
+def test_parse_close_comma_transcription():
+    # _tokens strips commas, so "echo, sage" tokenizes the same as "echo sage".
+    c = _parse_btn("close echo, sage")
+    assert c.names == ("echo", "sage")
+
+
+def test_parse_close_single_target_unchanged():
+    c = _parse_btn("close atlas")
+    assert c.kind == "close" and c.name == "atlas" and c.names == ()
+
+
+def test_parse_close_all_in_list_falls_back_to_others():
+    c = _parse_btn("close echo and all")
+    assert c.kind == "close_others"
 
 
 def test_execute_close_others_kills_all_but_focused():
@@ -1595,6 +1649,12 @@ def test_intent_phrase_is_present_tense_per_kind():
 def test_intent_phrase_ssh():
     from vupai.commands import intent_phrase
     assert intent_phrase(Command(kind="ssh", name="vm1")) == "connecting to vm1"
+
+
+def test_intent_phrase_close_multi():
+    from vupai.commands import intent_phrase
+    assert intent_phrase(Command(kind="close", names=("echo", "sage"))) == "closing echo, sage"
+    assert intent_phrase(Command(kind="close", name="echo")) == "closing echo"
 
 
 def test_execute_talkback_reports_state_and_speaks_only_on_unmute():

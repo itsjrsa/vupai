@@ -75,7 +75,7 @@ def _spawn_thread(fn, *args) -> None:
 def _summarize_destructive(cmd: Command, registry) -> str:
     """Short description of a confirmation-gated command for the prompt/journal."""
     if cmd.kind == "close":
-        return f"close {cmd.name}"
+        return f"close {', '.join(cmd.names) if cmd.names else cmd.name}"
     if cmd.kind == "close_others":
         focused = registry.focused()
         others = [p for p in registry.panes

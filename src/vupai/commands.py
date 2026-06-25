@@ -230,6 +230,7 @@ class Command:
     layout: str = ""                       # tmux layout name (kind == "layout")
     main_focus: bool = False               # layout: swap focused pane into main slot
     enable: bool = False                   # talkback: True = unmute, False = mute
+    names: tuple[str, ...] = ()            # multi-target list; supersedes `name`
 
 
 def _tokens(s: str) -> list[str]:
@@ -278,12 +279,15 @@ def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
 def _parse_close(toks: list[str]) -> Command | None:
     if not toks or (toks[0] not in _CLOSE_VERBS and toks[0] not in _CLOSE_VERB_ALIASES):
         return None
-    rest = [t for t in toks[1:] if t != "the"]
+    rest = [t for t in toks[1:] if t not in ("the", "and")]
     if not rest:
         return None
-    if rest[0] in _CLOSE_ALL_TARGETS:
+    # An all-target anywhere in the list wins: close the rest, never a subset.
+    if any(t in _CLOSE_ALL_TARGETS for t in rest):
         return Command(kind="close_others")
-    return Command(kind="close", name=rest[0])
+    if len(rest) == 1:
+        return Command(kind="close", name=rest[0])
+    return Command(kind="close", names=tuple(rest))
 
 
 def _parse_focus(toks: list[str]) -> Command | None:
@@ -550,6 +554,8 @@ def intent_phrase(cmd: Command) -> str:
     if cmd.kind == "create":
         return "opening an agent" if cmd.count == 1 else f"opening {cmd.count} agents"
     if cmd.kind == "close":
+        if cmd.names:
+            return f"closing {', '.join(cmd.names)}"
         return f"closing {cmd.name}"
     if cmd.kind == "close_others":
         return "closing the other agents"
@@ -736,7 +742,53 @@ def _exec_swap(cmd: Command, registry, config, io) -> CommandResult:
                          spoken=f"swapped {a.matched_name} and {b.matched_name}")
 
 
+def _resolve_each(names, panes, cutoff):
+    """Best-effort resolve a target list to (hits, misses).
+
+    hits is a list of (pane_id, matched_name) for names that resolve to exactly
+    one pane; misses is a list of human strings for unresolved or ambiguous names.
+    Order follows `names`. Used by the multi-target close/slash executors.
+    """
+    hits: list[tuple[str, str]] = []
+    misses: list[str] = []
+    for raw in names:
+        m = resolve_pane_by_name(raw, panes, fuzzy_cutoff=cutoff)
+        if m.candidates:
+            misses.append(f"{raw} ambiguous")
+        elif m.pane_id is None:
+            misses.append(f"no pane named {raw}")
+        else:
+            hits.append((m.pane_id, m.matched_name))
+    return hits, misses
+
+
+def _many_result(done_label, done_names, misses, ok, *, spoken_label=None):
+    """Assemble a best-effort multi-target CommandResult.
+
+    Renders "<label> a, b" for the acted-on names and appends a single
+    " - <miss>, <miss>" clause for failures. spoken_label overrides the label in
+    the spoken twin (slash drops the leading slash for speech).
+    """
+    def render(label):
+        parts = []
+        if done_names:
+            parts.append(f"{label} {', '.join(done_names)}")
+        if misses:
+            parts.append(", ".join(misses))
+        return " - ".join(parts)
+    msg = render(done_label)
+    spoken = render(spoken_label) if spoken_label is not None else msg
+    return CommandResult(ok, msg, spoken=spoken)
+
+
 def _exec_close(cmd: Command, registry, config, io) -> CommandResult:
+    if cmd.names:
+        hits, misses = _resolve_each(cmd.names, registry.panes, config.fuzzy_cutoff)
+        closed = []
+        for pid, name in hits:
+            io.kill_pane(pid)
+            closed.append(name)
+        return _many_result("closed", closed, misses, bool(closed))
     m = resolve_pane_by_name(
         cmd.name, registry.panes, fuzzy_cutoff=config.close_fuzzy_cutoff)
     if m.candidates:
