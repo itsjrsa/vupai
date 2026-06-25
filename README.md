@@ -197,21 +197,11 @@ Details and nuances worth knowing:
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `vupai setup` | Interactive first-run bootstrap: tools, mic, hotkey, model, permissions (re-runnable) |
-| `vupai` | Ensure tmux + the voice daemon, then attach (default) |
-| `vupai --reload` | Respawn the daemon (pick up source edits), then attach — `reload && vupai` in one step |
-| `vupai up` | Start the daemon without attaching |
-| `vupai down` | Stop the daemon |
-| `vupai reload` | Restart the daemon so source edits take effect (`down` + `up`) |
-| `vupai name <name> [pane]` | Label a pane (defaults to focused; rejects confusable names) |
-| `vupai autoname [pane]` | Assign the next free callsign to a pane (idempotent; used by the auto-name hooks) |
-| `vupai status` | Show panes, daemon status, and permission state |
-| `vupai board` | Open a supervision-board pane summarizing what each agent pane is doing |
-| `vupai mic [index\|name]` | List input devices, or pin one for speech (`vupai mic default` to unpin); `reload` to apply |
-| `vupai voice-commands` | Print the spoken-command cheat sheet for your config |
-| `vupai doctor` | Check permissions and print fix steps |
+Run `vupai --help` for the full command list (and `vupai <command> --help` for a
+specific one). The everyday ones are in [Usage](#usage) above; a few worth
+knowing: `vupai setup` (first-run bootstrap), `vupai voice-commands` (spoken-command
+cheat sheet for your config), and `vupai board` (the [supervision
+board](#supervision-board)).
 
 The push-to-talk daemon runs as a **detached background process** under your
 terminal app (not inside tmux — that's required for the global hotkey to work).
