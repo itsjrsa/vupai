@@ -151,13 +151,9 @@ vupai kill backend    # kill the "backend" session
 ```
 
 > [!NOTE]
-> **vupai runs on its own tmux server** (a dedicated socket, `tmux -L vupai`), so
-> it never changes your existing tmux config, key bindings, or sessions. The
-> trade-off: vupai sessions don't show up in a plain `tmux ls` — reach them with
-> `vupai attach` (or `tmux -L vupai ls`). Set `tmux_socket = ""` in the config to
-> share your default server instead. If you used an older version that ran on
-> your default server, run **`vupai cleanup`** once to revert the settings it
-> left there.
+> **vupai runs on its own tmux server**, so it never touches your existing tmux
+> setup. The trade-off: its sessions don't show in a plain `tmux ls` — reach them
+> with `vupai attach`. (Set `tmux_socket = ""` to share your default server.)
 
 `vupai` does two things: starts the voice daemon and drops you into a tmux
 session. The session is named after the current directory, so each repo gets its
