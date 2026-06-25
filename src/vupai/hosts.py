@@ -22,9 +22,21 @@ class Host:
     host: str
     user: str | None = None
     port: int | None = None
-    # None = use the global config.pane_command; "" = an explicit plain remote
-    # shell (no agent); any other string = that remote program.
+    # None/"" = no agent, just open a remote login shell (the default); any other
+    # string = the program to start on the remote.
     program: str | None = None
+
+
+@dataclass(frozen=True)
+class HostMatch:
+    """Result of resolving a spoken phrase to a host.
+
+    `host` is set on a confident match; `candidates` is non-empty only on an
+    ambiguous near-tie (and then `host` is None), mirroring router.NameMatch so
+    the ssh command can say "ambiguous - say the name again" like pane routing.
+    """
+    host: Host | None
+    candidates: tuple[str, ...] = ()
 
 
 def slugify_host(raw: str) -> str:
@@ -71,22 +83,35 @@ def load_hosts(path: Path | None = None) -> dict[str, Host]:
     return out
 
 
-def resolve_host(phrase: str, hosts: dict[str, Host], *, cutoff: int = 82) -> Host | None:
-    """Resolve a spoken phrase to a Host. Exact slug match wins; otherwise the
-    best rapidfuzz ratio over the keys, if it meets `cutoff`. None on no match
-    or empty inventory. Forgiving on purpose, like pane-name routing."""
+def resolve_host(
+    phrase: str, hosts: dict[str, Host], *, cutoff: int = 82, ambiguity_margin: int = 5
+) -> HostMatch:
+    """Resolve a spoken phrase to a host, with near-tie ambiguity detection.
+
+    Exact slug match wins outright. Otherwise the best rapidfuzz ratio over the
+    keys, if it meets `cutoff` - but when two or more keys land within
+    `ambiguity_margin` of the top (all above the cutoff), refuse to guess and
+    return them as `candidates` so the caller can ask the user to repeat (same
+    contract as router.resolve_pane_by_name). HostMatch(None) on no match or
+    empty inventory. Forgiving on purpose, like pane-name routing.
+    """
     if not hosts:
-        return None
+        return HostMatch(None)
     slug = slugify_host(phrase)
     if not slug:
-        return None
+        return HostMatch(None)
     if slug in hosts:
-        return hosts[slug]
-    best_key, best_score = None, 0.0
-    for key in hosts:
-        score = fuzz.ratio(slug, key)
-        if score > best_score:
-            best_key, best_score = key, score
-    if best_key is not None and best_score >= cutoff:
-        return hosts[best_key]
-    return None
+        return HostMatch(hosts[slug])
+    scored = sorted(
+        ((key, fuzz.ratio(slug, key)) for key in hosts),
+        key=lambda ks: ks[1],
+        reverse=True,
+    )
+    above = [(key, score) for key, score in scored if score >= cutoff]
+    if not above:
+        return HostMatch(None)
+    best_key, best_score = above[0]
+    near = [key for key, score in above if best_score - score <= ambiguity_margin]
+    if len(near) > 1:
+        return HostMatch(None, tuple(near))
+    return HostMatch(hosts[best_key])

@@ -1974,6 +1974,21 @@ def test_exec_ssh_unknown_host_fails():
     assert res.message == "no host named nope"
 
 
+def test_exec_ssh_ambiguous_host_asks_again():
+    io = _RecIO()
+    focused = _Pane("%0", "nova")
+    reg = _Reg(focused, [focused])
+    hosts = {
+        "data-api": Host(name="data-api", host="1.1.1.1"),
+        "data-app": Host(name="data-app", host="2.2.2.2"),
+    }
+    res = _exec_ssh(Command(kind="ssh", name="data apt"), reg, _scfg(), io, hosts)
+    assert not res.ok
+    assert "ambiguous" in res.message and "say the name again" in res.message
+    # No pane is opened on an ambiguous match.
+    assert not [c for c in io.calls if c[0] == "split"]
+
+
 def test_exec_ssh_no_focus_fails():
     io = _RecIO()
     reg = _Reg(None, [])

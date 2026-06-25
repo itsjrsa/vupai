@@ -668,7 +668,11 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
 
 
 def _exec_ssh(cmd: Command, registry, config, io, hosts) -> CommandResult:
-    host = resolve_host(cmd.name, hosts, cutoff=config.fuzzy_cutoff)
+    m = resolve_host(cmd.name, hosts, cutoff=config.fuzzy_cutoff)
+    if m.candidates:
+        msg = "ambiguous: " + " / ".join(m.candidates) + " - say the name again"
+        return CommandResult(False, msg, spoken=msg)
+    host = m.host
     if host is None:
         msg = f"no host named {cmd.name}"
         return CommandResult(False, msg, spoken=msg)
