@@ -3,6 +3,7 @@ import pytest
 from vupai.registry import Pane
 from vupai.router import (
     CALLSIGNS,
+    match_leading_names,
     name_collides,
     next_callsign,
     resolve_pane_by_name,
@@ -454,3 +455,57 @@ def test_resolve_pane_by_name_reports_method():
     assert resolve_pane_by_name("nova", panes).method == "exact"
     assert resolve_pane_by_name("novva", panes).method == "fuzzy"
     assert resolve_pane_by_name("zzzznope", panes).method is None
+
+
+# ---------------------------------------------------------------------------
+# Task 1: match_leading_names for subset broadcast
+# ---------------------------------------------------------------------------
+
+def test_match_leading_names_two_plus_message():
+    panes = [_pane("%1", "echo"), _pane("%2", "sage")]
+    names, msg = match_leading_names("echo and sage run the tests", panes)
+    assert names == ("echo", "sage")
+    assert msg == "run the tests"
+
+
+def test_match_leading_names_three():
+    panes = [_pane("%1", "echo"), _pane("%2", "sage"), _pane("%3", "orion")]
+    names, msg = match_leading_names("echo and sage and orion deploy now", panes)
+    assert names == ("echo", "sage", "orion") and msg == "deploy now"
+
+
+def test_match_leading_names_comma_with_and():
+    panes = [_pane("%1", "echo"), _pane("%2", "sage")]
+    names, msg = match_leading_names("echo, and sage, run tests", panes)
+    assert names == ("echo", "sage") and msg == "run tests"
+
+
+def test_match_leading_names_single_name_no_chain():
+    panes = [_pane("%1", "echo"), _pane("%2", "sage")]
+    names, msg = match_leading_names("echo run the tests", panes)
+    assert names == ("echo",) and msg == "run the tests"
+
+
+def test_match_leading_names_swallow_resistance():
+    # "the" is not a pane -> the run stops after echo; "and the tests" is the message.
+    panes = [_pane("%1", "echo"), _pane("%2", "sage")]
+    names, msg = match_leading_names("echo and the tests", panes)
+    assert names == ("echo",) and msg == "and the tests"
+
+
+def test_match_leading_names_no_leading_name():
+    panes = [_pane("%1", "echo")]
+    names, msg = match_leading_names("run the tests now", panes)
+    assert names == () and msg == "run the tests now"
+
+
+def test_match_leading_names_preserves_message_casing():
+    panes = [_pane("%1", "echo"), _pane("%2", "sage")]
+    names, msg = match_leading_names("echo and sage Run The Tests", panes)
+    assert msg == "Run The Tests"
+
+
+def test_match_leading_names_empty_message():
+    panes = [_pane("%1", "echo"), _pane("%2", "sage")]
+    names, msg = match_leading_names("echo and sage", panes)
+    assert names == ("echo", "sage") and msg == ""
