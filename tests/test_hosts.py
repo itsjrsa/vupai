@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from vupai.hosts import Host, load_hosts, slugify_host
+from vupai.hosts import Host, load_hosts, resolve_host, slugify_host
 
 
 def _write(tmp_path: Path, body: str) -> Path:
@@ -74,3 +74,31 @@ def test_load_hosts_malformed_toml_returns_empty(tmp_path):
     # not crash daemon startup. Unclosed table header is invalid TOML.
     path = _write(tmp_path, '[hosts.vm1\nhost = "x"\n')
     assert load_hosts(path) == {}
+
+
+_HOSTS = {
+    "vm1": Host(name="vm1", host="10.0.0.5"),
+    "gpubox": Host(name="gpubox", host="gpu.example.com"),
+}
+
+
+def test_resolve_host_exact():
+    assert resolve_host("vm1", _HOSTS).name == "vm1"
+
+
+def test_resolve_host_slugifies_phrase():
+    assert resolve_host("GPU Box", _HOSTS) is None  # "gpu-box" != "gpubox" exactly...
+    # ...but fuzzy recovers it:
+    assert resolve_host("gpubox", _HOSTS).name == "gpubox"
+
+
+def test_resolve_host_fuzzy_recovers_near_miss():
+    assert resolve_host("vm one", _HOSTS, cutoff=50).name == "vm1"
+
+
+def test_resolve_host_miss_returns_none():
+    assert resolve_host("database", _HOSTS) is None
+
+
+def test_resolve_host_empty_inventory():
+    assert resolve_host("vm1", {}) is None

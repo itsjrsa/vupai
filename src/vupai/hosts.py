@@ -11,6 +11,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from rapidfuzz import fuzz
+
 HOSTS_PATH = Path.home() / ".config" / "vupai" / "hosts.toml"
 
 
@@ -67,3 +69,24 @@ def load_hosts(path: Path | None = None) -> dict[str, Host]:
             program=program if isinstance(program, str) else None,
         )
     return out
+
+
+def resolve_host(phrase: str, hosts: dict[str, Host], *, cutoff: int = 82) -> Host | None:
+    """Resolve a spoken phrase to a Host. Exact slug match wins; otherwise the
+    best rapidfuzz ratio over the keys, if it meets `cutoff`. None on no match
+    or empty inventory. Forgiving on purpose, like pane-name routing."""
+    if not hosts:
+        return None
+    slug = slugify_host(phrase)
+    if not slug:
+        return None
+    if slug in hosts:
+        return hosts[slug]
+    best_key, best_score = None, 0.0
+    for key in hosts:
+        score = fuzz.ratio(slug, key)
+        if score > best_score:
+            best_key, best_score = key, score
+    if best_key is not None and best_score >= cutoff:
+        return hosts[best_key]
+    return None
