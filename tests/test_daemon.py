@@ -792,9 +792,9 @@ def test_normal_text_still_routes(tmp_path):
 
 def test_create_success_speaks_say_friendly_callsign(tmp_path, monkeypatch):
     # create's result adds info the intent could not (the assigned callsign), so
-    # it speaks on success - and the say-friendly `spoken` twin wins. With the
-    # default `say` backend it's prefixed with a lead-in silence so it doesn't run
-    # into the "opening an agent" intent spoken a moment earlier.
+    # it speaks on success - and the say-friendly `spoken` twin wins. The phrase
+    # is spoken verbatim: serialization (not a baked-in silence prefix) keeps it
+    # off the heels of the "opening an agent" intent spoken a moment earlier.
     spoken = []
     monkeypatch.setattr("vupai.daemon.speech.speak",
                         lambda text, *, cmd: spoken.append(text))
@@ -805,22 +805,37 @@ def test_create_success_speaks_say_friendly_callsign(tmp_path, monkeypatch):
     d = Daemon(Config(), _Rec(), _Tx("x"), _Reg(_panes()), _Fb(),
                execute_fn=execute_fn)
     d._run_command(Command(kind="create", count=1), {})
-    assert spoken == ["[[slnc 1000]] sage is up"]
-
-
-def test_create_success_no_gap_when_disabled(tmp_path, monkeypatch):
-    # tts_intent_gap_ms = 0 opts out of the lead-in silence.
-    spoken = []
-    monkeypatch.setattr("vupai.daemon.speech.speak",
-                        lambda text, *, cmd: spoken.append(text))
-
-    def execute_fn(cmd, registry, config, *, inject_fn):
-        return CommandResult(True, "created 1 panes: sage", spoken="sage is up")
-
-    d = Daemon(Config(tts_intent_gap_ms=0), _Rec(), _Tx("x"), _Reg(_panes()), _Fb(),
-               execute_fn=execute_fn)
-    d._run_command(Command(kind="create", count=1), {})
     assert spoken == ["sage is up"]
+
+
+def test_speak_serializes_waiting_on_previous_handle(tmp_path, monkeypatch):
+    # The intent ("opening an agent") and the result ("sage is up") are two
+    # separate, non-awaited `say` processes; without ordering they talk over each
+    # other (the reported overlap). _speak serializes by waiting on the previous
+    # handle before spawning the next, so the result starts only once the intent
+    # has finished.
+    events = []
+
+    class _H:
+        def __init__(self, text):
+            self.text = text
+
+        def wait(self):
+            events.append(("wait", self.text))
+
+    def fake_speak(text, *, cmd):
+        events.append(("spawn", text))
+        return _H(text)
+
+    monkeypatch.setattr("vupai.daemon.speech.speak", fake_speak)
+    d = Daemon(Config(), _Rec(), _Tx("x"), _Reg(_panes()), _Fb())
+    d._speak("opening an agent")
+    d._speak("sage is up")
+    assert events == [
+        ("spawn", "opening an agent"),
+        ("wait", "opening an agent"),  # result waits for the intent to finish...
+        ("spawn", "sage is up"),       # ...before it starts
+    ]
 
 
 def test_single_target_success_is_silent_intent_already_spoke(tmp_path, monkeypatch):

@@ -517,16 +517,10 @@ class Daemon:
             # execute) already covered it. Only kinds whose result adds new info
             # (a create's callsign, a talkback toggle) speak on success.
             if cmd.kind in _SPEAK_ON_SUCCESS:
-                spoken = result.spoken or result.message
-                # A create voiced "opening an agent" a split-second ago (line ~310);
-                # pad the "<name> is up" ack with a lead-in silence so the two don't
-                # run together. Other announced successes (talkback) have no preceding
-                # intent collision, so they speak as-is.
-                if cmd.kind == "create":
-                    spoken = speech.lead_silence(
-                        spoken, self._config.tts_intent_gap_ms,
-                        cmd=self._config.tts_cmd)
-                self._speak(spoken)
+                # A create voiced "opening an agent" a split-second ago; _speak
+                # serializes, so this "<name> is up" result waits for that intent
+                # to finish instead of running together with it.
+                self._speak(result.spoken or result.message)
         else:
             self._feedback.reject(result.message, self._hud_pane())
             # Failure always speaks: the intent said "closing sage", so the user
@@ -537,14 +531,24 @@ class Daemon:
     def _speak(self, text: str):
         """Speak `text` via the configured TTS, gated by the runtime mute switch.
 
-        Best-effort and non-blocking (speech.speak fires `say` and returns at once),
-        so this is safe on the main thread. Shared by command acks and the read
-        worker (every streamed sentence flows through here), so the "mute"/"unmute"
-        toggle covers both AND _silence can terminate whatever is currently playing
-        via the stored handle. Returns the process handle (or None when muted/failed)
-        so the read worker's SentenceSpeaker serializes streamed sentences on it."""
+        Serialized: each utterance waits on the previous one's handle before
+        spawning, so back-to-back acks (a create's "opening an agent" intent then
+        its "sage is up" result) never talk over each other. The wait is bounded
+        (a `say` phrase is seconds) and interruptible - a barge-in (_silence)
+        terminates the in-flight handle, so the wait returns at once and the main
+        thread is never wedged. Shared by command acks and the read worker (every
+        streamed sentence flows through here), so the "mute"/"unmute" toggle covers
+        both AND _silence can terminate whatever is currently playing via the stored
+        handle. Returns the process handle (or None when muted/failed) so the read
+        worker's SentenceSpeaker can wait on it too."""
         if not self._talkback or not self._config.tts_cmd:
             return None
+        prev = self._last_ack
+        if prev is not None:
+            try:
+                prev.wait()  # let the previous utterance finish; no overlap
+            except Exception:
+                pass
         try:
             handle = speech.speak(text, cmd=self._config.tts_cmd)
         except Exception:

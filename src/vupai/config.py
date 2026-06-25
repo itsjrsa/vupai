@@ -144,13 +144,6 @@ class Config:
     # it just speaks once at the end. Off -> the original whole-reply-at-once path.
     tts_stream: bool = True
     read_max_sentences: int = 2
-    # Silence (ms) inserted before a create's success ack ("sage is up") so it
-    # doesn't tread on the heels of the present-tense intent ("opening an agent")
-    # spoken a split-second earlier. The two are separate, non-awaited `say`
-    # processes, so without this lead-in they run together. macOS `say` only:
-    # honored via the inline [[slnc N]] directive; other backends ignore it
-    # (the directive is stripped rather than read aloud). 0 disables the gap.
-    tts_intent_gap_ms: int = 1000
     # Strip non-lexical filler tokens (um, uh, er, ah, eh, hmm, mm) from every
     # transcript before commands/routing/dictation see it. On by default: the
     # default set is non-lexical only, so removal is essentially risk-free, and
@@ -398,11 +391,6 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      "# speaks before it stops (the streamed talk-back length cap). Lower = terser.\n"
      "# Does not apply to `read board`, whose length tracks the agent count.\n"
      '# read_max_sentences = 2\n'),
-    ("tts_intent_gap_ms",
-     '# Silence (ms) before a create\'s "<name> is up" ack so it doesn\'t run into\n'
-     '# the "opening an agent" intent spoken a moment earlier. macOS `say` only;\n'
-     '# other backends ignore it. 0 disables the gap.\n'
-     '# tts_intent_gap_ms = 1000\n'),
     ("filler_filter",
      '# Strip non-lexical filler tokens before commands/routing/dictation.\n'
      '# filler_filter = true\n'),
