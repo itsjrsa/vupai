@@ -37,8 +37,8 @@ class Config:
     # pynput Key name(s) for the push-to-talk dictation key. A bare string or a
     # list of alternatives; normalized to a deduped tuple. alt_r = Right-Option.
     hotkey: str | list[str] | tuple[str, ...] = ("alt_r",)
-    addressing: str = "button"            # "button" (two-key, default) | "keyword"
-    # button mode: the system/command key(s). Same str-or-list shape as hotkey.
+    # The system/command key(s) that run the command layer. Same str-or-list
+    # shape as hotkey.
     command_hotkey: str | list[str] | tuple[str, ...] = ("cmd_r",)
     # English-only; v3 multilingual drifts to Russian on short audio.
     model_id: str = "mlx-community/parakeet-tdt-0.6b-v2"
@@ -251,13 +251,11 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# A single key or a list of alternatives (any one triggers dictation), handy\n'
      '# when you swap between keyboards with different layouts.\n'
      '# hotkey = ["alt_r"]\n'),
-    ("addressing",
-     '# Addressing mode: "button" (two-key default) or "keyword" (legacy single key,\n'
-     '# no command layer).\n'
-     '# addressing = "button"\n'),
     ("command_hotkey",
-     '# button mode only: the system/command key(s) that run the command layer.\n'
-     '# A single key or a list of alternatives, same shape as hotkey.\n'
+     '# The system/command key(s) that run the command layer. A single key or a\n'
+     '# list of alternatives, same shape as hotkey. Held to speak a command,\n'
+     '# broadcast, or name-addressed message (vs the dictation key, which types\n'
+     '# verbatim into the focused pane).\n'
      '# command_hotkey = ["cmd_r"]\n'),
     ("model_id",
      '# ASR model id. English-only; the v3 multilingual model drifts to Russian on\n'
@@ -635,22 +633,21 @@ def set_mic_device(name: str, *, path: Path | None = None) -> Path:
 
 
 def set_hotkey_config(
-    *, addressing: str,
+    *,
     hotkey: str | list[str] | tuple[str, ...],
     command_hotkey: str | list[str] | tuple[str, ...],
     path: Path | None = None,
 ) -> Path:
-    """Persist the trigger-key selection (addressing mode + PTT keys).
+    """Persist the trigger-key selection (dictation + command PTT keys).
 
-    Merges `addressing`, `hotkey`, and `command_hotkey` into config.toml in
-    place (preserving comments and every other key), creating a starter file
-    when none exists. `hotkey`/`command_hotkey` accept a single key name or a
-    list of alternatives; lists are written as TOML arrays. Mirrors
-    `set_mic_device`; written by `vupai keys` and the `vupai setup` hotkey step.
+    Merges `hotkey` and `command_hotkey` into config.toml in place (preserving
+    comments and every other key), creating a starter file when none exists.
+    Both accept a single key name or a list of alternatives; lists are written
+    as TOML arrays. Mirrors `set_mic_device`; written by `vupai keys` and the
+    `vupai setup` hotkey step.
     """
     return _merge_scalar_keys(
         {
-            "addressing": addressing,
             "hotkey": hotkey,
             "command_hotkey": command_hotkey,
         },

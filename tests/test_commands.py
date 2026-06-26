@@ -155,20 +155,15 @@ def test_handle_command_none_when_not_addressed():
     assert handle_command("frontend run tests", FakeRegistry([]), Config()) is None
 
 
-def _parse(text, cfg=None):
-    cfg = cfg or Config()
-    return parse_command(
-        text, broadcast_word=cfg.broadcast_word,
-        macros=cfg.macros, programs=cfg.programs, slash_commands=cfg.slash_commands,
-        addressing="keyword")
-
-
 def _parse_btn(text, cfg=None):
     cfg = cfg or Config()
     return parse_command(
         text, broadcast_word=cfg.broadcast_word,
-        macros=cfg.macros, programs=cfg.programs, slash_commands=cfg.slash_commands,
-        addressing="button")
+        macros=cfg.macros, programs=cfg.programs, slash_commands=cfg.slash_commands)
+
+
+# Backwards-compatible alias for the single command-parsing path.
+_parse = _parse_btn
 
 
 def test_parse_not_addressed_returns_none():
@@ -820,14 +815,6 @@ def test_button_create():
     assert c is not None and c.kind == "create" and c.count == 2
 
 
-def test_keyword_mode_has_no_command_layer():
-    # Single-key keyword mode no longer parses commands; only the broadcast word
-    # leads, everything else is None (router / verbatim dictation handles it).
-    assert _parse("create two panes") is None
-    assert _parse("close the others") is None
-    assert _parse("flibbertigibbet") is None
-
-
 def test_button_broadcast_word_still_works():
     c = _parse_btn("everyone run the tests")
     assert c is not None and c.kind == "broadcast" and c.text == "run the tests"
@@ -850,7 +837,7 @@ def test_button_gibberish_falls_through_to_none():
 
 
 def test_handle_command_button_returns_none_for_non_command():
-    res = handle_command("nova hi there", FakeRegistry([]), Config(), addressing="button")
+    res = handle_command("nova hi there", FakeRegistry([]), Config())
     assert res is None
 
 
@@ -859,7 +846,7 @@ def test_handle_command_button_executes_create():
     reg = FakeRegistry([focused], focused=focused)
     io = FakeTmux(new_ids=["%1", "%2"])
     res = handle_command("create two panes", reg, Config(),
-                         io=io, inject_fn=lambda *a, **k: True, addressing="button")
+                         io=io, inject_fn=lambda *a, **k: True)
     assert res is not None and res.ok
 
 
@@ -1254,11 +1241,6 @@ def test_parse_layout_names_need_the_lead_verb():
         assert _parse_btn(word) is None
 
 
-def test_parse_layout_is_button_mode_only():
-    # keyword mode has no command layer.
-    assert _parse("layout grid") is None
-
-
 # --- board -------------------------------------------------------------------
 
 def test_parse_board_bare_and_lead_verbs():
@@ -1275,16 +1257,12 @@ def test_parse_board_requires_the_board_noun():
     assert _parse_btn("open the nova") is None  # -> not a board command
 
 
-def test_parse_board_is_button_mode_only():
-    assert _parse("board") is None
-
-
 def test_exec_board_opens_pane_off_focused():
     focused = _pane("%0", "nova", active=True)
     reg = FakeRegistry([focused], focused=focused)
     io = FakeTmux(new_ids=["%7"])
     res = handle_command("open board", reg, Config(), io=io,
-                         inject_fn=lambda *a, **k: True, addressing="button")
+                         inject_fn=lambda *a, **k: True)
     assert res is not None and res.ok
     splits = [c for c in io.calls if c[0] == "split_window"]
     assert len(splits) == 1 and splits[0][2].endswith("_board")
@@ -1297,7 +1275,7 @@ def test_exec_board_focuses_existing_instead_of_second_split():
     reg = FakeRegistry([focused], focused=focused)
     io = FakeTmux(board_pane="%5")          # a board already exists in the session
     res = handle_command("board", reg, Config(), io=io,
-                         inject_fn=lambda *a, **k: True, addressing="button")
+                         inject_fn=lambda *a, **k: True)
     assert res is not None and res.ok
     assert [c for c in io.calls if c[0] == "split_window"] == []
     assert ("select_pane", "%5") in io.calls
@@ -1306,7 +1284,7 @@ def test_exec_board_focuses_existing_instead_of_second_split():
 def test_exec_board_no_focused_pane():
     reg = FakeRegistry([], focused=None)
     res = handle_command("board", reg, Config(), io=FakeTmux(),
-                         inject_fn=lambda *a, **k: True, addressing="button")
+                         inject_fn=lambda *a, **k: True)
     assert res is not None and res.ok is False
 
 
@@ -1418,11 +1396,6 @@ def test_parse_read_misheard_as_reve_reeve_wreath():
     assert _parse_btn("reve echo") == Command(kind="read", name="echo")
     assert _parse_btn("reeve echo") == Command(kind="read", name="echo")
     assert _parse_btn("wreath sage") == Command(kind="read", name="sage")
-
-
-def test_parse_read_only_on_button_key():
-    # Read is a system-key command; the dictation/keyword key types verbatim.
-    assert _parse("read nova") is None
 
 
 def test_parse_read_board_is_a_digest_not_a_pane_named_board():
@@ -1756,13 +1729,6 @@ def test_parse_talkback_mute_and_unmute_phrases():
         assert c is not None and c.kind == "talkback" and c.enable is True, phrase
 
 
-def test_parse_talkback_only_on_button_key():
-    # The mute/unmute words are common; they are commands only on the system key.
-    # On the dictation/keyword key they fall through to verbatim injection.
-    assert _parse("mute") is None
-    assert _parse("talk back") is None
-
-
 def test_parse_unrelated_phrase_is_not_talkback():
     # A near-miss must not toggle: it falls through (None -> dictation/route).
     assert _parse_btn("muted colors") is None
@@ -1781,12 +1747,6 @@ def test_parse_volume_up_and_down_phrases():
         c = _parse_btn(phrase)
         assert c is not None and c.kind == "volume", phrase
         assert c.volume_delta == -VOLUME_STEP, phrase
-
-
-def test_parse_volume_only_on_button_key():
-    # "louder"/"quieter" are plain words; they command only on the system key.
-    assert _parse("louder") is None
-    assert _parse("quieter") is None
 
 
 def test_parse_volume_does_not_collide_with_unmute_speak_up():
@@ -2059,7 +2019,7 @@ def test_exec_read_stream_applies_cap_and_cancel():
 def _parse_stop_helper(text):
     return parse_command(
         text, broadcast_word="all", macros={}, programs={},
-        slash_commands={}, addressing="button")
+        slash_commands={})
 
 
 @pytest.mark.parametrize("phrase", [

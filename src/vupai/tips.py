@@ -56,34 +56,31 @@ def _interleave(a: list[str], b: list[str]) -> list[str]:
 def build_tips(cfg) -> list[str]:
     """Build the rotating tip pool for `cfg`. Deterministic order, never empty.
 
-    Button mode shows command examples (static verbs + the user's slash verbs,
-    macros, and programs); keyword mode has no command layer, so only the
-    broadcast and usage hints appear.
+    Shows command examples (static verbs + the user's slash verbs, macros, and
+    programs) alongside the broadcast and usage hints.
     """
-    keys = cfg.command_hotkey if cfg.addressing == "button" else cfg.hotkey
+    keys = cfg.command_hotkey
     talk_key = keys[0] if keys else "?"   # show the primary key in tips
     hints = [
         f"hold {talk_key} to talk",
         "set status_tips=false to hide these",
     ]
-    commands: list[str] = []
-    if cfg.addressing == "button":
-        commands += [
-            f"{_CREATE_VERBS[0]} two panes",
-            "focus nova",
-            "zoom nova",
-            f"{_CLOSE_VERBS[0]} nova",
-            f"{_CLOSE_VERBS[0]} nova and atlas",  # and-joined multi-target list
-            "swap nova and atlas",
-            "open board",
-            "ssh vm1",  # ssh to a configured host (hosts.toml)
-        ]
-        commands += [f"{verb} all" for verb in sorted(cfg.slash_commands)]
-        commands += list(cfg.macros)
-        if cfg.programs:
-            commands.append(f"create one {sorted(cfg.programs)[0]} pane")
-    # Broadcast exists in both addressing modes; subset broadcast (a leading
-    # "and"-joined name run + a message) is a routing extension, so it does too.
+    commands: list[str] = [
+        f"{_CREATE_VERBS[0]} two panes",
+        "focus nova",
+        "zoom nova",
+        f"{_CLOSE_VERBS[0]} nova",
+        f"{_CLOSE_VERBS[0]} nova and atlas",  # and-joined multi-target list
+        "swap nova and atlas",
+        "open board",
+        "ssh vm1",  # ssh to a configured host (hosts.toml)
+    ]
+    commands += [f"{verb} all" for verb in sorted(cfg.slash_commands)]
+    commands += list(cfg.macros)
+    if cfg.programs:
+        commands.append(f"create one {sorted(cfg.programs)[0]} pane")
+    # Subset broadcast (a leading "and"-joined name run + a message) is a
+    # routing extension of broadcast, so include it too.
     commands.append(f"{cfg.broadcast_word} ship it")
     commands.append("nova and atlas, run tests")
     return [_render(t) for t in _interleave(commands, hints)]

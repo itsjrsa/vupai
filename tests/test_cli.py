@@ -1254,21 +1254,13 @@ def test_voice_commands_text_lists_verbs_and_words():
     assert "everyone" in text
 
 
-def test_voice_commands_text_keyword_mode_has_no_command_layer():
+def test_voice_commands_text_shows_both_keys():
     from vupai.config import Config
-    text = cli._voice_commands_text(Config(addressing="keyword"))
-    assert "keyword" in text
-    assert "no command layer" in text       # commands live on the button system key
-    assert "create <n> panes" not in text   # no command table in keyword mode
-
-
-def test_voice_commands_text_button_mode_shows_both_keys():
-    from vupai.config import Config
-    cfg = Config(addressing="button", hotkey="alt_r", command_hotkey="alt_l")
+    cfg = Config(hotkey="alt_r", command_hotkey="alt_l")
     text = cli._voice_commands_text(cfg)
-    assert "button" in text
     assert "alt_l" in text and "alt_r" in text
-    assert "computer create" not in text  # no control-word prefix in button mode
+    assert "create <n> panes" in text     # the command table is shown
+    assert "computer create" not in text  # no control-word prefix
 
 
 def test_voice_commands_text_lists_configured_macros():
@@ -1627,12 +1619,10 @@ def _capture_writes(monkeypatch):
 def test_keys_prompt_menu_index_button(fake_env, monkeypatch, tmp_path):
     saved = _capture_writes(monkeypatch)
     cfgpath = tmp_path / "missing.toml"
-    # addressing keep (button); dictation idx 4 -> ctrl_r; command idx 2 -> cmd_r
+    # dictation idx 4 -> ctrl_r; command idx 2 -> cmd_r
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "4", "done", "2", "done"]), config_path=cfgpath)
-    assert saved == {
-        "addressing": "button", "hotkey": ["ctrl_r"],
-        "command_hotkey": ["cmd_r"]}
+        reader=_reader(["4", "done", "2", "done"]), config_path=cfgpath)
+    assert saved == {"hotkey": ["ctrl_r"], "command_hotkey": ["cmd_r"]}
 
 
 def test_keys_prompt_multiple_keys_per_action(fake_env, monkeypatch, tmp_path):
@@ -1640,7 +1630,7 @@ def test_keys_prompt_multiple_keys_per_action(fake_env, monkeypatch, tmp_path):
     cfgpath = tmp_path / "missing.toml"
     # dictation: ctrl_r (4) + f13 (6); command: cmd_r (2) + f14 (7)
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "4", "6", "done", "2", "7", "done"]),
+        reader=_reader(["4", "6", "done", "2", "7", "done"]),
         config_path=cfgpath)
     assert saved["hotkey"] == ["ctrl_r", "f13"]
     assert saved["command_hotkey"] == ["cmd_r", "f14"]
@@ -1651,7 +1641,7 @@ def test_keys_prompt_toggle_removes_key(fake_env, monkeypatch, tmp_path):
     cfgpath = tmp_path / "missing.toml"
     # dictation: add f13 (6), add ctrl_r (4), toggle f13 (6) off -> ctrl_r only
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "6", "4", "6", "done", "2", "done"]),
+        reader=_reader(["6", "4", "6", "done", "2", "done"]),
         config_path=cfgpath)
     assert saved["hotkey"] == ["ctrl_r"]
 
@@ -1660,7 +1650,7 @@ def test_keys_prompt_exact_name(fake_env, monkeypatch, tmp_path):
     saved = _capture_writes(monkeypatch)
     cfgpath = tmp_path / "missing.toml"
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "f13", "done", "f14", "done"]), config_path=cfgpath)
+        reader=_reader(["f13", "done", "f14", "done"]), config_path=cfgpath)
     assert saved["hotkey"] == ["f13"]
     assert saved["command_hotkey"] == ["f14"]
 
@@ -1670,7 +1660,7 @@ def test_keys_prompt_capture_press_a_key(fake_env, monkeypatch, tmp_path):
     cfgpath = tmp_path / "missing.toml"
     captures = iter(["ctrl_r", "cmd_r"])
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "p", "done", "p", "done"]),
+        reader=_reader(["p", "done", "p", "done"]),
         capture=lambda *a, **k: next(captures),
         config_path=cfgpath)
     assert saved["hotkey"] == ["ctrl_r"]
@@ -1683,7 +1673,7 @@ def test_keys_prompt_press_is_add_only(fake_env, monkeypatch, tmp_path):
     # Press ctrl_r twice: the second press is a no-op (not a toggle-off), so the
     # key stays selected. command: cmd_r.
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "p", "p", "done", "2", "done"]),
+        reader=_reader(["p", "p", "done", "2", "done"]),
         capture=lambda *a, **k: "ctrl_r",
         config_path=cfgpath)
     assert saved["hotkey"] == ["ctrl_r"]
@@ -1694,10 +1684,10 @@ def test_keys_prompt_bare_enter_keeps_current(fake_env, monkeypatch, tmp_path):
     wrote = []
     monkeypatch.setattr(
         cli, "set_hotkey_config", lambda *, path=None, **kw: wrote.append(kw))
-    cfgpath = tmp_path / "missing.toml"  # defaults: button/alt_r/cmd_r
-    # addressing keep; finish each action without changes
+    cfgpath = tmp_path / "missing.toml"  # defaults: alt_r/cmd_r
+    # finish each action without changes
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "done", "done"]), config_path=cfgpath)
+        reader=_reader(["done", "done"]), config_path=cfgpath)
     assert wrote == []  # nothing changed -> no write
 
 
@@ -1706,7 +1696,7 @@ def test_keys_prompt_invalid_then_valid(fake_env, monkeypatch, tmp_path):
     cfgpath = tmp_path / "missing.toml"
     # dictation: junk (ignored) then idx 4 (ctrl_r); command: idx 2 (cmd_r)
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "nope", "4", "done", "2", "done"]),
+        reader=_reader(["nope", "4", "done", "2", "done"]),
         config_path=cfgpath)
     assert saved["hotkey"] == ["ctrl_r"]
     assert saved["command_hotkey"] == ["cmd_r"]
@@ -1717,21 +1707,9 @@ def test_keys_prompt_collision_excluded_from_command(fake_env, monkeypatch, tmp_
     cfgpath = tmp_path / "missing.toml"
     # dictation ctrl_r (4); command tries ctrl_r (4, excluded) then cmd_r (2)
     cli._prompt_hotkey_setup(
-        reader=_reader(["", "4", "done", "4", "2", "done"]),
+        reader=_reader(["4", "done", "4", "2", "done"]),
         config_path=cfgpath)
     assert saved["hotkey"] == ["ctrl_r"]
-    assert saved["command_hotkey"] == ["cmd_r"]
-
-
-def test_keys_prompt_keyword_mode(fake_env, monkeypatch, tmp_path):
-    saved = _capture_writes(monkeypatch)
-    cfgpath = tmp_path / "missing.toml"
-    # addressing 2 -> keyword; dictation idx 4 -> ctrl_r; no command prompt
-    cli._prompt_hotkey_setup(
-        reader=_reader(["2", "4", "done"]), config_path=cfgpath)
-    assert saved["addressing"] == "keyword"
-    assert saved["hotkey"] == ["ctrl_r"]
-    # command key preserved from current config (default cmd_r)
     assert saved["command_hotkey"] == ["cmd_r"]
 
 
@@ -1741,7 +1719,7 @@ def test_cmd_keys_prints_current_then_prompts(fake_env, monkeypatch, capsys):
     rc = cli._cmd_keys(ns)
     assert rc == 0
     out = capsys.readouterr().out
-    assert "button" in out
+    assert "dictation key" in out
     assert "alt_r" in out
 
 

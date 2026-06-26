@@ -87,7 +87,7 @@ class Feedback:
         print("ready")
         self.indicator("vupai", "idle")
 
-    def listening(self, mode: str = "keyword", seq: int | None = None) -> None:
+    def listening(self, mode: str = "dictation", seq: int | None = None) -> None:
         # Shown while the push-to-talk key is held and the mic is open. Written
         # off the listener thread, so it carries a reserved seq (see indicator).
         if mode == "system":
@@ -120,7 +120,7 @@ class Feedback:
             pass
 
     def heard(self, transcript: str, pane_id: str | None,
-              *, mode: str = "keyword") -> None:
+              *, mode: str = "dictation") -> None:
         # Echo what was heard on the target pane so a mishearing/misroute is
         # visible where the user is looking. Informational: no error indicator.
         self._pane_msg(pane_id, f"heard: {transcript[:_HUD_MAX]}")

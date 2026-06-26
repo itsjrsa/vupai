@@ -869,25 +869,6 @@ def _prompt_mic_setup(*, reader=None, runner=None, config_path: Path | None = No
     return name != cfg.mic_device
 
 
-def _prompt_addressing(current: str, reader) -> str:
-    """Ask for the addressing mode; bare Enter (or anything unrecognized) keeps
-    the current value."""
-    print("\nAddressing mode:")
-    print("  1  button  - two keys: dictation + command layer (recommended)")
-    print("  2  keyword - single key, no command layer (legacy)")
-    try:
-        answer = reader(f"  Choice [keep {current}]: ").strip().lower()
-    except (EOFError, OSError):
-        return current
-    if answer in ("1", "button"):
-        return "button"
-    if answer in ("2", "keyword"):
-        return "keyword"
-    if answer:
-        print(f"  {answer!r} not understood. Keeping {current}.")
-    return current
-
-
 def _fmt_keys(keys) -> str:
     """Render a hotkey tuple/list as a comma-joined string for display."""
     return ", ".join(keys) if keys else "(none)"
@@ -968,7 +949,7 @@ def _select_ptt_keys(label: str, current, *, reader, capture,
 
 def _prompt_hotkey_setup(*, reader=None, capture=None,
                          config_path: Path | None = None) -> bool:
-    """Setup step: choose the addressing mode and push-to-talk key(s).
+    """Setup step: choose the push-to-talk key(s).
 
     Re-runnable (like `_prompt_mic_setup`): shows the current binding and a bare
     Enter keeps it. Writes only when the resulting config differs. Returns True
@@ -978,30 +959,21 @@ def _prompt_hotkey_setup(*, reader=None, capture=None,
     cfg = load_config(config_path)
 
     print("\nTrigger keys (push-to-talk):")
-    mode = _prompt_addressing(cfg.addressing, reader)
-
     hotkey = _select_ptt_keys(
         "Dictation keys (hold to talk to the focused pane)", cfg.hotkey,
         reader=reader, capture=capture)
 
-    command = cfg.command_hotkey
-    if mode == "button":
-        command = _select_ptt_keys(
-            "Command keys (commands, broadcast, addressing by name)",
-            cfg.command_hotkey, reader=reader, capture=capture, exclude=hotkey)
+    command = _select_ptt_keys(
+        "Command keys (commands, broadcast, addressing by name)",
+        cfg.command_hotkey, reader=reader, capture=capture, exclude=hotkey)
 
-    if (mode, hotkey, command) == (
-            cfg.addressing, cfg.hotkey, cfg.command_hotkey):
+    if (hotkey, command) == (cfg.hotkey, cfg.command_hotkey):
         return False  # nothing changed
 
     set_hotkey_config(
-        addressing=mode, hotkey=list(hotkey), command_hotkey=list(command),
-        path=config_path)
-    if mode == "button":
-        print(f"  Keys set: dictation={_fmt_keys(hotkey)}, "
-              f"command={_fmt_keys(command)} (button mode).")
-    else:
-        print(f"  Keys set: dictation={_fmt_keys(hotkey)} (keyword mode).")
+        hotkey=list(hotkey), command_hotkey=list(command), path=config_path)
+    print(f"  Keys set: dictation={_fmt_keys(hotkey)}, "
+          f"command={_fmt_keys(command)}.")
     return True
 
 
@@ -1068,10 +1040,9 @@ def _cmd_config(args) -> int:
 def _cmd_keys(args: argparse.Namespace) -> int:
     """Show the current trigger keys, then run the interactive picker."""
     cfg = load_config()
-    print(f"Addressing: {cfg.addressing}")
+    print("Trigger keys (push-to-talk):")
     print(f"  dictation key(s): {_fmt_keys(cfg.hotkey)}")
-    if cfg.addressing == "button":
-        print(f"  command key(s):   {_fmt_keys(cfg.command_hotkey)}")
+    print(f"  command key(s):   {_fmt_keys(cfg.command_hotkey)}")
     if _prompt_hotkey_setup():
         _reload_if_running("keys")
     return 0
@@ -1096,7 +1067,7 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     # Re-runnable: pick the input device (bare Enter keeps the current choice).
     mic_changed = _prompt_mic_setup()
 
-    # Re-runnable: choose the addressing mode and push-to-talk key(s).
+    # Re-runnable: choose the push-to-talk key(s).
     keys_changed = _prompt_hotkey_setup()
 
     # On a re-run with a daemon already up, apply any change without a manual
@@ -1143,24 +1114,8 @@ def _voice_commands_text(cfg: Config) -> str:
     slash_verbs = " / ".join(sorted(cfg.slash_commands)) or "(none)"
     lines = ["vupai voice commands", ""]
 
-    if cfg.addressing != "button":
-        # Keyword mode is a single key with no command layer: dictation, name
-        # addressing, and broadcast only. Commands live on the button system key.
-        lines += [
-            f"Addressing mode: keyword (hold {_fmt_keys(cfg.hotkey)}, then speak)",
-            "  no command layer here - switch to button mode for commands",
-            "",
-            f"Broadcast: {cfg.broadcast_word} <message>   send <message> to every named agent",
-            "",
-            "Address an agent (no prefix):",
-            '  <name>, <message>              e.g. "nova, run the tests" -> the nova pane',
-            "",
-            "Anything else is typed verbatim into the focused pane.",
-        ]
-        return "\n".join(lines)
-
     lines += [
-        "Addressing mode: button (hold a key, then speak)",
+        "Hold a key, then speak:",
         f"  system key    ({_fmt_keys(cfg.command_hotkey)}): a command, "
         "broadcast, or an agent by name",
         f"  dictation key ({_fmt_keys(cfg.hotkey)}): typed verbatim into the focused pane",

@@ -86,7 +86,7 @@ class FakeFeedback:
     def confirm_prompt(self, summary: str, confirm_word: str = "confirm") -> None:
         self.confirms.append(summary)
 
-    def heard(self, transcript: str, pane_id, *, mode: str = "keyword") -> None:
+    def heard(self, transcript: str, pane_id, *, mode: str = "dictation") -> None:
         self.heards.append((transcript, pane_id, mode))
 
     def reject(self, reason: str, pane_id, *, candidates: tuple = ()) -> None:
@@ -108,7 +108,7 @@ class FakeFeedback:
     def ready(self) -> None:
         self.statuses.append("ready")
 
-    def listening(self, mode: str = "keyword", seq: int | None = None) -> None:
+    def listening(self, mode: str = "dictation", seq: int | None = None) -> None:
         self.statuses.append(f"listening:{mode}")
 
     def working(self) -> None:
@@ -152,9 +152,9 @@ def make_daemon(tmp_path, *, transcript: str, lines: list[str], focused: str | N
         inject_calls.append((pane_id, text, confirm_timeout, poll_interval))
         return inject_ok
 
-    # These helper-based tests drive the single-key (keyword) path directly via
-    # on_press/on_release and the keyword Hotkey; button mode has its own tests.
-    daemon = Daemon(Config(addressing="keyword", inject_submit_delay=0.0,
+    # These helper-based tests drive the command/route pipeline directly via
+    # on_press/on_release (system mode); dictation has its own tests.
+    daemon = Daemon(Config(inject_submit_delay=0.0,
                            filler_filter=filler_filter),
                     recorder, transcriber, registry,
                     feedback, route_fn=route_fn, inject_fn=inject_fn,
@@ -246,11 +246,21 @@ def test_blank_transcript_injects_nothing(tmp_path):
 
 
 def test_no_target_reports_error_and_no_inject(tmp_path):
-    # focused None and no name match -> route_fn returns pane_id None
-    daemon, _, _, feedback, _, inject_calls = make_daemon(
-        tmp_path, transcript="run the tests", lines=[PANE_LINE], focused=None)
-    daemon.on_press()
-    _release_and_process(daemon)
+    # A name-addressed route that resolves to no pane (matched name, but the
+    # pane is gone): not a fallback, so it reaches the "no target" branch.
+    wav = tmp_path / "u.wav"
+    wav.write_bytes(b"\x00" * 5000)
+    inject_calls: list = []
+    feedback = FakeFeedback()
+    d = Daemon(Config(inject_submit_delay=0.0), FakeRecorder(wav),
+               FakeTranscriber("ghost run the tests"),
+               make_registry([PANE_LINE], "%1"), feedback,
+               route_fn=lambda text, panes, focused, **kw: Route(
+                   pane_id=None, text=text, matched_name="ghost",
+                   confidence=100.0, fallback=False),
+               inject_fn=lambda *a, **k: inject_calls.append(a) or True,
+               async_fn=lambda fn, *a: fn(*a))
+    d._process(wav, "system")
     assert inject_calls == []
     assert feedback.errors and "no target" in feedback.errors[0].lower()
 
@@ -391,10 +401,9 @@ def test_run_warms_and_starts_hotkey(tmp_path, monkeypatch):
     assert "stop" in started                # run()'s finally stops the hotkey
     bindings = instances[0].bindings
     keys = [b[0] for b in bindings]
-    assert keys == ["alt_r"]                 # keyword mode binds the dictation key
-    # the listener received the daemon's real bound callbacks (wiring proof)
-    assert bindings[0][1] == daemon.on_press
-    assert bindings[0][2] == daemon.on_release
+    assert keys == ["alt_r", "cmd_r"]        # dictation key + system key
+    # every binding carries a press/release callback pair (wiring proof)
+    assert all(callable(b[1]) and callable(b[2]) for b in bindings)
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +448,7 @@ def test_run_paints_warming_before_ready(tmp_path, monkeypatch):
     feedback = FakeFeedback()
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
-    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav),
+    d = Daemon(Config(), FakeRecorder(wav),
                FakeTranscriber("hi"), make_registry([PANE_LINE], "%1"), feedback)
     _run_once_with_fake_hotkey(d, monkeypatch)
     warming = [i for i, s in enumerate(feedback.statuses) if s.startswith("warming")]
@@ -452,7 +461,7 @@ def test_run_warming_painted_before_warm_runs(tmp_path, monkeypatch):
     tx = _SnapshotTranscriber(feedback)
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
-    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav), tx,
+    d = Daemon(Config(), FakeRecorder(wav), tx,
                make_registry([PANE_LINE], "%1"), feedback)
     _run_once_with_fake_hotkey(d, monkeypatch)
     assert tx.warmed == 1
@@ -465,7 +474,7 @@ def test_run_warming_downloading_flag_when_model_absent(tmp_path, monkeypatch):
     feedback = FakeFeedback()
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
-    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav),
+    d = Daemon(Config(), FakeRecorder(wav),
                FakeTranscriber("hi"), make_registry([PANE_LINE], "%1"), feedback)
     _run_once_with_fake_hotkey(d, monkeypatch)
     assert "warming:True" in feedback.statuses
@@ -477,7 +486,7 @@ def test_run_warming_not_downloading_when_model_cached(tmp_path, monkeypatch):
     feedback = FakeFeedback()
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
-    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav),
+    d = Daemon(Config(), FakeRecorder(wav),
                FakeTranscriber("hi"), make_registry([PANE_LINE], "%1"), feedback)
     _run_once_with_fake_hotkey(d, monkeypatch)
     assert "warming:False" in feedback.statuses
@@ -524,7 +533,7 @@ def test_run_writes_ready_after_warm_and_stopped_on_exit(tmp_path, monkeypatch):
     monkeypatch.setattr(dmod, "MultiHotkey", FakeHotkey)
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
-    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav), Tx(),
+    d = Daemon(Config(), FakeRecorder(wav), Tx(),
                make_registry([PANE_LINE], "%1"), FakeFeedback(),
                state_writer=state_writer)
     d.stop()
@@ -560,7 +569,7 @@ def test_run_starts_and_stops_watcher(tmp_path, monkeypatch):
     fw = FakeWatcher()
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
-    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav),
+    d = Daemon(Config(), FakeRecorder(wav),
                FakeTranscriber("hi"), make_registry([PANE_LINE], "%1"),
                FakeFeedback(), watcher=fw)
     d.stop()
@@ -613,10 +622,10 @@ def test_per_utterance_error_writes_no_lifecycle_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(dmod, "MultiHotkey", FakeHotkey)
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
-    d = Daemon(Config(addressing="keyword"), FakeRecorder(wav), Tx(),
+    d = Daemon(Config(), FakeRecorder(wav), Tx(),
                make_registry([PANE_LINE], "%1"), FakeFeedback(),
                state_writer=lambda phase: phases.append(phase))
-    d._jobs.put_nowait((wav, "keyword"))  # one utterance that will raise in _process
+    d._jobs.put_nowait((wav, "system"))  # one utterance that will raise in _process
     d.stop()                               # then the shutdown sentinel
     d.run()
     assert phases == ["ready", "stopped"]  # no extra marker from the failed utterance
@@ -703,14 +712,14 @@ class _Fb:
     def error(self, t, seq=None): self.msgs.append(("error", t))
     def announce(self, r): self.msgs.append(("announce",))
     def ready(self): self.msgs.append(("ready",))
-    def listening(self, mode="keyword", seq=None): self.msgs.append(("listening", mode))
+    def listening(self, mode="dictation", seq=None): self.msgs.append(("listening", mode))
     def working(self): self.msgs.append(("working",))
     def warming(self, downloading=False): self.msgs.append(("warming", downloading))
 
     def confirm_prompt(self, summary, confirm_word="confirm"):
         self.msgs.append(("confirm", summary))
 
-    def heard(self, transcript, pane_id, *, mode="keyword"):
+    def heard(self, transcript, pane_id, *, mode="dictation"):
         self.msgs.append(("heard", transcript))
 
     def reject(self, reason, pane_id, *, candidates=()):
@@ -1025,7 +1034,7 @@ def test_louder_command_clamps_at_full_volume(tmp_path, monkeypatch):
 def test_route_cancelled_when_inject_returns_none(tmp_path):
     # inject returns None (user cleared the input during the review window):
     # no announce, no error/retry, outcome 'cancelled', delay threaded through.
-    cfg = Config(addressing="keyword", inject_submit_delay=0.5)
+    cfg = Config(inject_submit_delay=0.5)
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
     feedback = FakeFeedback()
@@ -1042,7 +1051,7 @@ def test_route_cancelled_when_inject_returns_none(tmp_path):
                    pane_id="%1", text="run the tests", matched_name="alpha",
                    confidence=100.0, fallback=False),
                inject_fn=inject_fn)
-    d._process(wav, "keyword")
+    d._process(wav, "system")
 
     assert feedback.announced == []
     assert feedback.rejects == []                       # cancel is not an error
@@ -1079,14 +1088,14 @@ def test_submit_delay_not_passed_to_inject_when_zero(tmp_path):
 
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
-    d = Daemon(Config(addressing="keyword", inject_submit_delay=0.0), FakeRecorder(wav),
+    d = Daemon(Config(inject_submit_delay=0.0), FakeRecorder(wav),
                FakeTranscriber("alpha hi"), make_registry([PANE_LINE], "%1"),
                FakeFeedback(),
                route_fn=lambda text, panes, focused_id, *, fuzzy_cutoff=82: Route(
                    pane_id="%1", text="hi", matched_name="alpha",
                    confidence=100.0, fallback=False),
                inject_fn=inject_fn)
-    d._process(wav, "keyword")  # must not raise on the missing submit_delay kwarg
+    d._process(wav, "system")  # must not raise on the missing submit_delay kwarg
     assert called["n"] == 1
 
 
@@ -1299,13 +1308,12 @@ def test_small_create_not_prompted(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Task 4: button addressing mode
+# Two-key modes: system (command) key and dictation key
 # ---------------------------------------------------------------------------
 
 
 def test_button_system_command_executes(tmp_path):
     calls = {"route": 0, "inject": 0}
-    seen = {}
 
     def route_fn(text, panes, focused_id, *, fuzzy_cutoff=82):
         calls["route"] += 1
@@ -1316,9 +1324,7 @@ def test_button_system_command_executes(tmp_path):
         calls["inject"] += 1
         return True
 
-    def parse_fn(text, *, broadcast_word, macros, programs, slash_commands,
-                 addressing):
-        seen["addressing"] = addressing
+    def parse_fn(text, *, broadcast_word, macros, programs, slash_commands):
         return Command(kind="create", count=2)
 
     def execute_fn(cmd, registry, config, *, inject_fn, **kwargs):
@@ -1328,7 +1334,6 @@ def test_button_system_command_executes(tmp_path):
                _Fb(), route_fn=route_fn, inject_fn=inject_fn,
                parse_fn=parse_fn, execute_fn=execute_fn)
     d._process(_wav(tmp_path), "system")
-    assert seen["addressing"] == "button"          # system -> button addressing
     assert calls == {"route": 0, "inject": 0}      # command executed; no routing
 
 
@@ -1358,18 +1363,6 @@ def test_button_system_unaddressed_rejected_not_injected(tmp_path):
     assert "dictation" in feedback.rejects[-1][0].lower()
 
 
-def test_keyword_unaddressed_still_focus_fallback(tmp_path):
-    # keyword mode has no command layer and relies on focus fallback by design,
-    # so the system-key guard must not touch it.
-    daemon, _, _, feedback, route_calls, inject_calls = make_daemon(
-        tmp_path, transcript="i think we should refactor",
-        lines=[PANE_LINE], focused="%1")
-    w = tmp_path / "k.wav"
-    w.write_bytes(b"\x00" * 5000)
-    daemon._process(w, "keyword")
-    assert inject_calls == [("%1", "i think we should refactor", 2.0, 0.05)]
-
-
 def test_button_dictation_injects_verbatim_to_focused(tmp_path):
     daemon, _, _, feedback, route_calls, inject_calls = make_daemon(
         tmp_path, transcript="nova computer create two panes",
@@ -1394,7 +1387,6 @@ def test_button_dictation_no_focused_errors(tmp_path):
 
 def test_run_button_builds_multihotkey(tmp_path, monkeypatch):
     cfg = Config()
-    object.__setattr__(cfg, "addressing", "button")
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
     d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber("hi"),
@@ -1436,7 +1428,7 @@ class _FakeMulti:
 
 
 def test_run_button_multiple_keys_per_action(tmp_path, monkeypatch):
-    cfg = Config(addressing="button", hotkey=["alt_r", "f13"],
+    cfg = Config(hotkey=["alt_r", "f13"],
                  command_hotkey=["cmd_r", "f14"])
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
@@ -1451,10 +1443,10 @@ def test_run_button_multiple_keys_per_action(tmp_path, monkeypatch):
     assert set(keys) == {"alt_r", "f13", "cmd_r", "f14"}
 
 
-def test_run_button_overlapping_keys_falls_back(tmp_path, monkeypatch):
-    # A key shared by both actions is ambiguous: fall back to keyword mode over
-    # the dictation keys and tell the user why.
-    cfg = Config(addressing="button", hotkey=["alt_r", "f13"],
+def test_run_overlapping_keys_falls_back_to_defaults(tmp_path, monkeypatch):
+    # A key shared by both actions is ambiguous: fall back to the default keys
+    # (dictation alt_r + system cmd_r) and tell the user why.
+    cfg = Config(hotkey=["alt_r", "f13"],
                  command_hotkey=["alt_r"])
     wav = tmp_path / "u.wav"
     wav.write_bytes(b"\x00" * 5000)
@@ -1467,23 +1459,8 @@ def test_run_button_overlapping_keys_falls_back(tmp_path, monkeypatch):
     d.stop()
     d.run()
     keys = [b[0] for b in _FakeMulti.last["bindings"]]
-    assert keys == ["alt_r", "f13"]              # keyword fallback over hotkeys
+    assert keys == ["alt_r", "cmd_r"]            # default keys after fallback
     assert feedback.errors                        # told the user why
-
-
-def test_run_keyword_multiple_keys(tmp_path, monkeypatch):
-    cfg = Config(addressing="keyword", hotkey=["alt_r", "f13"])
-    wav = tmp_path / "u.wav"
-    wav.write_bytes(b"\x00" * 5000)
-    d = Daemon(cfg, FakeRecorder(wav), FakeTranscriber("hi"),
-               make_registry([PANE_LINE], "%1"), FakeFeedback())
-
-    import vupai.daemon as dmod
-    monkeypatch.setattr(dmod, "MultiHotkey", _FakeMulti)
-    d.stop()
-    d.run()
-    keys = [b[0] for b in _FakeMulti.last["bindings"]]
-    assert keys == ["alt_r", "f13"]
 
 
 class _RecordingJournal:
@@ -1506,7 +1483,7 @@ def test_journals_routed_utterance(tmp_path):
                inject_fn=lambda *a, **k: True,
                journal=journal)
 
-    d._process(wav, "keyword")
+    d._process(wav, "system")
 
     assert len(journal.entries) == 1
     entry, kept_wav = journal.entries[0]
@@ -1525,7 +1502,7 @@ def test_journals_no_audio_without_wav(tmp_path):
                make_registry([PANE_LINE], "%1"), FakeFeedback(),
                journal=journal)
 
-    d._process(wav, "keyword")
+    d._process(wav, "system")
 
     entry, kept_wav = journal.entries[0]
     assert entry["outcome"] == "no_audio"
@@ -1566,7 +1543,7 @@ def _make_capturing_daemon(tmp_path, *, transcript, lines, focused, inject_ok=Tr
     def inject_fn(pane_id, text, *, confirm_timeout=2.0, poll_interval=0.05, io=None):
         return inject_ok
 
-    daemon = Daemon(Config(addressing="keyword", inject_submit_delay=0.0,
+    daemon = Daemon(Config(inject_submit_delay=0.0,
                            filler_filter=filler_filter),
                     recorder, transcriber, registry,
                     feedback, route_fn=route_fn, inject_fn=inject_fn, journal=journal,
@@ -1710,7 +1687,7 @@ def test_daemon_starts_and_stops_tip_rotator(tmp_path):
     registry = make_registry([PANE_LINE], "%1")
     feedback = FakeFeedback()
     rot = _FakeRotator()
-    daemon = Daemon(Config(addressing="keyword", inject_submit_delay=0.0),
+    daemon = Daemon(Config(inject_submit_delay=0.0),
                     recorder, transcriber, registry, feedback,
                     async_fn=lambda fn, *a: fn(*a),
                     tip_rotator=rot)
@@ -2031,10 +2008,10 @@ def test_process_subset_broadcast_system_key(tmp_path):
     assert "echo" in summary and "sage" in summary
 
 
-def test_process_subset_broadcast_keyword_mode(tmp_path):
-    # Same utterance with mode="keyword" still fans to both panes.
+def test_process_subset_broadcast_system_mode(tmp_path):
+    # Subset broadcast ("<name> and <name> <message>") fans to both panes.
     d, feedback, inject_calls, confirms, wav = _subset_broadcast_daemon(tmp_path)
-    _say(d, wav, "echo and sage run tests", "keyword")
+    _say(d, wav, "echo and sage run tests", "system")
 
     injected_panes = [c[0] for c in inject_calls]
     assert "%1" in injected_panes and "%2" in injected_panes

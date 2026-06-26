@@ -172,7 +172,7 @@ class Daemon:
         self._journal = journal if journal is not None else Journal.from_config(config)
         self._hotkey: Hotkey | MultiHotkey | None = None
         self._stop_event = threading.Event()
-        self._active_mode = "keyword"   # mode the in-flight recording was started under
+        self._active_mode = ""   # mode the in-flight recording was started under
         # Push-to-talk is serial, but the listener thread must never block on the
         # heavy pipeline (a slow pynput tap callback gets disabled by macOS), so
         # on_release hands the wav to this queue and the main-thread consumer in
@@ -229,12 +229,14 @@ class Daemon:
         self._async_fn(fn, *args)
 
     def on_press(self) -> None:
-        self._on_press("keyword")
+        # Convenience entry for the system (command) key; the listener binds the
+        # dictation/system keys to _on_press directly with their modes.
+        self._on_press("system")
 
     def on_release(self) -> None:
-        self._on_release("keyword")
+        self._on_release("system")
 
-    def _process(self, wav: Path, mode: str = "keyword") -> None:
+    def _process(self, wav: Path, mode: str = "system") -> None:
         """Full pipeline for one utterance. Runs on the same OS thread as warm()
         (the main thread) so MLX's thread-local GPU stream matches. Synchronous
         and side-effect-only, so unit tests can drive it directly.
@@ -305,14 +307,12 @@ class Daemon:
                     entry["outcome"] = "inject_failed"
                 return
 
-            addressing = "button" if mode == "system" else "keyword"
-
             # Command layer: utterances addressed to the control/broadcast word
             # are interpreted by vupai itself, not injected into a pane.
             cmd = self._parse_fn(
                 text, broadcast_word=self._config.broadcast_word,
                 macros=self._config.macros, programs=self._config.programs,
-                slash_commands=self._config.slash_commands, addressing=addressing)
+                slash_commands=self._config.slash_commands)
             if cmd is not None:
                 if cmd.kind == "read":
                     # Read is slow (LLM summary) and audible; it runs off the main
@@ -669,46 +669,39 @@ class Daemon:
         return ok
 
     def _make_hotkey(self):
-        """Build the push-to-talk listener for the configured addressing mode.
+        """Build the two-key push-to-talk listener.
 
         Both hotkey fields are tuples of pynput key names (see config); any key
-        in a list triggers that action. Button mode binds every dictation key to
-        the dictation callbacks and every system key to the command callbacks on
-        one MultiHotkey. On any misconfiguration (overlapping keys, an empty
-        list, or an unknown key name) it falls back to a keyword-mode listener
-        over the dictation keys so the daemon still works as push-to-talk."""
+        in a list triggers that action. Every dictation key is bound to the
+        dictation callbacks and every system key to the command callbacks on one
+        MultiHotkey. On any misconfiguration (overlapping keys, an empty list, or
+        an unknown key name) it falls back to the default keys so the daemon
+        still works as push-to-talk."""
+        def build(dict_keys, sys_keys):
+            bindings = [
+                (k, lambda: self._on_press("dictation"),
+                 lambda: self._on_release("dictation"))
+                for k in dict_keys
+            ] + [
+                (k, lambda: self._on_press("system"),
+                 lambda: self._on_release("system"))
+                for k in sys_keys
+            ]
+            return MultiHotkey(bindings)
+
         dict_keys = self._config.hotkey or ("alt_r",)
-        if self._config.addressing == "button":
-            sys_keys = self._config.command_hotkey
-            overlap = set(dict_keys) & set(sys_keys)
-            if not sys_keys or overlap:
-                self._feedback.error(
-                    "addressing=button needs non-empty, non-overlapping "
-                    "hotkey/command_hotkey - falling back to keyword mode")
-            else:
-                try:
-                    bindings = [
-                        (k, lambda: self._on_press("dictation"),
-                         lambda: self._on_release("dictation"))
-                        for k in dict_keys
-                    ] + [
-                        (k, lambda: self._on_press("system"),
-                         lambda: self._on_release("system"))
-                        for k in sys_keys
-                    ]
-                    return MultiHotkey(bindings)
-                except AttributeError:
-                    self._feedback.error(
-                        f"unknown key name in config (hotkey={dict_keys!r}, "
-                        f"command_hotkey={sys_keys!r}) - falling back to keyword mode")
+        sys_keys = self._config.command_hotkey or ("cmd_r",)
+        if set(dict_keys) & set(sys_keys):
+            self._feedback.error(
+                "hotkey/command_hotkey must not overlap - using default keys")
+            dict_keys, sys_keys = ("alt_r",), ("cmd_r",)
         try:
-            return MultiHotkey(
-                [(k, self.on_press, self.on_release) for k in dict_keys])
+            return build(dict_keys, sys_keys)
         except AttributeError:
             self._feedback.error(
-                f"unknown key name in config (hotkey={dict_keys!r}) - "
-                "using the default key")
-            return MultiHotkey([("alt_r", self.on_press, self.on_release)])
+                f"unknown key name in config (hotkey={dict_keys!r}, "
+                f"command_hotkey={sys_keys!r}) - using default keys")
+            return build(("alt_r",), ("cmd_r",))
 
     def run(self) -> None:
         # warm() establishes MLX's thread-local GPU stream on THIS (main) thread;

@@ -129,8 +129,8 @@ vupai setup
 ```
 
 It walks you through everything first-run: checks the Homebrew tools, captures
-consent for the local transcript journal, lets you pick a mic and your push-to-talk key(s)/addressing
-mode, downloads the speech model up front (so the first hotkey press doesn't
+consent for the local transcript journal, lets you pick a mic and your push-to-talk key(s),
+downloads the speech model up front (so the first hotkey press doesn't
 stall on a silent fetch), then deep-links you to each macOS permission pane that
 still needs your terminal app enabled. It's safe to re-run any time.
 
@@ -269,7 +269,6 @@ The keys most people touch:
 | Key | What it does |
 |---|---|
 | `hotkey` / `command_hotkey` | The dictation and system push-to-talk keys (pynput names; each a list, so you can bind several). |
-| `addressing` | `button` (two keys, default) or `keyword` (legacy single key, no command layer). |
 | `pane_command` | Default program for voice-created panes (e.g. `claude`). |
 | `broadcast_word` | Leading word that injects to every named agent (default `everyone`). |
 | `board_summarizer_cmd` | Command that summarizes panes for the board and `read` (see [Supervision board](#supervision-board)). |

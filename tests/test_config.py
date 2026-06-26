@@ -317,27 +317,24 @@ def test_set_mic_device_uncomments_in_place(tmp_path):
     assert "# hotkey = " in text
 
 
-def test_addressing_defaults() -> None:
+def test_command_hotkey_defaults() -> None:
     c = Config()
-    assert c.addressing == "button"
     assert c.command_hotkey == ("cmd_r",)
 
 
-def test_loads_addressing_config(tmp_path: Path) -> None:
+def test_loads_command_hotkey_config(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
-    p.write_text('addressing = "button"\ncommand_hotkey = "ctrl_r"\n')
+    p.write_text('command_hotkey = "ctrl_r"\n')
     c = load_config(p)
-    assert c.addressing == "button"
     assert c.command_hotkey == ("ctrl_r",)
 
 
 def test_set_hotkey_config_creates_file(tmp_path: Path) -> None:
     p = tmp_path / "nested" / "config.toml"
     out = set_hotkey_config(
-        addressing="button", hotkey=["alt_r"], command_hotkey=["cmd"], path=p)
+        hotkey=["alt_r"], command_hotkey=["cmd"], path=p)
     assert out == p
     c = load_config(p)
-    assert c.addressing == "button"
     assert c.hotkey == ("alt_r",)
     assert c.command_hotkey == ("cmd",)
 
@@ -345,7 +342,7 @@ def test_set_hotkey_config_creates_file(tmp_path: Path) -> None:
 def test_set_hotkey_config_writes_arrays(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
     set_hotkey_config(
-        addressing="button", hotkey=["alt_r", "f13"],
+        hotkey=["alt_r", "f13"],
         command_hotkey=["cmd_r", "f14"], path=p)
     text = p.read_text()
     assert 'hotkey = ["alt_r", "f13"]' in text
@@ -359,7 +356,7 @@ def test_set_hotkey_config_merges_preserving_other_keys(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
     set_mic_device("USB Mic", path=p)
     set_hotkey_config(
-        addressing="button", hotkey=["f13"], command_hotkey=["cmd_r"], path=p)
+        hotkey=["f13"], command_hotkey=["cmd_r"], path=p)
     c = load_config(p)
     assert c.hotkey == ("f13",)
     assert c.command_hotkey == ("cmd_r",)
@@ -371,16 +368,14 @@ def test_set_hotkey_config_merges_preserving_other_keys(tmp_path: Path) -> None:
 def test_set_hotkey_config_replaces_existing_values(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
     set_hotkey_config(
-        addressing="button", hotkey=["alt_r"], command_hotkey=["cmd_r"], path=p)
+        hotkey=["alt_r"], command_hotkey=["cmd_r"], path=p)
     set_hotkey_config(
-        addressing="keyword", hotkey=["ctrl_r"], command_hotkey=["cmd_r"],
-        path=p)
+        hotkey=["ctrl_r"], command_hotkey=["f13"], path=p)
     c = load_config(p)
-    assert c.addressing == "keyword"
     assert c.hotkey == ("ctrl_r",)
+    assert c.command_hotkey == ("f13",)
     text = p.read_text()
     assert text.count("hotkey =") == 2  # hotkey + command_hotkey, no dupes
-    assert text.count("addressing =") == 1
 
 
 def test_set_hotkey_config_does_not_nest_under_existing_table(
@@ -396,12 +391,11 @@ def test_set_hotkey_config_does_not_nest_under_existing_table(
         encoding="utf-8",
     )
     set_hotkey_config(
-        addressing="button", hotkey=["alt_r", "ctrl_r"],
+        hotkey=["alt_r", "ctrl_r"],
         command_hotkey=["cmd_r"], path=p)
     c = load_config(p)
     assert c.hotkey == ("alt_r", "ctrl_r")
     assert c.command_hotkey == ("cmd_r",)
-    assert c.addressing == "button"
     # the pre-existing table survives intact
     assert c.programs["claude"] == "claude"
 
@@ -426,7 +420,7 @@ def test_update_config_does_not_nest_under_existing_table(
     assert text.index("# hotkey =") < text.index("[programs]")
     # end-to-end: activating the appended keys via `vupai keys` must take effect
     set_hotkey_config(
-        addressing="button", hotkey=["alt_r", "ctrl_r"],
+        hotkey=["alt_r", "ctrl_r"],
         command_hotkey=["cmd_r"], path=p)
     c = load_config(p)
     assert c.hotkey == ("alt_r", "ctrl_r")

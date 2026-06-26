@@ -542,30 +542,22 @@ def parse_command(
     text: str, *, broadcast_word: str,
     macros: dict[str, list[str]], programs: dict[str, str],
     slash_commands: dict[str, str] | None = None,
-    addressing: str = "button",
 ) -> Command | None:
     slash_commands = slash_commands or {}
     lead, remainder = _lead(text)
-    if addressing == "button":
-        # The system key is the control signal; no control word is required.
-        if lead == broadcast_word:
-            return Command(kind="broadcast", text=remainder.strip())
-        cmd = _parse_body(text, macros, programs, slash_commands)
-        if cmd is not None:
-            return cmd
-        # Vocative filler before a verb ("okay focus nova", "um create two
-        # panes"): peel up to two fillers and retry the verb parse. Broadcast is
-        # deliberately NOT peeled (it fans out to every agent; keep it raw-led).
-        # A non-command after peeling still returns None -> route + inject.
-        peeled, n = _peel_fillers(text)
-        if n:
-            return _parse_body(peeled, macros, programs, slash_commands)
-        return None
-    # keyword mode: single key, no command layer (commands live on the button
-    # system key). Only the broadcast word leads; everything else falls through
-    # to the router (name addressing) or verbatim focus injection.
+    # The system key is the control signal; no control word is required.
     if lead == broadcast_word:
         return Command(kind="broadcast", text=remainder.strip())
+    cmd = _parse_body(text, macros, programs, slash_commands)
+    if cmd is not None:
+        return cmd
+    # Vocative filler before a verb ("okay focus nova", "um create two
+    # panes"): peel up to two fillers and retry the verb parse. Broadcast is
+    # deliberately NOT peeled (it fans out to every agent; keep it raw-led).
+    # A non-command after peeling still returns None -> route + inject.
+    peeled, n = _peel_fillers(text)
+    if n:
+        return _parse_body(peeled, macros, programs, slash_commands)
     return None
 
 
@@ -1347,12 +1339,11 @@ def execute_command(cmd: Command, registry, config, *,
 
 
 def handle_command(text: str, registry, config, *,
-                   io=tmuxio, inject_fn=inject,
-                   addressing: str = "button") -> CommandResult | None:
+                   io=tmuxio, inject_fn=inject) -> CommandResult | None:
     cmd = parse_command(
         text, broadcast_word=config.broadcast_word,
         macros=config.macros, programs=config.programs,
-        slash_commands=config.slash_commands, addressing=addressing)
+        slash_commands=config.slash_commands)
     if cmd is None:
         return None
     return execute_command(cmd, registry, config, io=io, inject_fn=inject_fn)
