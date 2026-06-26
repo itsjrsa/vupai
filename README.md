@@ -47,6 +47,10 @@ can't do is let you talk to them. That's the gap vupai fills.
 If you only have one shell open, you don't need vupai. It earns its keep when you
 are juggling several agents and want to drive them hands-on-keyboard-optional.
 
+Because input is voice-first, it can also ease the typing load for anyone with RSI
+or hand-strain, though vupai isn't built or tested as a dedicated accessibility
+tool.
+
 ## How it works
 
 ```
@@ -69,8 +73,6 @@ hold dictation key (Right-Option) → record (sox) → transcribe (Parakeet) →
 > [!IMPORTANT]
 > vupai is **macOS Apple-Silicon only**: it depends on Apple MLX for on-device
 > speech, plus two Homebrew binaries. It will not run on Linux or Intel Macs.
-> On an unsupported host the CLI fails fast with a clear message instead of a
-> stray import error, and `parakeet-mlx` is skipped at install time.
 
 - macOS on **Apple Silicon** (M-series), macOS 13.5+ (developed on macOS 26).
 - [`tmux`](https://github.com/tmux/tmux) and [`sox`](https://sox.sourceforge.net/):
@@ -116,10 +118,7 @@ Run the CLI with `uv run vupai …` from the repo, or see the live-reload loop
 > running from a source checkout, prefix each one with `uv run` (e.g. `uv run
 > vupai setup`).
 
-Working on vupai with an AI coding agent (Claude Code, Codex, opencode, Cursor,
-Aider, …)? [AGENTS.md](AGENTS.md) is the single source of truth for repo
-conventions, architecture, and invariants; [CLAUDE.md](CLAUDE.md) just points to
-it.
+Contributing? See [AGENTS.md](AGENTS.md).
 
 ## Set up (once)
 
@@ -212,10 +211,7 @@ cheat sheet tailored to your config.
 ## Commands
 
 Run `vupai --help` for the full command list (and `vupai <command> --help` for a
-specific one). The everyday ones are in [Usage](#usage) above; a few worth
-knowing: `vupai setup` (first-run bootstrap), `vupai voice-commands` (spoken-command
-cheat sheet for your config), and `vupai board` (the [supervision
-board](#supervision-board)).
+specific one). The everyday ones are in [Usage](#usage) above.
 
 The push-to-talk daemon runs as a **detached background process** under your
 terminal app (not inside tmux — that's required for the global hotkey to work).
@@ -278,16 +274,6 @@ The keys most people touch:
 | `broadcast_word` | Leading word that injects to every named agent (default `everyone`). |
 | `board_summarizer_cmd` | Command that summarizes panes for the board and `read` (see [Supervision board](#supervision-board)). |
 | `[programs]` / `[aliases]` / `[macros]` / `[slash_commands]` | Spoken-token tables: program names, pane-name aliases, phrase macros, and slash verbs. |
-
-**Addressing modes.** In `button` mode (default) you hold one of two keys: the
-dictation key (`hotkey`) types your words verbatim into the focused pane, while the
-system key (`command_hotkey`) interprets them as a command, a broadcast, or a
-name-addressed message ("atlas, are you there?"). The key is the control signal, so
-no spoken control word is needed. Each key field is a list, so you can bind several
-keys to the same action (any one triggers it) and keep one config that works across
-keyboards with different layouts. `keyword` mode is the legacy single-key mode: it
-has no command layer - only the `broadcast_word` ("everyone ...") leads; everything
-else is name-addressed or dictated verbatim to the focused pane.
 
 ### Remote machines (SSH)
 
