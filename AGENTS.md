@@ -322,6 +322,19 @@ tiles the window · two push-to-talk keys: the dictation key keeps `alt_r`
   `--pane`/`--summarizer`/`--tts-cmd`/`--config` make it a deterministic harness.
 - Conventional commit messages, **no Claude attribution / co-authored-by lines**.
   Never push to `master` without asking.
+- **Versioning (which digit to bump):** the version is `MAJOR.MINOR.PATCH` and
+  the project follows [SemVer](https://semver.org). **Pre-1.0 (current): MAJOR
+  stays `0`.** A **PATCH** bump (`0.3.0` -> `0.3.1`) is for backwards-compatible
+  bug fixes only: no new spoken verbs, commands, config fields, or behavior
+  changes a user would notice beyond the fix. A **MINOR** bump (`0.3.0` ->
+  `0.4.0`) is for any new user-facing capability (a new voice command, config
+  field, CLI flag) and, while pre-1.0, also for breaking changes (renamed/removed
+  config or commands) - call those out in the changelog. Bump **MAJOR** to `1.0.0`
+  only as a deliberate "API is stable now" decision, never automatically. When
+  unsure between patch and minor, ask: did a user gain something they can do, or
+  did something they relied on change? If yes, it is minor. (Example: the 0.3.0
+  cut added a new spoken-feedback behavior + made named-agent voice creation work,
+  so it was minor, not patch.)
 - **Changelog:** keep `CHANGELOG.md` (Keep a Changelog format) current. Every PR
   or release adds its user-facing changes under `## [Unreleased]`
   (Added/Changed/Fixed/Removed); when proposing a PR or release, propose the
