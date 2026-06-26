@@ -9,6 +9,7 @@ import logging
 import queue
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -53,9 +54,10 @@ _ANNOUNCE_INTENT = frozenset(
 
 # Subset of _ANNOUNCE_INTENT whose SUCCESS also voices the result, because it
 # carries information the intent could not (a create's assigned callsign; a
-# talkback toggle's confirmation). Every other announced kind is intent-only on
-# success - the present-tense ack already said it.
-_SPEAK_ON_SUCCESS = frozenset({"create", "talkback", "ssh"})
+# talkback toggle's confirmation; a volume nudge's new level, spoken at that
+# level so you hear it). Every other announced kind is intent-only on success -
+# the present-tense ack already said it.
+_SPEAK_ON_SUCCESS = frozenset({"create", "talkback", "volume", "ssh"})
 
 # Shown on every empty capture. Covers BOTH causes (a denied Microphone grant
 # AND a disconnected/muted/name-collided device) and is emitted unconditionally -
@@ -149,6 +151,12 @@ class Daemon:
         # by the "mute"/"unmute" voice command. A plain bool: written on the main
         # thread, read on the read worker - atomic enough in CPython, no lock.
         self._talkback = config.tts_enabled
+        # Runtime readback volume, 0.0..1.0. Seeded from config.tts_volume (the
+        # persisted default) and nudged live by the "louder"/"quieter" voice
+        # command, exactly mirroring _talkback vs config.tts_enabled. Read by
+        # _speak on every utterance; a plain float, same no-lock rationale as
+        # _talkback (written on the main thread, read on the read worker).
+        self._tts_volume = min(1.0, max(0.0, config.tts_volume))
         # Barge-in plumbing. _read_cancel is the active streaming read's cancel
         # Event (set on barge-in -> the SentenceSpeaker drains silently and the
         # summarizer subprocess is killed). _last_ack is the most recent spoken
@@ -317,6 +325,16 @@ class Daemon:
                     # silent (it's already muted). No tmux mutation, no confirm gate.
                     self._talkback = cmd.enable
                     self._run_command(cmd, entry)
+                    return
+                if cmd.kind == "volume":
+                    # Adjust the live level BEFORE running so the success ack (in
+                    # _SPEAK_ON_SUCCESS) is spoken at the new volume. Stamp the
+                    # clamped level onto the command so the executor reports the
+                    # exact value applied. No tmux mutation, no confirm gate.
+                    self._tts_volume = min(
+                        1.0, max(0.0, self._tts_volume + cmd.volume_delta))
+                    self._run_command(
+                        replace(cmd, volume_level=self._tts_volume), entry)
                     return
                 if cmd.kind == "stop":
                     self._handle_stop(cmd, entry)
@@ -571,7 +589,12 @@ class Daemon:
             except Exception:
                 pass
         try:
-            handle = speech.speak(text, cmd=self._config.tts_cmd)
+            # Full volume (>=1.0) is the unchanged path: pass no `volume` so the
+            # phrase is byte-identical to before. Below full, the level rides as a
+            # `say` [[volm]] directive (other backends ignore it - see speech.speak).
+            vol = self._tts_volume
+            handle = (speech.speak(text, cmd=self._config.tts_cmd) if vol >= 1.0
+                      else speech.speak(text, cmd=self._config.tts_cmd, volume=vol))
         except Exception:
             logger.debug("talk-back speak failed", exc_info=True)
             return None

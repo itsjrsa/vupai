@@ -31,6 +31,44 @@ def test_speak_splits_cmd_words_and_appends_text():
     assert cap[0][0] == ["say", "-v", "Daniel", "hi"]
 
 
+def test_speak_say_volume_prepends_volm_directive():
+    # macOS `say` has no --volume flag; volume rides as an inline [[volm X]]
+    # speech directive prefixed to the phrase (the text is still the last arg).
+    cap = []
+    speak("hi there", cmd="say", volume=0.5, spawn=_spawn(cap))
+    assert cap[0][0] == ["say", "[[volm 0.50]] hi there"]
+
+
+def test_speak_say_volume_clamped_to_unit_range():
+    cap = []
+    speak("hi", cmd="say", volume=2.5, spawn=_spawn(cap))
+    assert cap[0][0] == ["say", "[[volm 1.00]] hi"]
+    cap.clear()
+    speak("hi", cmd="say", volume=-1.0, spawn=_spawn(cap))
+    assert cap[0][0] == ["say", "[[volm 0.00]] hi"]
+
+
+def test_speak_volume_none_leaves_text_untouched():
+    # The default path (no volume) is byte-identical to before: no directive.
+    cap = []
+    speak("hi", cmd="say", volume=None, spawn=_spawn(cap))
+    assert cap[0][0] == ["say", "hi"]
+
+
+def test_speak_volume_ignored_for_non_say_backend():
+    # [[volm]] is an Apple speech directive; other CLIs would speak it aloud, so
+    # only the `say` backend (by argv[0] basename) gets the prefix.
+    cap = []
+    speak("hi", cmd="espeak", volume=0.5, spawn=_spawn(cap))
+    assert cap[0][0] == ["espeak", "hi"]
+
+
+def test_speak_say_volume_with_flags_still_detected():
+    cap = []
+    speak("hi", cmd="say -v Daniel", volume=0.3, spawn=_spawn(cap))
+    assert cap[0][0] == ["say", "-v", "Daniel", "[[volm 0.30]] hi"]
+
+
 def test_speak_strips_surrounding_whitespace():
     cap = []
     speak("  hi there \n", cmd="say", spawn=_spawn(cap))

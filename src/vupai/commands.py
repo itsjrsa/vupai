@@ -216,7 +216,7 @@ MAX_CREATE_COUNT = 30
 @dataclass(frozen=True)
 class Command:
     # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|ssh|board|
-    # read|talkback|stop|slash|broadcast|unknown
+    # read|talkback|volume|stop|slash|broadcast|unknown
     kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
@@ -231,6 +231,8 @@ class Command:
     main_focus: bool = False               # layout: swap focused pane into main slot
     enable: bool = False                   # talkback: True = unmute, False = mute
     names: tuple[str, ...] = ()            # multi-target list; supersedes `name`
+    volume_delta: float = 0.0              # volume: signed step applied to the level
+    volume_level: float = 1.0              # volume: resolved new level (set by daemon)
 
 
 def _tokens(s: str) -> list[str]:
@@ -439,6 +441,38 @@ def _parse_talkback(toks: list[str]) -> Command | None:
     return None
 
 
+# Readback-volume nudge. A whole-utterance match (like talkback) so common words
+# never shadow a pane action, and disjoint from _TALKBACK_ON ("speak up" is
+# unmute, not louder). Each step moves the live level by VOLUME_STEP; the daemon
+# owns and clamps the running level. "louder"/"quieter" only - no absolute-set
+# grammar yet (a number after "volume" is ambiguous with pane counts).
+VOLUME_STEP = 0.2
+# NB: entries are in their post-strip form ("the" is dropped before matching, so
+# "turn up the volume" -> "turn up volume").
+_VOLUME_UP = frozenset({
+    "louder", "volume up", "turn it up", "turn up", "turn up volume",
+    "turn volume up", "speak louder", "read louder", "more volume",
+})
+_VOLUME_DOWN = frozenset({
+    "quieter", "softer", "volume down", "turn it down", "turn down",
+    "turn down volume", "turn volume down", "speak quieter",
+    "speak softer", "read quieter", "less volume",
+})
+
+
+def _parse_volume(toks: list[str]) -> Command | None:
+    """`louder`/`quieter` (and synonyms) -> nudge readback volume, else None.
+
+    Whole-utterance match so it never shadows a pane action; the signed step
+    rides on the command and the daemon applies+clamps it against the live level."""
+    phrase = " ".join(t for t in toks if t not in ("the", "please"))
+    if phrase in _VOLUME_UP:
+        return Command(kind="volume", volume_delta=VOLUME_STEP)
+    if phrase in _VOLUME_DOWN:
+        return Command(kind="volume", volume_delta=-VOLUME_STEP)
+    return None
+
+
 # Transient "I've heard enough" - silences in-flight talk-back WITHOUT muting
 # future speech (that is `mute`/`unmute`). Kept strictly disjoint from
 # _TALKBACK_OFF so a stop never flips the persistent switch. Whole-utterance
@@ -500,7 +534,7 @@ def _parse_body(body: str, macros: dict[str, list[str]],
             or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks)
             or _parse_layout(toks) or _parse_ssh(toks)
             or _parse_board(toks) or _parse_talkback(toks)
-            or _parse_stop(toks)
+            or _parse_volume(toks) or _parse_stop(toks)
             or _parse_slash(toks, slash_commands) or _parse_read(toks))
 
 
@@ -601,6 +635,12 @@ def talkback_message(enable: bool) -> str:
     """Status-line text for a talk-back toggle. Single source of truth shared by
     the executor and the daemon so the wording can't drift."""
     return "talk-back on" if enable else "talk-back off (muted)"
+
+
+def volume_message(level: float) -> str:
+    """Status-line/spoken text for a volume nudge, e.g. "volume 60%". The daemon
+    passes the resolved (clamped) level so the wording matches what was applied."""
+    return f"volume {round(level * 100)}%"
 
 
 def wrap_agent_command(program: str) -> str:
@@ -1280,6 +1320,14 @@ def execute_command(cmd: Command, registry, config, *,
             # has no spoken twin - by the time it would speak, talk-back is muted.
             return CommandResult(True, talkback_message(cmd.enable),
                                  spoken="talk back on" if cmd.enable else "")
+        if cmd.kind == "volume":
+            # The live level lives on the daemon (it survives across utterances);
+            # it resolves+clamps the new level and stamps cmd.volume_level before
+            # we report it. Speaking the confirmation at the new level (it flows
+            # through daemon._speak, which already read the updated level) lets the
+            # user hear the result.
+            msg = volume_message(cmd.volume_level)
+            return CommandResult(True, msg, spoken=msg)
         if cmd.kind == "stop":
             # The actual silencing happens on the daemon (it owns the in-flight
             # speech handles); this is the status/result for direct callers.

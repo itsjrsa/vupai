@@ -984,6 +984,40 @@ def test_unmute_command_restores_runtime_and_confirms_aloud(tmp_path, monkeypatc
     assert spoken == ["talk back on"]
 
 
+def test_volume_seeds_and_clamps_from_config(tmp_path):
+    assert Daemon(Config(tts_volume=0.4), _Rec(), _Tx("x"),
+                  _Reg(_panes()), _Fb())._tts_volume == 0.4
+    # Out-of-range config values are clamped to the unit interval.
+    assert Daemon(Config(tts_volume=5.0), _Rec(), _Tx("x"),
+                  _Reg(_panes()), _Fb())._tts_volume == 1.0
+
+
+def test_quieter_command_lowers_level_and_confirms_at_new_volume(tmp_path, monkeypatch):
+    spoken = []
+    monkeypatch.setattr(
+        "vupai.daemon.speech.speak",
+        lambda text, *, cmd, volume=None: spoken.append((text, volume)))
+    d = Daemon(Config(), _Rec(), _Tx("quieter"), _Reg(_panes()), _Fb())
+    assert d._tts_volume == 1.0
+    d._process(_wav(tmp_path), mode="system")
+    assert d._tts_volume == 0.8
+    # The confirmation reports the new level AND is spoken at it ([[volm]] rides
+    # in via speech.speak; here we assert the volume arg threaded through).
+    assert spoken == [("volume 80%", 0.8)]
+
+
+def test_louder_command_clamps_at_full_volume(tmp_path, monkeypatch):
+    spoken = []
+    monkeypatch.setattr(
+        "vupai.daemon.speech.speak",
+        lambda text, *, cmd, volume=None: spoken.append((text, volume)))
+    d = Daemon(Config(), _Rec(), _Tx("louder"), _Reg(_panes()), _Fb())
+    d._process(_wav(tmp_path), mode="system")
+    assert d._tts_volume == 1.0  # already full; clamped
+    # At full volume _speak passes no `volume` (byte-identical legacy path).
+    assert spoken == [("volume 100%", None)]
+
+
 # ---------------------------------------------------------------------------
 # Submit review delay (inject_submit_delay): clear-to-cancel before Enter
 # ---------------------------------------------------------------------------

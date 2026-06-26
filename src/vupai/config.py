@@ -148,6 +148,12 @@ class Config:
     # or the Ollama adapter); a buffering command (plain `claude -p`) still works,
     # it just speaks once at the end. Off -> the original whole-reply-at-once path.
     tts_stream: bool = True
+    # Readback loudness, 0.0 (silent) .. 1.0 (full), clamped. macOS `say` has no
+    # volume flag, so vupai applies it via an inline [[volm X]] speech directive
+    # (the `say` backend only; other tts_cmd CLIs ignore it and follow the system
+    # volume). This is the persisted startup default for the runtime "louder"/
+    # "quieter" voice command, which adjusts the live level without rewriting it.
+    tts_volume: float = 1.0
     read_max_sentences: int = 2
     # Strip non-lexical filler tokens (um, uh, er, ah, eh, hmm, mm) from every
     # transcript before commands/routing/dictation see it. On by default: the
@@ -408,6 +414,12 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# default streaming summarizer (or the Ollama adapter); a buffering command\n'
      '# (plain claude -p) still works, it just speaks once at the end.\n'
      '# tts_stream = true\n'),
+    ("tts_volume",
+     '# Readback loudness, 0.0 (silent) .. 1.0 (full). macOS `say` only: applied\n'
+     '# via an inline [[volm X]] directive; other tts_cmd backends ignore it and\n'
+     '# track the system volume. Startup default for the "louder"/"quieter" voice\n'
+     '# command, which adjusts the live level in steps without rewriting config.\n'
+     '# tts_volume = 1.0\n'),
     ("read_max_sentences",
      "# read_max_sentences: how many sentences a spoken `read` of a single pane\n"
      "# speaks before it stops (the streamed talk-back length cap). Lower = terser.\n"
@@ -478,6 +490,19 @@ def write_full_config(
     return target
 
 
+def _first_table_index(lines: list[str]) -> int | None:
+    """Index of the first live (uncommented) `[table]` header line, or None.
+
+    A scalar key written after such a header nests under the table in TOML and
+    is dropped by load_config, so both writers splice new scalars *before* this
+    point. Commented headers (`# [aliases]`) are inert and ignored here.
+    """
+    return next(
+        (i for i, line in enumerate(lines) if line.lstrip().startswith("[")),
+        None,
+    )
+
+
 def _field_present(text: str, name: str) -> bool:
     """Whether `name` already appears in config text as a key (active or
     commented), either a scalar `key =` or a `[table]` header. The `\\s*=` /
@@ -514,14 +539,24 @@ def update_config(
     ]
     if not missing:
         return target, [], False
-    sep = "" if existing.endswith("\n") else "\n"
-    addition = "".join(block for _, block in missing)
-    target.write_text(
-        existing + sep
-        + "\n# --- keys added by `vupai config --init` ---\n"
-        + addition,
-        encoding="utf-8",
+    addition = (
+        "\n# --- keys added by `vupai config --init` ---\n"
+        + "".join(block for _, block in missing)
     )
+    lines = existing.splitlines(keepends=True)
+    idx = _first_table_index(lines)
+    if idx is None:
+        # No live table: append at the end (existing behavior).
+        sep = "" if existing.endswith("\n") else "\n"
+        new_text = existing + sep + addition
+    else:
+        # Splice above the first live table header so the appended scalar keys
+        # (and their later in-place activation) never nest under it.
+        head = "".join(lines[:idx])
+        if head and not head.endswith("\n"):
+            head += "\n"
+        new_text = head + addition + "".join(lines[idx:])
+    target.write_text(new_text, encoding="utf-8")
     return target, [name for name, _ in missing], False
 
 
@@ -575,9 +610,15 @@ def _merge_scalar_keys(
                 break
         else:
             out.append(line)
-    for key in updates:
-        if key not in replaced:
-            out.append(new_lines[key])
+    remaining = [new_lines[key] for key in updates if key not in replaced]
+    if remaining:
+        idx = _first_table_index(out)
+        if idx is None:
+            out.extend(remaining)
+        else:
+            # Insert above the first live table header so a brand-new scalar
+            # key never lands inside (and gets dropped by) that table.
+            out[idx:idx] = remaining
     target.write_text("\n".join(out) + "\n", encoding="utf-8")
     return target
 

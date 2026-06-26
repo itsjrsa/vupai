@@ -17,6 +17,7 @@ voice pipeline.
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import re
 import shlex
@@ -150,12 +151,19 @@ class SentenceSpeaker:
                 self._thread.join()
 
 
-def speak(text: str, *, cmd: str = "say", spawn=subprocess.Popen):
+def speak(text: str, *, cmd: str = "say", volume: float | None = None,
+          spawn=subprocess.Popen):
     """Speak `text` via `cmd`, non-blocking. Returns the process handle or None.
 
     `spawn` is injected so the unit suite asserts the argv without spawning a real
     process. A blank `text` or empty `cmd` is a no-op (returns None); any spawn
     failure is logged at debug and swallowed.
+
+    `volume` (0.0-1.0, clamped) sets the readback loudness. macOS `say` has no
+    volume flag, so it rides as an inline `[[volm X]]` speech directive prefixed
+    to the phrase - applied ONLY for the `say` backend (detected by argv[0]'s
+    basename), since other TTS CLIs would speak the directive aloud. `None` (the
+    default) leaves the phrase untouched, so the full-volume path is unchanged.
     """
     text = (text or "").strip()
     if not text:
@@ -163,6 +171,9 @@ def speak(text: str, *, cmd: str = "say", spawn=subprocess.Popen):
     argv = shlex.split(cmd)
     if not argv:
         return None
+    if volume is not None and os.path.basename(argv[0]) == "say":
+        v = min(1.0, max(0.0, volume))
+        text = f"[[volm {v:.2f}]] {text}"
     argv.append(text)
     try:
         return spawn(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

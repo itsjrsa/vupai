@@ -1769,6 +1769,46 @@ def test_parse_unrelated_phrase_is_not_talkback():
     assert _parse_btn("speak to nova") is None
 
 
+def test_parse_volume_up_and_down_phrases():
+    from vupai.commands import VOLUME_STEP
+    for phrase in ("louder", "volume up", "turn it up", "turn up the volume",
+                   "speak louder", "louder please"):
+        c = _parse_btn(phrase)
+        assert c is not None and c.kind == "volume", phrase
+        assert c.volume_delta == VOLUME_STEP, phrase
+    for phrase in ("quieter", "softer", "volume down", "turn it down",
+                   "turn down the volume", "speak quieter"):
+        c = _parse_btn(phrase)
+        assert c is not None and c.kind == "volume", phrase
+        assert c.volume_delta == -VOLUME_STEP, phrase
+
+
+def test_parse_volume_only_on_button_key():
+    # "louder"/"quieter" are plain words; they command only on the system key.
+    assert _parse("louder") is None
+    assert _parse("quieter") is None
+
+
+def test_parse_volume_does_not_collide_with_unmute_speak_up():
+    # "speak up" stays unmute, not a volume nudge.
+    c = _parse_btn("speak up")
+    assert c is not None and c.kind == "talkback" and c.enable is True
+
+
+def test_volume_message_renders_percentage():
+    from vupai.commands import volume_message
+    assert volume_message(1.0) == "volume 100%"
+    assert volume_message(0.6) == "volume 60%"
+    assert volume_message(0.0) == "volume 0%"
+
+
+def test_execute_volume_reports_resolved_level_and_speaks_it():
+    res = execute_command(
+        Command(kind="volume", volume_delta=-0.2, volume_level=0.6),
+        FakeRegistry([]), Config())
+    assert res.ok and res.message == "volume 60%" and res.spoken == "volume 60%"
+
+
 def test_intent_phrase_is_present_tense_per_kind():
     from vupai.commands import intent_phrase
     assert intent_phrase(Command(kind="close", name="sage")) == "closing sage"
