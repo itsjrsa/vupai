@@ -1134,7 +1134,8 @@ def _voice_commands_text(cfg: Config) -> str:
         "  read [name]                  speak a pane's summary aloud (focused / named)",
         "  read board                    speak a status digest of every agent (also: read all)",
         "  mute / unmute                silence or restore talk-back (also: quiet / talk back)",
-        "  louder / quieter             nudge readback volume (macOS say only; also: volume up/down)",
+        "  louder / quieter             nudge readback volume "
+        "(macOS say only; also: volume up/down)",
         "  <slash> [name|all]           send a slash command (focused / named / all)",
         f'      slash: {slash_verbs}   e.g. "clear all" -> /clear to every agent',
         "",
