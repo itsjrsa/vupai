@@ -1,4 +1,9 @@
-<h1 align="center">vupai</h1>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/vupai-lockup-dark.png">
+    <img alt="vupai" src="./assets/brand/vupai-lockup.png" width="260">
+  </picture>
+</p>
 
 <p align="center">
   <strong>Voice UI for AI panes</strong>: push-to-talk voice control for your tmux agent panes, on macOS, fully local.
