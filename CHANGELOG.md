@@ -11,11 +11,29 @@ a date, bumps `version` in `pyproject.toml`, and tags `vX.Y.Z`.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-26
+
 ### Added
 
+- Spoken feedback now names the program when creating a named agent: "open one
+  codex" says "opening a codex agent" (and "N codex agents up") instead of the
+  bare "agent". Config-default and explicit-shell creates keep generic wording.
 - CI workflow (unit tests + lint on macOS, secret scan) on every push and PR.
 - Repository governance: `CONTRIBUTING.md` (not accepting external contributions
   for now) and `SECURITY.md` (private vulnerability reporting).
+
+### Fixed
+
+- Named agents are now actually creatable by voice. Parakeet never transcribes
+  "claude" literally (it lands as "cloth"/"cloud"), so "open one claude" silently
+  did nothing; the same gap hit "pi" (heard as "pie"/"py") and "codex" when split
+  into "code x". These mishearings now resolve to the right program.
+- "two" mis-heard as "to" ("open to shell" == "open two shell") now parses as a
+  count instead of falling through to dictation; "ten" recovers from "tent". The
+  count aliases are scoped to the create parse, so "to" the preposition is
+  unaffected elsewhere.
+- "start" is now a create verb ("start one agent" == "open one agent").
+- Explicit-shell creates voice "opening a shell" instead of "opening an agent".
 
 ## [0.2.0] - 2026-06-26
 
