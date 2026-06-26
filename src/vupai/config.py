@@ -379,7 +379,8 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '#   Local Ollama:\n'
      '# board_summarizer_cmd = "ollama run llama3.2"\n'
      '#   Remote Ollama (model on another host, skips the CLI cold-start):\n'
-     '# board_summarizer_cmd = "python scripts/ollama_summarize.py --host http://BOX:11434 --model llama3.2"\n'),
+     '# board_summarizer_cmd = "python scripts/ollama_summarize.py '
+     '--host http://BOX:11434 --model llama3.2"\n'),
     ("board_poll_interval",
      '# Board tick cadence (seconds).\n'
      '# board_poll_interval = 2.0\n'),
