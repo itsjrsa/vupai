@@ -67,6 +67,19 @@ _GLYPHS_ONLY_RE = re.compile(r"^[\W_]+$")
 # A leading prompt marker on an otherwise-real line ("› make it a haiku"), peeled
 # for a clean summary. Only a small known set, each followed by whitespace.
 _LEAD_PROMPT_RE = re.compile(r"^(?:[›❯»>$#%•·*]+|►+)\s+")
+# Solid / quadrant block glyphs (U+2580-U+259F) appear only in coding-agent
+# splash logos and progress bars, never in prose - a line bearing any is chrome.
+_BLOCK_GLYPH_RE = re.compile(r"[▀-▟]")
+# A status bar splits fields with the box-drawing vertical bar (U+2502); two or
+# more on one line is the status-bar idiom ("repo │ model │ 0%"), distinct from a
+# single tree-indent guide. Real prose never contains U+2502.
+_STATUS_BAR_RE = re.compile(r"│.*│")
+# A tool's version banner: a product name (Capitalized words, or one lowercase
+# token) then a dotted version and nothing else ("Claude Code v2.1.193",
+# "opencode v0.4.2"). Anchored so a sentence ending in a version is NOT dropped.
+_VERSION_BANNER_RE = re.compile(
+    r"^(?:[A-Z]\w*(?: [A-Z]\w*)*|[a-z][\w-]*) v\d+(?:\.\d+){1,3}$"
+)
 
 
 @dataclass
@@ -92,7 +105,13 @@ def _is_chrome(line: str) -> bool:
     low = line.lower()
     if any(s in low for s in _CHROME_SUBSTRINGS):
         return True
-    return bool(_DURATION_RE.match(line) or _GLYPHS_ONLY_RE.match(line))
+    if _BLOCK_GLYPH_RE.search(line) or _STATUS_BAR_RE.search(line):
+        return True
+    return bool(
+        _DURATION_RE.match(line)
+        or _GLYPHS_ONLY_RE.match(line)
+        or _VERSION_BANNER_RE.match(line)
+    )
 
 
 def _content_lines(tail: str) -> list[str]:

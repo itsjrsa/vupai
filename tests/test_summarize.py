@@ -145,6 +145,37 @@ def test_denoise_strips_chrome_keeps_work():
     assert "─────" not in out
 
 
+# A freshly-started agent pane: status bar, footer, version banner, and the
+# splash logo (block glyphs) - all chrome, no work content yet.
+SPLASH_TAIL = (
+    "vupai master │ Opus 4.8 (1M context) │ 0% (0/1000000)            ◐ medium · /effort\n"
+    " ⏵⏵ auto mode on (shift+tab to cycle)                                          /rc\n"
+    "\n"
+    " Claude Code v2.1.193\n"
+    "▝▜█████▛▘  Opus 4.8 (1M context) with medium effort · Claude Max\n"
+    "  ▘▘ ▝▝    ~/Coding/personal/vupai\n"
+)
+
+
+def test_denoise_strips_agent_splash_and_status_chrome():
+    out = denoise(SPLASH_TAIL)
+    # the whole splash is chrome: nothing should survive
+    assert out.strip() == ""
+
+
+def test_denoise_keeps_real_line_containing_a_version():
+    # A version that is part of a real sentence is NOT a banner - it stays.
+    out = denoise("Bumped the parser to v2.1.0 and tests pass.\n")
+    assert "Bumped the parser to v2.1.0 and tests pass." in out
+
+
+def test_denoise_keeps_content_with_single_tree_bar():
+    # A lone box-drawing bar (tree indent) is not the status-bar idiom; the
+    # filename content on the line survives.
+    out = denoise("│   └── parser.py\n")
+    assert "parser.py" in out
+
+
 def test_build_prompt_excludes_footer_chrome():
     p = build_prompt(CLAUDE_TAIL)
     assert "auto mode on" not in p
