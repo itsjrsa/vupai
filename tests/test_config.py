@@ -383,6 +383,59 @@ def test_set_hotkey_config_replaces_existing_values(tmp_path: Path) -> None:
     assert text.count("addressing =") == 1
 
 
+def test_set_hotkey_config_does_not_nest_under_existing_table(
+    tmp_path: Path,
+) -> None:
+    # A file whose only table header precedes the insertion point: appended
+    # scalar keys must NOT land inside [programs] (where TOML would nest them
+    # and load_config would drop them). They must load as top-level keys.
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[programs]\n"
+        'claude = "claude"\n',
+        encoding="utf-8",
+    )
+    set_hotkey_config(
+        addressing="button", hotkey=["alt_r", "ctrl_r"],
+        command_hotkey=["cmd_r"], path=p)
+    c = load_config(p)
+    assert c.hotkey == ("alt_r", "ctrl_r")
+    assert c.command_hotkey == ("cmd_r",)
+    assert c.addressing == "button"
+    # the pre-existing table survives intact
+    assert c.programs["claude"] == "claude"
+
+
+def test_update_config_does_not_nest_under_existing_table(
+    tmp_path: Path,
+) -> None:
+    # `vupai config --init` over a hand-written file with a live [programs]
+    # header at the top must append scalar keys ABOVE that header, not after
+    # it, or they silently nest into the table and are lost.
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[programs]\n"
+        'claude = "claude"\n'
+        'shell = ""\n',
+        encoding="utf-8",
+    )
+    update_config(path=p)
+    text = p.read_text(encoding="utf-8")
+    # appended scalar blocks must sit ABOVE the live table header, so a later
+    # in-place activation (`vupai keys`) does not nest them.
+    assert text.index("# hotkey =") < text.index("[programs]")
+    # end-to-end: activating the appended keys via `vupai keys` must take effect
+    set_hotkey_config(
+        addressing="button", hotkey=["alt_r", "ctrl_r"],
+        command_hotkey=["cmd_r"], path=p)
+    c = load_config(p)
+    assert c.hotkey == ("alt_r", "ctrl_r")
+    assert c.command_hotkey == ("cmd_r",)
+    # the hand-written table is preserved
+    assert c.programs["claude"] == "claude"
+    assert c.programs["shell"] == ""
+
+
 # ---------------------------------------------------------------------------
 # Gap 2: destructive-command confirmation config
 # ---------------------------------------------------------------------------
