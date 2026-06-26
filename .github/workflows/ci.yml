@@ -1,0 +1,37 @@
+name: CI
+
+# Unit tests + lint on every push to master and every PR. macOS arm64 because
+# parakeet-mlx (a dep) is Apple-Silicon only; the unit suite excludes the
+# integration (real tmux) and slow (real model/mic) markers.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Sync deps
+        run: uv sync
+      - name: Unit tests
+        run: uv run pytest -m "not integration and not slow" -q
+      - name: Lint
+        run: uv run ruff check .
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

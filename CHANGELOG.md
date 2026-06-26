@@ -11,6 +11,12 @@ a date, bumps `version` in `pyproject.toml`, and tags `vX.Y.Z`.
 
 ## [Unreleased]
 
+### Added
+
+- CI workflow (unit tests + lint on macOS, secret scan) on every push and PR.
+- Repository governance: `CONTRIBUTING.md` (not accepting external contributions
+  for now) and `SECURITY.md` (private vulnerability reporting).
+
 ## [0.2.0] - 2026-06-26
 
 ### Removed
