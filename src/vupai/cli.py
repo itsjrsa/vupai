@@ -489,6 +489,22 @@ def _cmd_reload(args: argparse.Namespace) -> int:
     return 0
 
 
+def _reload_if_running(what: str) -> None:
+    """Respawn the daemon so a just-written config change takes effect now.
+
+    Config is read once at daemon startup, so edits are invisible until the
+    daemon is respawned. Commands that mutate config call this to apply the
+    change immediately instead of nudging the user to `vupai reload` by hand.
+    A no-op when no daemon is running - the next start reads the new config
+    anyway. `what` names the change for the confirmation line (e.g. "keys").
+    """
+    if not _daemon_running():
+        return
+    _cmd_down(argparse.Namespace())  # _cmd_down ignores args; it acts on the pidfile
+    ensure_up()
+    print(f"Reloaded the daemon to apply the new {what}.")
+
+
 def _cmd_cleanup(args: argparse.Namespace) -> int:
     """`vupai cleanup`: revert vupai's leftover settings on your DEFAULT server.
 
@@ -808,23 +824,25 @@ def _cmd_mic(args: argparse.Namespace) -> int:
             print("Pick another device, or `vupai mic <name> --force` to pin "
                   "it anyway.")
             return 1
+    changed = name != cfg.mic_device
     set_mic_device(name)
     label = name if name else "system default"
     print(f"Mic set to: {label}")
-    if _daemon_running():
-        print("Run `vupai reload` for the daemon to pick it up.")
+    if changed:
+        _reload_if_running("microphone")
     return 0
 
 
-def _prompt_mic_setup(*, reader=None, runner=None, config_path: Path | None = None) -> None:
+def _prompt_mic_setup(*, reader=None, runner=None, config_path: Path | None = None) -> bool:
     """Setup step: list input devices and let the user pin one.
 
     Re-runnable (unlike the first-run journal prompt): shows the current pin and
-    a bare Enter keeps it. Silently no-ops when no devices are enumerable."""
+    a bare Enter keeps it. Silently no-ops when no devices are enumerable.
+    Returns True when it wrote a new device, so the caller can reload."""
     reader = reader if reader is not None else input
     devices = audio.list_input_devices(runner=runner)
     if not devices:
-        return
+        return False
     cfg = load_config(config_path)
     print("\nMicrophone (input device for speech):")
     for i, device in enumerate(devices):
@@ -834,20 +852,21 @@ def _prompt_mic_setup(*, reader=None, runner=None, config_path: Path | None = No
     try:
         answer = reader(f"  Choice [keep {current}]: ").strip()
     except EOFError:
-        return
+        return False
     if not answer:
-        return
+        return False
     name, error = _resolve_mic_selection(answer, devices)
     if error:
         print(f"  {error} Keeping {current}.")
-        return
+        return False
     if name:
         probe_error = audio.probe_capture(name)
         if probe_error:
             print(f"  Cannot use {name!r}: {probe_error}. Keeping {current}.")
-            return
+            return False
     set_mic_device(name, path=config_path)
     print(f"  Mic set to: {name if name else 'system default'}.")
+    return name != cfg.mic_device
 
 
 def _prompt_addressing(current: str, reader) -> str:
@@ -948,12 +967,12 @@ def _select_ptt_keys(label: str, current, *, reader, capture,
 
 
 def _prompt_hotkey_setup(*, reader=None, capture=None,
-                         config_path: Path | None = None) -> None:
+                         config_path: Path | None = None) -> bool:
     """Setup step: choose the addressing mode and push-to-talk key(s).
 
     Re-runnable (like `_prompt_mic_setup`): shows the current binding and a bare
-    Enter keeps it. Writes only when the resulting config differs, then nudges
-    `vupai reload` if a daemon is running."""
+    Enter keeps it. Writes only when the resulting config differs. Returns True
+    when it wrote a change, so the caller can reload a running daemon."""
     reader = reader if reader is not None else input
     capture = capture if capture is not None else capture_key
     cfg = load_config(config_path)
@@ -973,7 +992,7 @@ def _prompt_hotkey_setup(*, reader=None, capture=None,
 
     if (mode, hotkey, command) == (
             cfg.addressing, cfg.hotkey, cfg.command_hotkey):
-        return  # nothing changed
+        return False  # nothing changed
 
     set_hotkey_config(
         addressing=mode, hotkey=list(hotkey), command_hotkey=list(command),
@@ -983,8 +1002,7 @@ def _prompt_hotkey_setup(*, reader=None, capture=None,
               f"command={_fmt_keys(command)} (button mode).")
     else:
         print(f"  Keys set: dictation={_fmt_keys(hotkey)} (keyword mode).")
-    if _daemon_running():
-        print("  Run `vupai reload` for the daemon to pick it up.")
+    return True
 
 
 _HOSTS_TEMPLATE = """\
@@ -1054,7 +1072,8 @@ def _cmd_keys(args: argparse.Namespace) -> int:
     print(f"  dictation key(s): {_fmt_keys(cfg.hotkey)}")
     if cfg.addressing == "button":
         print(f"  command key(s):   {_fmt_keys(cfg.command_hotkey)}")
-    _prompt_hotkey_setup()
+    if _prompt_hotkey_setup():
+        _reload_if_running("keys")
     return 0
 
 
@@ -1075,10 +1094,15 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     _prompt_journal_setup()
 
     # Re-runnable: pick the input device (bare Enter keeps the current choice).
-    _prompt_mic_setup()
+    mic_changed = _prompt_mic_setup()
 
     # Re-runnable: choose the addressing mode and push-to-talk key(s).
-    _prompt_hotkey_setup()
+    keys_changed = _prompt_hotkey_setup()
+
+    # On a re-run with a daemon already up, apply any change without a manual
+    # reload; first-run setups have no daemon yet, so this is a no-op then.
+    if mic_changed or keys_changed:
+        _reload_if_running("settings")
 
     # Download the speech model up front (visible) so the daemon's first run
     # doesn't stall the hotkey on a silent multi-minute fetch.
@@ -1155,6 +1179,7 @@ def _voice_commands_text(cfg: Config) -> str:
         "  read [name]                  speak a pane's summary aloud (focused / named)",
         "  read board                    speak a status digest of every agent (also: read all)",
         "  mute / unmute                silence or restore talk-back (also: quiet / talk back)",
+        "  louder / quieter             nudge readback volume (macOS say only; also: volume up/down)",
         "  <slash> [name|all]           send a slash command (focused / named / all)",
         f'      slash: {slash_verbs}   e.g. "clear all" -> /clear to every agent',
         "",

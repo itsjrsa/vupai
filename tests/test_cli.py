@@ -818,6 +818,41 @@ def test_reload_stops_then_restarts_daemon(monkeypatch, tmp_path):
     assert spawns == [True]                         # fresh daemon spawned
 
 
+def test_reload_if_running_respawns_when_daemon_up(monkeypatch, capsys):
+    # A config-mutating command applies the change live: down + ensure_up.
+    monkeypatch.setattr(cli, "_daemon_running", lambda: True)
+    downs: list[object] = []
+    ups: list[bool] = []
+    monkeypatch.setattr(cli, "_cmd_down", lambda args: downs.append(args))
+    monkeypatch.setattr(cli, "ensure_up", lambda *a, **k: ups.append(True))
+    cli._reload_if_running("keys")
+    assert downs and ups == [True]
+    assert "Reloaded the daemon to apply the new keys." in capsys.readouterr().out
+
+
+def test_reload_if_running_noop_when_daemon_down(monkeypatch):
+    # No daemon -> nothing to respawn; the next start reads the new config.
+    monkeypatch.setattr(cli, "_daemon_running", lambda: False)
+    monkeypatch.setattr(
+        cli, "_cmd_down",
+        lambda args: pytest.fail("must not stop a daemon when none is running"))
+    monkeypatch.setattr(
+        cli, "ensure_up",
+        lambda *a, **k: pytest.fail("must not respawn when no daemon is running"))
+    cli._reload_if_running("keys")  # returns without raising = no-op
+
+
+def test_mic_change_reloads_running_daemon(fake_env, monkeypatch):
+    monkeypatch.setattr(cli.audio, "list_input_devices", lambda **k: _devs())
+    monkeypatch.setattr(cli.audio, "probe_capture", lambda name, **k: None)
+    monkeypatch.setattr(cli, "set_mic_device", lambda name: None)
+    reloads: list[str] = []
+    monkeypatch.setattr(cli, "_reload_if_running", lambda what: reloads.append(what))
+    rc = cli.main(["mic", "1"])  # pin AirPods Pro (differs from the default)
+    assert rc == 0
+    assert reloads == ["microphone"]
+
+
 # ---------------------------------------------------------------------------
 # status and _daemon subcommands
 # ---------------------------------------------------------------------------
@@ -1708,6 +1743,24 @@ def test_cmd_keys_prints_current_then_prompts(fake_env, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "button" in out
     assert "alt_r" in out
+
+
+def test_cmd_keys_reloads_when_changed(fake_env, monkeypatch):
+    reloads: list[str] = []
+    monkeypatch.setattr(cli, "_prompt_hotkey_setup", lambda: True)
+    monkeypatch.setattr(cli, "_reload_if_running", lambda what: reloads.append(what))
+    rc = cli._cmd_keys(cli.build_parser().parse_args(["keys"]))
+    assert rc == 0
+    assert reloads == ["keys"]
+
+
+def test_cmd_keys_no_reload_when_unchanged(fake_env, monkeypatch):
+    reloads: list[str] = []
+    monkeypatch.setattr(cli, "_prompt_hotkey_setup", lambda: False)
+    monkeypatch.setattr(cli, "_reload_if_running", lambda what: reloads.append(what))
+    rc = cli._cmd_keys(cli.build_parser().parse_args(["keys"]))
+    assert rc == 0
+    assert reloads == []
 
 
 # ---------------------------------------------------------------------------

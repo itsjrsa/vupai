@@ -195,6 +195,7 @@ cheat sheet tailored to your config.
 | *"everyone, pull main"* | **Broadcast** the message to every named agent |
 | *"connect to box"* / *"ssh box"* | SSH the focused pane into a configured host |
 | *"mute"* / *"unmute"* / *"stop"* | Silence/restore talk-back, or cut off the current read |
+| *"louder"* / *"quieter"* | Nudge readback volume (`tts_volume`, macOS `say` only) |
 | *"atlas, run the tests"* | Not a command, so it falls through to **name addressing** |
 
 ## Commands
@@ -248,6 +249,13 @@ pre-filled with **every key at its default and an inline comment explaining it**
 the file itself is the reference. It's left untouched if one already exists, and
 `vupai config --init` tops it up with any keys a newer version added without
 disturbing your edits. Editing is optional; open the file to see them all.
+
+**Applying changes.** The daemon reads its config once at startup, so a change
+takes effect only after it respawns. The interactive commands (`vupai setup`,
+`vupai keys`, `vupai mic`) apply their change automatically: if a daemon is
+running, they reload it for you. But edits you make **by hand** to
+`config.toml` or `hosts.toml` are not watched, so run `vupai reload` to pick
+them up (or `vupai --reload` to reload and attach in one step).
 
 The keys most people touch:
 
