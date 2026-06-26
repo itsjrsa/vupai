@@ -23,6 +23,8 @@ uv run pytest -m "not integration and not slow" -q   # unit suite (no tmux/mic/m
 uv run pytest -m integration -q                      # needs a real tmux (isolated -L socket)
 uv run pytest -m slow -q                             # needs the real Parakeet model + a wav fixture
 uv run ruff check .                                  # lint
+uv run pre-commit install                            # one-time: enable the gitleaks secret-scan hook
+uv run pre-commit run --all-files                    # scan the whole tree for secrets on demand
 uv run python scripts/check_voice.py                 # type/debug voice actions w/o mic or daemon (-h for flags)
 vupai doctor                                         # check macOS permissions, print fix steps
 vupai setup                                          # interactive: probe + deep-link each missing-permission pane

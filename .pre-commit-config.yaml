@@ -1,0 +1,8 @@
+# Pre-commit hooks. Install once per clone: `uv run pre-commit install`.
+# Run on demand against everything: `uv run pre-commit run --all-files`.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      # Blocks the commit if a secret (key, token, credential) is staged.
+      - id: gitleaks
