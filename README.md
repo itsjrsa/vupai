@@ -328,6 +328,25 @@ bind -T copy-mode-vi WheelDownPane send -X scroll-down
 > These apply **inside vupai's own session** (tmux still sources your
 > `~/.tmux.conf` on vupai's dedicated server); your default tmux is untouched.
 
+## Roadmap
+
+vupai is young and evolving. A few things on the horizon (in no particular
+order):
+
+- **Tighter pane-state and activity awareness** so routing and the board react
+  faster to what each agent is actually doing.
+- **Broader agent-CLI coverage**: validate the flow end-to-end with Codex,
+  opencode, Gemini, and other agentic tools (testing so far has centered on
+  Claude Code).
+- **Smarter addressing**: more forgiving name matching and disambiguation when
+  several agents answer to similar names.
+- **More voice commands** for everyday tmux moves, so less reaching for the
+  prefix key.
+- **Linux support** is a long shot (the speech stack is Apple-MLX-only today),
+  but a pluggable transcription backend would open the door.
+
+Ideas and contributions are welcome: open an issue or PR.
+
 ## Uninstall
 
 ```bash
