@@ -53,6 +53,15 @@ Issues = "https://github.com/itsjrsa/vupai/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/vupai"]
 
+[tool.hatch.build.targets.sdist]
+# Ship only what an installer needs; keep agent/dev scaffolding out of the tarball.
+include = [
+    "src/vupai",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

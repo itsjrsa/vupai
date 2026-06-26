@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/vupai-lockup-dark.png">
-    <img alt="vupai" src="./assets/brand/vupai-lockup.png" width="260">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/itsjrsa/vupai/master/assets/brand/vupai-lockup-dark.png">
+    <img alt="vupai" src="https://raw.githubusercontent.com/itsjrsa/vupai/master/assets/brand/vupai-lockup.png" width="260">
   </picture>
 </p>
 
@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/vupai/"><img alt="PyPI" src="https://img.shields.io/pypi/v/vupai.svg"></a>
   <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/python-%3E%3D3.11-brightgreen.svg"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-black.svg">
@@ -76,23 +77,28 @@ hold dictation key (Right-Option) → record (sox) → transcribe (Parakeet) →
   ```bash
   brew install tmux sox
   ```
-- Python ≥ 3.11 and [`uv`](https://docs.astral.sh/uv/).
+- Python ≥ 3.11 and [`uv`](https://docs.astral.sh/uv/), used to install the CLI:
+  ```bash
+  brew install uv          # or: curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
 
 ## Install
 
-After the Homebrew step above, install the `vupai` CLI in its own isolated
-environment straight from the repo with [`uv`](https://docs.astral.sh/uv/):
+After the Homebrew step above, install the `vupai` CLI from PyPI in its own
+isolated environment with [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install git+https://github.com/itsjrsa/vupai
+uv tool install vupai
 ```
 
-This puts `vupai` on your `PATH`. (`pipx install git+https://github.com/itsjrsa/vupai`
-works the same way.) The Parakeet model (~0.6B, ~2 GB) downloads automatically on
-first transcription.
+This puts `vupai` on your `PATH`. The Parakeet model (~0.6B, ~2 GB) downloads
+automatically on first transcription.
 
-To upgrade later: `uv tool upgrade vupai`. Not on PyPI yet; install from git or
-[from source](#from-source-development).
+To upgrade later: `uv tool upgrade vupai`.
+
+> [!NOTE]
+> Prefer the bleeding edge? Install straight from git instead:
+> `uv tool install git+https://github.com/itsjrsa/vupai`.
 
 ### From source (development)
 
@@ -357,7 +363,7 @@ Ideas and contributions are welcome: open an issue or PR.
 ```bash
 vupai down                       # stop the background daemon
 vupai cleanup                    # revert any leftover settings on your default tmux server
-uv tool uninstall vupai          # remove the CLI (use `pipx uninstall vupai` if you installed with pipx)
+uv tool uninstall vupai          # remove the CLI
 ```
 
 That removes the program. To also delete what it created on disk:
