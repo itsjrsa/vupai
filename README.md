@@ -176,6 +176,11 @@ Once attached, you talk to vupai with **two push-to-talk keys**:
 Both defaults are customizable: set `hotkey` / `command_hotkey` in the config (each
 takes a list, so you can bind several keys to one action).
 
+> vupai only listens for keyboard keys. To use a mouse button or other input as a
+> push-to-talk key, remap it to a keyboard key (e.g. `F13`) with a tool like
+> [Karabiner-Elements](https://karabiner-elements.pqrs.org/) or BetterTouchTool,
+> then bind that key here.
+
 ### Voice commands
 
 Hold the **system key** and say any of these. Run `vupai voice-commands` for a
