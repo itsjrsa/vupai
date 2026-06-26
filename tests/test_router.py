@@ -509,3 +509,31 @@ def test_match_leading_names_empty_message():
     panes = [_pane("%1", "echo"), _pane("%2", "sage")]
     names, msg = match_leading_names("echo and sage", panes)
     assert names == ("echo", "sage") and msg == ""
+
+
+def test_match_leading_names_adjacency_no_and():
+    # Juxtaposed names with no connector still chain ("sage orion say hello").
+    panes = [_pane("%1", "sage"), _pane("%2", "orion")]
+    names, msg = match_leading_names("sage orion say hello", panes)
+    assert names == ("sage", "orion") and msg == "say hello"
+
+
+def test_match_leading_names_adjacency_requires_exact():
+    # A near-callsign 2nd token (oryon ~ orion) does NOT chain by adjacency -
+    # adjacency is exact-only; the run stops and "oryon ..." is the message.
+    panes = [_pane("%1", "sage"), _pane("%2", "orion")]
+    names, msg = match_leading_names("sage oryon say hello", panes)
+    assert names == ("sage",) and msg == "oryon say hello"
+
+
+def test_match_leading_names_mixed_adjacency_and_connector():
+    panes = [_pane("%1", "sage"), _pane("%2", "orion"), _pane("%3", "echo")]
+    names, msg = match_leading_names("sage orion and echo go", panes)
+    assert names == ("sage", "orion", "echo") and msg == "go"
+
+
+def test_match_leading_names_adjacency_stops_at_non_callsign():
+    # "command" is not an exact callsign -> run stops after the lead name.
+    panes = [_pane("%1", "comet"), _pane("%2", "sage")]
+    names, msg = match_leading_names("comet command build", panes)
+    assert names == ("comet",) and msg == "command build"

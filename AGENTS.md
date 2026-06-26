@@ -235,8 +235,13 @@ Invariants) and talks to tmux purely via the CLI.
   broadcast, works in both addressing modes, and - unlike the session-scoped
   broadcast_word fan-out - targets the named panes across the server (they were
   named explicitly). One name, or 2+ names with no message, falls through to
-  single-pane routing. The connector is the word "and" (a bare comma chains only
-  when paired with "and").
+  single-pane routing. Names chain either with the word "and" (the connector,
+  which uses the full fuzzy/phonetic cascade so a misheard name still resolves) or
+  by bare adjacency ("sage orion say hello"), where an adjacency-chained name must
+  match an open callsign EXACTLY (case-insensitive). Exact-only adjacency contains
+  the swallow risk - many callsigns are real English words, so loose fuzzy
+  adjacency could absorb a dictated message word. The lead name always uses the
+  full cascade.
 - **Slash commands** (`slash_commands` config map, default `clear`->`/clear`,
   `compact`->`/compact`): grammar is `<verb> [name|all]` (verb leads, matching
   focus/close/swap); also accepts an and-joined list of names ("clear echo and sage").
