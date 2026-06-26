@@ -326,12 +326,17 @@ tiles the window · two push-to-talk keys: the dictation key keeps `alt_r`
   or release adds its user-facing changes under `## [Unreleased]`
   (Added/Changed/Fixed/Removed); when proposing a PR or release, propose the
   entries too. **Cutting a release**: rename `[Unreleased]` to the new version +
-  date, bump `version` in `pyproject.toml`, update the compare links, push the
-  `vX.Y.Z` tag, then **publish a GitHub Release** for that tag with the version's
-  changelog section as the notes. Publishing the Release (not the tag push) is the
-  single trigger for `.github/workflows/publish.yml`, which builds and then waits
-  for manual approval on the `pypi` environment before uploading to PyPI (trusted
-  publishing, `v*` tags only). So a release ships only when you approve it.
+  date, bump `version` in `pyproject.toml`, update the compare links, **bump the
+  PyPI badge cache-buster in `README.md`** (`img.shields.io/pypi/v/vupai.svg?v=X.Y.Z`
+  to the new version), push the `vX.Y.Z` tag, then **publish a GitHub Release** for
+  that tag with the version's changelog section as the notes. Publishing the
+  Release (not the tag push) is the single trigger for
+  `.github/workflows/publish.yml`, which builds and then waits for manual approval
+  on the `pypi` environment before uploading to PyPI (trusted publishing, `v*` tags
+  only). So a release ships only when you approve it. The badge reads the live
+  version from PyPI, but every cache layer (browser, shields CDN, GitHub/PyPI image
+  proxy) keys on the URL, so a stale `?v=` leaves the badge showing the previous
+  version until the query string changes.
 - **Adding a `Config` field:** also add a `(name, block)` entry to
   `_FIELD_BLOCKS` in `config.py` (the block is the field's doc line(s) + its
   commented default: a scalar `# key = default`, or a commented `[table]` /

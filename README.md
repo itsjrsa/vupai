@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/vupai/"><img alt="PyPI" src="https://img.shields.io/pypi/v/vupai.svg?v=0.1.0"></a>
+  <a href="https://pypi.org/project/vupai/"><img alt="PyPI" src="https://img.shields.io/pypi/v/vupai.svg?v=0.3.0"></a>
   <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/python-%3E%3D3.11-brightgreen.svg"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-black.svg">
