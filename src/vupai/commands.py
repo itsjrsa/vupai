@@ -24,7 +24,7 @@ from vupai.router import (
 )
 from vupai.tmuxio import TmuxError
 
-_CREATE_VERBS = ("create", "make", "add", "open", "new")
+_CREATE_VERBS = ("create", "make", "add", "open", "new", "start")
 # Curated ASR mishearings of the lead verb "create" (ate/hate/eight/crate). Same
 # rationale as _UNIT_ALIASES: scoring would over-match, so the set is explicit.
 # These ARE real words, but only matter on the button command key (plain dictation
@@ -122,6 +122,13 @@ _UNITS = {
 # pane" == "create one pane"). Scoped to the create parse only - never fed to the
 # global word_to_int, so these can't leak into router number-routing or dictation.
 _ONE_WORDS = ("a", "an", "another")
+# Curated ASR mishearings of a COUNT word -> int, consulted only after a create
+# verb and before word_to_int. Scoped to the create parse (like _ONE_WORDS) so it
+# can never leak into router number-routing or dictation, where "to" the
+# preposition is everywhere. "two" lands as "to" by far the most often ("open to
+# shell" == "open two shell"); "ten" lands as "tent". Deterministic and contained:
+# a wrong guess still needs a valid trailing program, else the parse falls through.
+_COUNT_ALIASES = {"to": 2, "too": 2, "tent": 10}
 # Descriptive filler that may sit between the count and the unit/program in a
 # create utterance ("create a new pane", "create two new shell panes"). "new" is
 # already a create verb, so as a mid-token it carries no extra meaning - drop it
@@ -260,7 +267,8 @@ def _parse_create(toks: list[str], programs: dict[str, str]) -> Command | None:
         return None
     if not rest:
         return None
-    n = 1 if rest[0] in _ONE_WORDS else word_to_int(rest[0])
+    n = (1 if rest[0] in _ONE_WORDS
+         else _COUNT_ALIASES.get(rest[0], word_to_int(rest[0])))
     if n is None or not (1 <= n <= MAX_CREATE_COUNT):
         return None
     # The trailing unit noun is optional ("create two" == "create two panes").
@@ -601,10 +609,16 @@ def intent_phrase(cmd: Command) -> str:
     speaks only on failure, so a success is just this one immediate phrase."""
     if cmd.kind == "create":
         # "" is an explicit plain-shell request; calling that "an agent" misleads.
-        # None (config default) keeps the agent-first wording for the common case.
+        # A named program is voiced by name ("a codex agent"); None (config
+        # default) keeps the bare "agent" wording for the common case.
         if cmd.program == "":
             return "opening a shell" if cmd.count == 1 else f"opening {cmd.count} shells"
-        return "opening an agent" if cmd.count == 1 else f"opening {cmd.count} agents"
+        label = program_label(cmd.program) if cmd.program else ""
+        noun = f"{label} agent" if label else "agent"
+        if cmd.count == 1:
+            article = "an" if noun[0] in "aeiou" else "a"
+            return f"opening {article} {noun}"
+        return f"opening {cmd.count} {noun}s"
     if cmd.kind == "close":
         if cmd.names:
             return f"closing {_speak_join(cmd.names)}"
@@ -729,7 +743,14 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
         spoken = f"{assigned[0]} is up"
     else:
         # `program` is the resolved value (degraded to "" if missing or a shell).
-        noun = "shell" if not program else "agent"
+        # Mirror intent_phrase: "" -> shell, an explicitly-named program -> by
+        # name, the config default (cmd.program is None) -> bare "agent".
+        if not program:
+            noun = "shell"
+        elif cmd.program is None:
+            noun = "agent"
+        else:
+            noun = f"{program_label(program)} agent"
         spoken = f"{len(assigned)} {noun}s up: {_speak_join(assigned)}"
     return CommandResult(True, f"created {cmd.count} panes: {' '.join(assigned)}{note}",
                          spoken=spoken)

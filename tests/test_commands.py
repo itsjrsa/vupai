@@ -268,6 +268,34 @@ def test_parse_create_codex_homophone():
         assert c is not None and c.kind == "create" and c.program == "codex", spoken
 
 
+def test_parse_create_claude_homophone():
+    # "claude" is never transcribed literally by Parakeet; it lands as
+    # "cloth"/"cloud" (and plural "cloths"). The curated alias recovers it so the
+    # default agent is selectable by name, not only via the "open one agent" path.
+    for spoken in ("open one cloth", "open one cloud", "open two cloths"):
+        c = _parse_btn(spoken)
+        assert c is not None and c.kind == "create" and c.program == "claude", spoken
+
+
+def test_parse_create_count_two_misheard_as_to():
+    # "two" mishears as "to" far more often than not ("open to shell" == "open
+    # two shell"). The create-scoped count alias recovers it; "tent" -> ten.
+    c = _parse_btn("open to shell")
+    assert c is not None and c.kind == "create" and c.count == 2 and c.program == ""
+    c = _parse_btn("open to codex")
+    assert c is not None and c.kind == "create" and c.count == 2 and c.program == "codex"
+    c = _parse_btn("open tent")
+    assert c is not None and c.kind == "create" and c.count == 10
+
+
+def test_count_alias_does_not_leak_to_router():
+    # "to"/"tent" only mean numbers inside a create parse; they must not become a
+    # global number word (where "to" the preposition is everywhere).
+    from vupai.router import word_to_int
+    assert word_to_int("to") is None
+    assert word_to_int("tent") is None
+
+
 def test_parse_create_opencode_split_phrase():
     # "opencode" is transcribed as the two-token split "open code"; the phrase
     # alias recovers it even though "open" is itself a create verb.
@@ -1777,8 +1805,12 @@ def test_intent_phrase_is_present_tense_per_kind():
     # An explicit shell (program == "") must not be voiced as "an agent".
     assert intent_phrase(Command(kind="create", count=1, program="")) == "opening a shell"
     assert intent_phrase(Command(kind="create", count=2, program="")) == "opening 2 shells"
-    # A named program is still an agent.
-    assert intent_phrase(Command(kind="create", count=1, program="claude")) == "opening an agent"
+    # A named program is voiced by name, with the right article.
+    assert intent_phrase(Command(kind="create", count=1, program="claude")) == "opening a claude agent"
+    assert intent_phrase(Command(kind="create", count=1, program="codex")) == "opening a codex agent"
+    assert intent_phrase(Command(kind="create", count=1, program="opencode")) == "opening an opencode agent"
+    assert intent_phrase(Command(kind="create", count=3, program="codex")) == "opening 3 codex agents"
+    assert intent_phrase(Command(kind="create", count=1, program="/usr/bin/codex --foo")) == "opening a codex agent"
     assert intent_phrase(Command(kind="focus", name="nova")) == "switching to nova"
     assert intent_phrase(Command(kind="swap", name="a", name_b="b")) == "swapping a and b"
     assert intent_phrase(Command(kind="close_others")) == "closing the other agents"
@@ -1825,6 +1857,11 @@ def test_execute_create_has_say_friendly_spoken_ack(monkeypatch):
     three = execute_command(Command(kind="create", count=3, unit="pane"), reg,
                             Config(), io=FakeTmux(new_ids=["%1", "%2", "%3"]))
     assert three.spoken == "3 agents up: astra, atlas, and sage"
+    # An explicitly-named program is voiced by name in the multi-pane ack.
+    reg = FakeRegistry([focused], focused=focused)
+    named = execute_command(Command(kind="create", count=2, unit="pane", program="codex"),
+                            reg, Config(), io=FakeTmux(new_ids=["%1", "%2"]))
+    assert named.spoken == "2 codex agents up: astra and atlas"
 
 
 def test_execute_swap_and_broadcast_spoken_drops_symbols():
