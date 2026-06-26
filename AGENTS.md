@@ -325,11 +325,13 @@ tiles the window · two push-to-talk keys: the dictation key keeps `alt_r`
 - **Changelog:** keep `CHANGELOG.md` (Keep a Changelog format) current. Every PR
   or release adds its user-facing changes under `## [Unreleased]`
   (Added/Changed/Fixed/Removed); when proposing a PR or release, propose the
-  entries too. **Cutting a release** renames `[Unreleased]` to the new version +
-  date, bumps `version` in `pyproject.toml`, updates the compare links, and tags
-  `vX.Y.Z`. **A pushed `v*` tag (or a published GitHub Release) auto-publishes to
-  PyPI** via `.github/workflows/publish.yml` (trusted publishing), so tag only
-  when you mean to ship.
+  entries too. **Cutting a release**: rename `[Unreleased]` to the new version +
+  date, bump `version` in `pyproject.toml`, update the compare links, push the
+  `vX.Y.Z` tag, then **publish a GitHub Release** for that tag with the version's
+  changelog section as the notes. Publishing the Release (not the tag push) is the
+  single trigger for `.github/workflows/publish.yml`, which builds and then waits
+  for manual approval on the `pypi` environment before uploading to PyPI (trusted
+  publishing, `v*` tags only). So a release ships only when you approve it.
 - **Adding a `Config` field:** also add a `(name, block)` entry to
   `_FIELD_BLOCKS` in `config.py` (the block is the field's doc line(s) + its
   commented default: a scalar `# key = default`, or a commented `[table]` /

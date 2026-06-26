@@ -1,11 +1,11 @@
 name: Publish to PyPI
 
-# Publishes on a pushed version tag (e.g. v0.1.0) or a published GitHub Release.
-# Uses PyPI Trusted Publishing (OIDC) - no API tokens stored in the repo.
+# Publishes when a GitHub Release is published (the single ship action: it carries
+# the release notes AND drives the PyPI upload). Triggering on the release only
+# (not also on the tag push) avoids a duplicate run. The release's tag must match
+# v* (the pypi environment's deployment policy) and the publish waits for manual
+# approval. Uses PyPI Trusted Publishing (OIDC) - no API tokens stored in the repo.
 on:
-  push:
-    tags:
-      - "v*"
   release:
     types: [published]
 
