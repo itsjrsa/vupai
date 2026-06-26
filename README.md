@@ -22,9 +22,11 @@ you're looking at, or an agent you call by name (*"atlas, run the tests"*).
 Speech-to-text runs on-device with NVIDIA Parakeet (via Apple MLX): no cloud,
 no API keys.
 
-Built for a tmux-centric workflow where you keep several coding agents (Claude
-Code) and shells open at once and want to drive them by voice without reaching
-for the mouse.
+Built for a tmux-centric workflow where you keep several coding agents and
+shells open at once and want to drive them by voice without reaching for the
+mouse. New panes launch an agent by default (`claude` out of the box) and should
+work with other agentic coding tools (Codex, Gemini, …), though testing so far
+has focused on Claude Code.
 
 ## Why not plain tmux?
 
@@ -47,7 +49,7 @@ are juggling several agents and want to drive them hands-on-keyboard-optional.
 ## How it works
 
 ```
-hold Right-Option → record (sox) → transcribe (Parakeet) → route → paste into a tmux pane → Enter
+hold dictation key (Right-Option) → record (sox) → transcribe (Parakeet) → route → paste into a tmux pane → Enter
 ```
 
 - **Routing is hybrid.** By default your speech goes to the **focused** pane. If
@@ -122,7 +124,7 @@ vupai setup
 ```
 
 It walks you through everything first-run: checks the Homebrew tools, captures
-journaling consent, lets you pick a mic and your push-to-talk key(s)/addressing
+consent for the local transcript journal, lets you pick a mic and your push-to-talk key(s)/addressing
 mode, downloads the speech model up front (so the first hotkey press doesn't
 stall on a silent fetch), then deep-links you to each macOS permission pane that
 still needs your terminal app enabled. It's safe to re-run any time.
@@ -217,9 +219,9 @@ who's done, who's stuck, and who needs you.
 
 - **Tool-agnostic.** Works with any agentic CLI, not just Claude Code: pane
   activity is detected from terminal-output churn, and the summarizer is a
-  swappable command, not a fixed model. The pane's scrollback tail is appended as
-  the final argument and the last stdout line becomes the summary, so any CLI that
-  fits picks both the **backend and the model**:
+  swappable command (`board_summarizer_cmd`), not a fixed model. vupai appends the
+  pane's scrollback tail as the command's last argument and takes its last stdout
+  line as the summary, so any command that follows that contract works:
 
   | To summarize with… | Set `board_summarizer_cmd` to |
   |---|---|
@@ -267,6 +269,30 @@ keys to the same action (any one triggers it) and keep one config that works acr
 keyboards with different layouts. `keyword` mode is the legacy single-key mode: it
 has no command layer - only the `broadcast_word` ("everyone ...") leads; everything
 else is name-addressed or dictated verbatim to the focused pane.
+
+### Remote machines (SSH)
+
+The *"ssh box"* / *"connect to box"* voice command opens a new pane and SSHes into
+a host you name. Hosts live in a separate file, `~/.config/vupai/hosts.toml`. Write
+a commented template with:
+
+```bash
+vupai hosts --init        # scaffold ~/.config/vupai/hosts.toml
+vupai hosts               # list what's configured
+```
+
+Each host is one table; only `host` is required (SSH key auth must already work):
+
+```toml
+[hosts.box]
+user = "me"               # optional; omit to use ~/.ssh/config defaults
+host = "box.example.com"  # required: hostname/IP or an ssh-config Host alias
+port = 22                 # optional
+program = "claude"        # optional; omit to land in a plain login shell (default)
+```
+
+Say the table name (*"ssh box"*) to connect. By default you land in a login shell,
+so you can `cd` into a project first; set `program` to auto-start an agent instead.
 
 ## tmux tips
 
