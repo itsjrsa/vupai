@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/itsjrsa/vupai/master/assets/brand/vupai-lockup-dark.png">
-    <img alt="vupai" src="https://raw.githubusercontent.com/itsjrsa/vupai/master/assets/brand/vupai-lockup.png" width="260">
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/vupai-lockup-dark.png">
+    <img alt="vupai" src="./assets/brand/vupai-lockup.png" width="260">
   </picture>
 </p>
 
