@@ -334,7 +334,12 @@ tiles the window · two push-to-talk keys: the dictation key keeps `alt_r`
   unsure between patch and minor, ask: did a user gain something they can do, or
   did something they relied on change? If yes, it is minor. (Example: the 0.3.0
   cut added a new spoken-feedback behavior + made named-agent voice creation work,
-  so it was minor, not patch.)
+  so it was minor, not patch.) **Permission:** agents may cut MINOR and PATCH
+  releases under the normal "never push to `master` without asking" rule. A
+  **MAJOR** bump (to `1.0.0` or beyond) ALWAYS requires the maintainer's explicit
+  approval for that specific bump - never propose it as a default, never bundle it
+  into other work, and do not cut it without an unambiguous "yes, bump major" in
+  the current request.
 - **Changelog:** keep `CHANGELOG.md` (Keep a Changelog format) current. Every PR
   or release adds its user-facing changes under `## [Unreleased]`
   (Added/Changed/Fixed/Removed); when proposing a PR or release, propose the
