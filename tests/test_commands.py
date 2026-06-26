@@ -1827,11 +1827,13 @@ def test_intent_phrase_is_present_tense_per_kind():
     assert intent_phrase(Command(kind="create", count=1, program="")) == "opening a shell"
     assert intent_phrase(Command(kind="create", count=2, program="")) == "opening 2 shells"
     # A named program is voiced by name, with the right article.
-    assert intent_phrase(Command(kind="create", count=1, program="claude")) == "opening a claude agent"
-    assert intent_phrase(Command(kind="create", count=1, program="codex")) == "opening a codex agent"
-    assert intent_phrase(Command(kind="create", count=1, program="opencode")) == "opening an opencode agent"
-    assert intent_phrase(Command(kind="create", count=3, program="codex")) == "opening 3 codex agents"
-    assert intent_phrase(Command(kind="create", count=1, program="/usr/bin/codex --foo")) == "opening a codex agent"
+    def voiced(**kw):
+        return intent_phrase(Command(kind="create", **kw))
+    assert voiced(count=1, program="claude") == "opening a claude agent"
+    assert voiced(count=1, program="codex") == "opening a codex agent"
+    assert voiced(count=1, program="opencode") == "opening an opencode agent"
+    assert voiced(count=3, program="codex") == "opening 3 codex agents"
+    assert voiced(count=1, program="/usr/bin/codex --foo") == "opening a codex agent"
     assert intent_phrase(Command(kind="focus", name="nova")) == "switching to nova"
     assert intent_phrase(Command(kind="swap", name="a", name_b="b")) == "swapping a and b"
     assert intent_phrase(Command(kind="close_others")) == "closing the other agents"
