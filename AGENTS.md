@@ -322,6 +322,14 @@ tiles the window · two push-to-talk keys: the dictation key keeps `alt_r`
   `--pane`/`--summarizer`/`--tts-cmd`/`--config` make it a deterministic harness.
 - Conventional commit messages, **no Claude attribution / co-authored-by lines**.
   Never push to `master` without asking.
+- **Changelog:** keep `CHANGELOG.md` (Keep a Changelog format) current. Every PR
+  or release adds its user-facing changes under `## [Unreleased]`
+  (Added/Changed/Fixed/Removed); when proposing a PR or release, propose the
+  entries too. **Cutting a release** renames `[Unreleased]` to the new version +
+  date, bumps `version` in `pyproject.toml`, updates the compare links, and tags
+  `vX.Y.Z`. **A pushed `v*` tag (or a published GitHub Release) auto-publishes to
+  PyPI** via `.github/workflows/publish.yml` (trusted publishing), so tag only
+  when you mean to ship.
 - **Adding a `Config` field:** also add a `(name, block)` entry to
   `_FIELD_BLOCKS` in `config.py` (the block is the field's doc line(s) + its
   commented default: a scalar `# key = default`, or a commented `[table]` /
