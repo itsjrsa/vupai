@@ -153,7 +153,12 @@ _UNIT_ALIASES = {
 # "colex"/"co" join "codecs"/"codec" from the wild ("open one codex" -> "open one
 # colex" / "open one co"). All implausible-as-literal program tokens after a count.
 _PROGRAM_ALIASES = {"codecs": "codex", "codec": "codex", "colex": "codex",
-                    "co": "codex"}
+                    "co": "codex",
+                    # "claude" is never transcribed literally by Parakeet; it
+                    # lands as "cloth"/"cloud" (and plural "cloths"). Without
+                    # these the only way to launch claude was the unit-noun
+                    # path ("open one agent"), never by name.
+                    "cloth": "claude", "cloths": "claude", "cloud": "claude"}
 # Program names the ASR splits into two tokens. "opencode" comes back as the
 # literal phrase "open code" - and since "open" is itself a create verb, this can
 # never match the single-token program check, so the whole phrase is mapped here.
@@ -595,6 +600,10 @@ def intent_phrase(cmd: Command) -> str:
     talkback / macro carry their own feedback). The result ack (post-execute) then
     speaks only on failure, so a success is just this one immediate phrase."""
     if cmd.kind == "create":
+        # "" is an explicit plain-shell request; calling that "an agent" misleads.
+        # None (config default) keeps the agent-first wording for the common case.
+        if cmd.program == "":
+            return "opening a shell" if cmd.count == 1 else f"opening {cmd.count} shells"
         return "opening an agent" if cmd.count == 1 else f"opening {cmd.count} agents"
     if cmd.kind == "close":
         if cmd.names:
@@ -719,7 +728,9 @@ def _exec_create(cmd: Command, registry, config, io) -> CommandResult:
     if len(assigned) == 1:
         spoken = f"{assigned[0]} is up"
     else:
-        spoken = f"{len(assigned)} agents up: {_speak_join(assigned)}"
+        # `program` is the resolved value (degraded to "" if missing or a shell).
+        noun = "shell" if not program else "agent"
+        spoken = f"{len(assigned)} {noun}s up: {_speak_join(assigned)}"
     return CommandResult(True, f"created {cmd.count} panes: {' '.join(assigned)}{note}",
                          spoken=spoken)
 

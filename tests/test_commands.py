@@ -1774,6 +1774,11 @@ def test_intent_phrase_is_present_tense_per_kind():
     assert intent_phrase(Command(kind="close", name="sage")) == "closing sage"
     assert intent_phrase(Command(kind="create", count=1)) == "opening an agent"
     assert intent_phrase(Command(kind="create", count=3)) == "opening 3 agents"
+    # An explicit shell (program == "") must not be voiced as "an agent".
+    assert intent_phrase(Command(kind="create", count=1, program="")) == "opening a shell"
+    assert intent_phrase(Command(kind="create", count=2, program="")) == "opening 2 shells"
+    # A named program is still an agent.
+    assert intent_phrase(Command(kind="create", count=1, program="claude")) == "opening an agent"
     assert intent_phrase(Command(kind="focus", name="nova")) == "switching to nova"
     assert intent_phrase(Command(kind="swap", name="a", name_b="b")) == "swapping a and b"
     assert intent_phrase(Command(kind="close_others")) == "closing the other agents"
