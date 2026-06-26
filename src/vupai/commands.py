@@ -589,7 +589,7 @@ def intent_phrase(cmd: Command) -> str:
     if cmd.kind == "board":
         return "opening the board"
     if cmd.kind == "broadcast":
-        return "broadcasting"
+        return f"broadcasting to {_speak_join(cmd.names)}" if cmd.names else "broadcasting"
     if cmd.kind == "slash":
         return f"sending {cmd.text.lstrip('/')}"
     if cmd.kind == "ssh":
@@ -1161,6 +1161,17 @@ def _exec_macro(cmd: Command, registry, config, io) -> CommandResult:
 
 
 def _exec_broadcast(cmd: Command, registry, config, inject_fn) -> CommandResult:
+    if cmd.names:
+        if not cmd.text.strip():
+            return CommandResult(False, "nothing to broadcast")
+        hits, misses = _resolve_each(cmd.names, registry.panes, config.fuzzy_cutoff)
+        sent = []
+        for pid, name in hits:
+            if _inject(inject_fn, pid, cmd.text, config):
+                sent.append(name)
+            else:
+                misses.append(f"failed to send to {name}")
+        return _many_result("broadcast to", sent, misses, bool(sent))
     if not cmd.text.strip():
         return CommandResult(False, "nothing to broadcast")
     focused = registry.focused()

@@ -22,8 +22,8 @@ def test_load_hosts_missing_file_is_empty(tmp_path):
 def test_load_hosts_parses_all_fields(tmp_path):
     path = _write(tmp_path, """
 [hosts.vm1]
-user = "jose"
-host = "10.0.0.5"
+user = "me"
+host = "box.example.com"
 program = "codex"
 
 [hosts.gpubox]
@@ -36,7 +36,7 @@ host = "staging.example.com"
 """)
     hosts = load_hosts(path)
     assert hosts["vm1"] == Host(
-        name="vm1", host="10.0.0.5", user="jose", port=None, program="codex"
+        name="vm1", host="box.example.com", user="me", port=None, program="codex"
     )
     assert hosts["gpubox"] == Host(
         name="gpubox", host="gpu.example.com", user=None, port=2222, program=None
@@ -49,7 +49,7 @@ host = "staging.example.com"
 def test_load_hosts_skips_entry_without_host(tmp_path):
     path = _write(tmp_path, """
 [hosts.broken]
-user = "jose"
+user = "me"
 
 [hosts.ok]
 host = "1.2.3.4"
@@ -85,7 +85,7 @@ def test_load_hosts_unreadable_path_returns_empty(tmp_path):
 
 
 _HOSTS = {
-    "vm1": Host(name="vm1", host="10.0.0.5"),
+    "vm1": Host(name="vm1", host="box.example.com"),
     "gpubox": Host(name="gpubox", host="gpu.example.com"),
 }
 

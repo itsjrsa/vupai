@@ -995,8 +995,8 @@ _HOSTS_TEMPLATE = """\
 # Set `program` on a host to auto-start that agent instead.
 #
 # [hosts.vm1]
-# user = "jose"          # optional; omit to use ~/.ssh/config defaults
-# host = "10.0.0.5"      # required: hostname/IP or an ssh-config Host alias
+# user = "me"            # optional; omit to use ~/.ssh/config defaults
+# host = "box.example.com"  # required: hostname/IP or an ssh-config Host alias
 # port = 22              # optional
 # program = "claude"     # optional; omit for a plain shell (the default)
 """

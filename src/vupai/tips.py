@@ -82,8 +82,10 @@ def build_tips(cfg) -> list[str]:
         commands += list(cfg.macros)
         if cfg.programs:
             commands.append(f"create one {sorted(cfg.programs)[0]} pane")
-    # Broadcast exists in both addressing modes.
+    # Broadcast exists in both addressing modes; subset broadcast (a leading
+    # "and"-joined name run + a message) is a routing extension, so it does too.
     commands.append(f"{cfg.broadcast_word} ship it")
+    commands.append("nova and atlas, run tests")
     return [_render(t) for t in _interleave(commands, hints)]
 
 

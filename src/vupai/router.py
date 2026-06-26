@@ -257,6 +257,60 @@ def route(transcript: str, panes: list[Pane], focused_id: str | None,
     return fallback()
 
 
+def match_leading_names(
+    transcript: str, panes: list[Pane], *, fuzzy_cutoff: int = 82,
+    ambiguity_margin: int = 5,
+) -> tuple[tuple[str, ...], str]:
+    """Consume a leading run of pane names -> (names, message).
+
+    The first token must resolve to a pane (the full name cascade). The run then
+    extends in one of two ways at each step:
+      - "and" + name: the token after "and" resolves via the full cascade
+        (exact/fuzzy/phonetic) - the explicit connector tolerates a misheard name;
+      - adjacency (no connector): the next token must match an open callsign
+        EXACTLY (case-insensitive). Exact-only here contains the swallow risk -
+        many callsigns are real English words, so a loose fuzzy adjacency could
+        absorb a dictated message word. "and" stays the escape hatch for a fuzzy
+        later name.
+    The run stops at the first token that is neither, or on an "and"/ambiguous
+    miss. Returns (matched_names, remainder): `matched_names` is the tuple of
+    canonical pane names in order (possibly empty or length 1); `message` is the
+    original-cased remainder after the last consumed name, left-stripped. The
+    2+/non-empty-message gate is the CALLER's - this only reports what it found.
+    Registry-aware, so subset-broadcast detection lives here rather than in the
+    pure command parser.
+    """
+    token, remainder = _first_token(transcript)
+    if not token:
+        return (), transcript
+    m = resolve_pane_by_name(
+        token, panes, fuzzy_cutoff=fuzzy_cutoff, ambiguity_margin=ambiguity_margin)
+    if m.pane_id is None:
+        return (), transcript
+    names: list[str] = [m.matched_name]
+    rest = remainder
+    while True:
+        tok, after = _first_token(rest)
+        if tok == "and":
+            ntoken, after_name = _first_token(after)
+            if not ntoken:
+                break
+            nm = resolve_pane_by_name(
+                ntoken, panes, fuzzy_cutoff=fuzzy_cutoff, ambiguity_margin=ambiguity_margin)
+            if nm.pane_id is None:
+                break
+            names.append(nm.matched_name)
+            rest = after_name
+            continue
+        # Adjacency (no connector): exact callsign match only.
+        hit = _exact(tok, panes) if tok else None
+        if hit is None:
+            break
+        names.append(hit.name)
+        rest = after
+    return tuple(names), rest.lstrip()
+
+
 # Curated callsigns auto-assigned to new panes: short, easy to say, and chosen
 # to be mutually distinct under the router's fuzzy/phonetic matching so the ASR
 # rarely confuses them. Assignment walks this list in order and skips any that

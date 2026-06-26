@@ -776,6 +776,45 @@ def test_execute_broadcast_partial_success():
     assert sent == ["%1", "%2"]
 
 
+def test_execute_broadcast_subset_injects_to_each():
+    panes = [_pane("%1", "echo", active=True), _pane("%2", "sage"), _pane("%3", "nova")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    sent = []
+    res = execute_command(
+        Command(kind="broadcast", names=("echo", "sage"), text="run tests"), reg, Config(),
+        io=FakeTmux(), inject_fn=lambda pid, txt, **k: sent.append((pid, txt)) or True)
+    assert res.ok and sent == [("%1", "run tests"), ("%2", "run tests")]
+    assert res.message == "broadcast to echo, sage"
+    assert res.spoken == "broadcast to echo and sage"
+
+
+def test_execute_broadcast_subset_best_effort_reports_miss():
+    panes = [_pane("%1", "echo", active=True), _pane("%2", "sage")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    sent = []
+    res = execute_command(
+        Command(kind="broadcast", names=("echo", "ghost"), text="go"), reg, Config(),
+        io=FakeTmux(), inject_fn=lambda pid, txt, **k: sent.append(pid) or True)
+    assert res.ok and sent == ["%1"]
+    assert res.message == "broadcast to echo - no pane named ghost"
+
+
+def test_execute_broadcast_subset_empty_text():
+    panes = [_pane("%1", "echo", active=True), _pane("%2", "sage")]
+    reg = FakeRegistry(panes, focused=panes[0])
+    res = execute_command(
+        Command(kind="broadcast", names=("echo", "sage"), text="  "), reg, Config(),
+        io=FakeTmux(), inject_fn=lambda *a, **k: True)
+    assert res.ok is False and res.message == "nothing to broadcast"
+
+
+def test_intent_phrase_broadcast_subset():
+    from vupai.commands import intent_phrase
+    cmd = Command(kind="broadcast", names=("echo", "sage"), text="x")
+    assert intent_phrase(cmd) == "broadcasting to echo and sage"
+    assert intent_phrase(Command(kind="broadcast", text="x")) == "broadcasting"
+
+
 def test_button_create():
     c = _parse_btn("create two panes")
     assert c is not None and c.kind == "create" and c.count == 2
@@ -2101,13 +2140,13 @@ def test_exec_ssh_no_program_opens_login_shell():
     io = _RecIO()
     focused = _Pane("%0", "nova", "@0")
     reg = _Reg(focused, [focused])
-    hosts = {"vm1": Host(name="vm1", host="10.0.0.5", user="jose")}
+    hosts = {"vm1": Host(name="vm1", host="box.example.com", user="me")}
     res = _exec_ssh(Command(kind="ssh", name="vm1"), reg, _scfg(), io, hosts)
     assert res.ok
     split = next(c for c in io.calls if c[0] == "split")
     # No configured program -> connect and land at a login shell (no agent); the
     # local wrap keeps the pane alive after the ssh session ends.
-    assert split[2] == "ssh -t jose@10.0.0.5; exec ${SHELL:-/bin/sh} -i"
+    assert split[2] == "ssh -t me@box.example.com; exec ${SHELL:-/bin/sh} -i"
     prog = next(c for c in io.calls if c[0] == "program")
     assert prog[2] == "ssh@vm1"
 
@@ -2116,13 +2155,13 @@ def test_exec_ssh_explicit_program_runs_in_login_interactive_shell():
     io = _RecIO()
     focused = _Pane("%0", "nova")
     reg = _Reg(focused, [focused])
-    hosts = {"vm1": Host(name="vm1", host="10.0.0.5", user="jose", program="claude")}
+    hosts = {"vm1": Host(name="vm1", host="box.example.com", user="me", program="claude")}
     res = _exec_ssh(Command(kind="ssh", name="vm1"), reg, _scfg(), io, hosts)
     assert res.ok
     cmd = next(c for c in io.calls if c[0] == "split")[2]
     # A named program runs through a login+interactive shell so the remote PATH
     # (nvm/fnm/npm) is loaded, then wraps so exit drops to an interactive shell.
-    assert cmd.startswith("ssh -t jose@10.0.0.5 ")
+    assert cmd.startswith("ssh -t me@box.example.com ")
     assert "-lic" in cmd
     assert "claude; exec ${SHELL:-/bin/sh} -i" in cmd
     # The whole ssh is wrapped locally so the pane survives disconnect.

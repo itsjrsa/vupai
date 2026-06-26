@@ -1798,12 +1798,12 @@ def _hosts_args(init):
 def test_cmd_hosts_lists(monkeypatch, capsys):
     from vupai.hosts import Host
     monkeypatch.setattr(cli, "load_hosts", lambda: {
-        "vm1": Host(name="vm1", host="10.0.0.5", user="jose", program="codex"),
+        "vm1": Host(name="vm1", host="box.example.com", user="me", program="codex"),
     })
     rc = cli._cmd_hosts(_hosts_args(init=False))
     out = capsys.readouterr().out
     assert rc == 0
-    assert "vm1" in out and "jose@10.0.0.5" in out and "codex" in out
+    assert "vm1" in out and "me@box.example.com" in out and "codex" in out
 
 
 def test_cmd_hosts_lists_program_column(monkeypatch, capsys):

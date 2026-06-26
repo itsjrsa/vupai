@@ -30,7 +30,7 @@ from .injector import inject
 from .journal import Journal
 from .recorder import MIN_WAV_BYTES, Recorder
 from .registry import PaneRegistry
-from .router import Route, route
+from .router import Route, _peel_fillers, match_leading_names, route
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,8 @@ def _summarize_destructive(cmd: Command, registry) -> str:
                   if focused is None or p.id != focused.id]
         return f"close {len(others)} other pane(s)"
     if cmd.kind == "broadcast":
+        if cmd.names:
+            return f"broadcast to {', '.join(cmd.names)}: {cmd.text[:30]}"
         return f"broadcast to all agents: {cmd.text[:30]}"
     if cmd.kind == "create":
         return f"open {cmd.count} panes"
@@ -319,33 +321,25 @@ class Daemon:
                 if cmd.kind == "stop":
                     self._handle_stop(cmd, entry)
                     return
-                # Voice the present-tense intent NOW, before the (popup-gated, often
-                # slow) execution, so feedback is immediate - but only for the
-                # curated _ANNOUNCE_INTENT kinds (the view/navigation verbs you can
-                # already see stay silent on success). The result ack then speaks
-                # only on failure (or a create/talkback success). Fired even for
-                # confirm-gated commands: the user hears "closing sage" while the
-                # popup is up, and "cancelled" if they decline.
-                if cmd.kind in _ANNOUNCE_INTENT:
-                    self._speak(intent_phrase(cmd))
-                if self._config.confirm_destructive and self._needs_confirm(cmd):
-                    summary = _summarize_destructive(cmd, self._registry)
-                    # Synchronous confirmation (a tmux popup by default). Anything
-                    # but an explicit yes - decline, timeout, broken popup - cancels.
-                    # A large create points its disable hint at the create-specific
-                    # threshold; everything else keeps the destructive default.
-                    if not self._confirm_fn(
-                            summary, timeout=self._config.confirm_timeout_s,
-                            disable_hint=_disable_hint(cmd)):
-                        entry["decision"] = "command"
-                        entry["command"] = summary
-                        entry["outcome"] = "cancelled"
-                        self._feedback.status(f"cancelled: {summary}")
-                        self._speak("cancelled")
-                        return
-                    self._run_command(cmd, entry, confirmed=True)
-                    return
-                self._run_command(cmd, entry)
+                self._dispatch_command(cmd, entry)
+                return
+
+            # Subset broadcast: a leading run of 2+ named panes + a message
+            # ("echo and sage, run tests") fans the message to just those panes.
+            # Registry-aware (the parser is pure), so it lives here. Runs in both
+            # modes, like single-name addressing; confirm-gated as a broadcast.
+            names, message = match_leading_names(
+                text, self._registry.panes, fuzzy_cutoff=self._config.fuzzy_cutoff)
+            if len(names) < 2:
+                peeled, npeel = _peel_fillers(text)
+                if npeel:
+                    names, message = match_leading_names(
+                        peeled, self._registry.panes,
+                        fuzzy_cutoff=self._config.fuzzy_cutoff)
+            if len(names) >= 2 and message.strip():
+                entry["decision"] = "command"
+                self._dispatch_command(
+                    Command(kind="broadcast", names=tuple(names), text=message), entry)
                 return
 
             entry["decision"] = "route"
@@ -501,6 +495,31 @@ class Daemon:
             # already stored a fresh Event B; only clear when it's still OUR Event.
             if cancel is not None and self._read_cancel is cancel:
                 self._read_cancel = None
+
+    def _dispatch_command(self, cmd: Command, entry: dict) -> None:
+        """Voice the intent, apply the confirm gate, then run `cmd`.
+
+        Shared by the parsed-command path and the synthesized subset-broadcast
+        path so both get the same immediate intent ack and confirmation popup.
+        Mirrors the previous inline block exactly; the read/talkback/stop kinds
+        are handled by their own early-returns before this is ever reached.
+        """
+        if cmd.kind in _ANNOUNCE_INTENT:
+            self._speak(intent_phrase(cmd))
+        if self._config.confirm_destructive and self._needs_confirm(cmd):
+            summary = _summarize_destructive(cmd, self._registry)
+            if not self._confirm_fn(
+                    summary, timeout=self._config.confirm_timeout_s,
+                    disable_hint=_disable_hint(cmd)):
+                entry["decision"] = "command"
+                entry["command"] = summary
+                entry["outcome"] = "cancelled"
+                self._feedback.status(f"cancelled: {summary}")
+                self._speak("cancelled")
+                return
+            self._run_command(cmd, entry, confirmed=True)
+            return
+        self._run_command(cmd, entry)
 
     def _run_command(self, cmd: Command, entry: dict, *, confirmed: bool = False):
         """Execute a parsed command and record the result. `confirmed` marks a
