@@ -165,12 +165,17 @@ _PROGRAM_ALIASES = {"codecs": "codex", "codec": "codex", "colex": "codex",
                     # lands as "cloth"/"cloud" (and plural "cloths"). Without
                     # these the only way to launch claude was the unit-noun
                     # path ("open one agent"), never by name.
-                    "cloth": "claude", "cloths": "claude", "cloud": "claude"}
+                    "cloth": "claude", "cloths": "claude", "cloud": "claude",
+                    # "pi" the agent lands as the homophone "pie"/"py".
+                    "pie": "pi", "py": "pi"}
 # Program names the ASR splits into two tokens. "opencode" comes back as the
 # literal phrase "open code" - and since "open" is itself a create verb, this can
 # never match the single-token program check, so the whole phrase is mapped here.
 # Keyed by the token tuple (already lowercased/stripped by _tokens).
-_PROGRAM_PHRASE_ALIASES: dict[tuple[str, ...], str] = {("open", "code"): "opencode"}
+# "codex" is sometimes split into the two tokens "code x" (alongside the
+# single-token "codecs"/"codec" mishearings in _PROGRAM_ALIASES).
+_PROGRAM_PHRASE_ALIASES: dict[tuple[str, ...], str] = {
+    ("open", "code"): "opencode", ("code", "x"): "codex"}
 
 
 def _resolve_program(mid: list[str], programs: dict[str, str]) -> str | None:

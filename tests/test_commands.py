@@ -296,6 +296,27 @@ def test_count_alias_does_not_leak_to_router():
     assert word_to_int("tent") is None
 
 
+def test_parse_create_pi_homophone():
+    # "pi" the agent lands as the homophone "pie"/"py".
+    for spoken in ("open one pie", "open two py"):
+        c = _parse_btn(spoken)
+        assert c is not None and c.kind == "create" and c.program == "pi", spoken
+
+
+def test_parse_create_codex_split_phrase():
+    # "codex" is sometimes split into the two tokens "code x".
+    c = _parse_btn("open one code x")
+    assert c is not None and c.kind == "create" and c.count == 1 and c.program == "codex"
+
+
+def test_parse_create_start_verb():
+    # "start" is a natural create verb ("start one agent" == "open one agent").
+    c = _parse_btn("start one agent")
+    assert c is not None and c.kind == "create" and c.count == 1 and c.unit == "pane"
+    c = _parse_btn("start two codex")
+    assert c is not None and c.kind == "create" and c.count == 2 and c.program == "codex"
+
+
 def test_parse_create_opencode_split_phrase():
     # "opencode" is transcribed as the two-token split "open code"; the phrase
     # alias recovers it even though "open" is itself a create verb.
