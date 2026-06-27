@@ -2308,3 +2308,32 @@ def test_execute_command_routes_ssh_kind():
     hosts = {"vm1": Host(name="vm1", host="1.2.3.4")}
     res = execute_command(Command(kind="ssh", name="vm1"), reg, _scfg(), io=io, hosts=hosts)
     assert res.ok
+
+
+def test_parse_activity_verb():
+    assert _parse_btn("activity") == Command(kind="activity")
+
+
+def test_parse_who_is_editing_phrases():
+    assert _parse_btn("who's editing") == Command(kind="activity")
+    assert _parse_btn("who is editing") == Command(kind="activity")
+
+
+def test_parse_activity_misheard_alias():
+    assert _parse_btn("activty") == Command(kind="activity")
+
+
+def test_execute_activity_speaks_digest():
+    from vupai.registry import PaneRegistry
+    reg = PaneRegistry(lister=lambda: [], focuser=lambda: None)
+    spoken = []
+    records = [{"pane": "echo", "files": ["router.py"],
+                "coverage": "git-delta", "contended_with": []}]
+    res = execute_command(
+        Command(kind="activity"), reg, Config(),
+        collect_fn=lambda r, session: records,
+        render_fn=None,
+        speak_fn=lambda t: spoken.append(t))
+    assert res.ok
+    assert "echo editing router.py" in res.message
+    assert spoken == [res.message]

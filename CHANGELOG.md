@@ -11,6 +11,15 @@ a date, bumps `version` in `pyproject.toml`, and tags `vX.Y.Z`.
 
 ## [Unreleased]
 
+### Added
+
+- Cross-pane activity ledger (Layer 1): a pull-only background poller records
+  which sibling pane touched which file per git tree into
+  `.vupai/activity.current.json` (+ ring-bounded `activity.jsonl` history).
+  Read it with `vupai activity`, the `activity` voice verb, or directly from
+  the JSON. New `activity_*` config keys. `vupai activity --stats` reports the
+  Phase 0 contention/attribution counters.
+
 ## [0.3.0] - 2026-06-26
 
 ### Added

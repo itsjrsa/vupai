@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from vupai import audio, tmuxio
+from vupai.activity import ActivityPoller
 from vupai.asr import ParakeetTranscriber, model_cached
 from vupai.board import Board, open_board
 from vupai.commands import (
@@ -576,6 +577,42 @@ def _cmd_status(args: argparse.Namespace) -> int:
         f"input_monitoring={status.input_monitoring} "
         f"accessibility={status.accessibility}"
     )
+    return 0
+
+
+def _cmd_activity(args: argparse.Namespace) -> int:
+    from . import activity as activity_mod
+    registry = PaneRegistry()
+    registry.refresh()
+    focused_id = tmuxio.focused_pane_id()
+    session = next(
+        (p.session for p in registry.panes if p.id == focused_id), None)
+    if getattr(args, "stats", False):
+        stats = activity_mod.summarize_history(
+            activity_mod.collect_history(registry, session=session))
+        print("activity stats (focused session):")
+        print(f"  events: {stats['events']}")
+        print(f"  contention rate: {stats['contention_rate']:.0%}")
+        print(f"  attributed rate: {stats['attributed_rate']:.0%}")
+        for cov, count in sorted(stats["coverage_counts"].items()):
+            print(f"    {cov}: {count}")
+        return 0
+    records = activity_mod.collect_activity(registry, session=session)
+    by_tree: dict[str, list] = {}
+    for rec in records:
+        by_tree.setdefault(rec.get("tree", "?"), []).append(rec)
+    print("activity:")
+    if not by_tree:
+        print("  (none - no recent cross-pane activity)")
+    for tree in sorted(by_tree):
+        print(f"  {tree}")
+        for rec in by_tree[tree]:
+            files = ", ".join(rec.get("files") or []) or "-"
+            extra = ""
+            if rec.get("contended_with"):
+                extra = f"  contended_with {', '.join(rec['contended_with'])}"
+            print(f"    {rec.get('pane', '?')} [{rec.get('coverage', '?')}] "
+                  f"{files}{extra}")
     return 0
 
 
@@ -1197,10 +1234,20 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     tip_rotator = None
     if cfg.status_tips:
         tip_rotator = TipRotator(build_tips(cfg), interval=cfg.status_tips_interval)
+    activity = None
+    if cfg.activity_enabled:
+        activity = ActivityPoller(
+            PaneRegistry(),
+            poll_interval=cfg.activity_poll_interval,
+            recency_window_s=cfg.activity_recency_window_s,
+            history_limit=cfg.activity_history_limit,
+            excludes=tuple(cfg.activity_path_excludes),
+            dir_name=cfg.activity_dir,
+        )
     daemon = Daemon(cfg, recorder, transcriber, registry, feedback,
                     hosts=load_hosts(),
                     state_writer=lambda phase: write_daemon_state(phase, pid=pid),
-                    watcher=watcher, tip_rotator=tip_rotator)
+                    watcher=watcher, tip_rotator=tip_rotator, activity=activity)
     # `vupai down` sends SIGTERM; the default disposition kills the process
     # outright, so run()'s teardown (which reaps the sox child) never executes.
     # Translate SIGTERM/SIGINT into a clean stop(), then restore the prior
@@ -1329,6 +1376,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "ls", help="list vupai sessions (agents/panes, attached state)"
     ).set_defaults(func=_cmd_ls)
+
+    p_activity = sub.add_parser(
+        "activity", help="show the cross-pane activity ledger")
+    p_activity.add_argument(
+        "--stats", action="store_true",
+        help="print Phase 0 contention/attribution counters instead")
+    p_activity.set_defaults(func=_cmd_activity)
 
     p_name = sub.add_parser("name")
     p_name.add_argument("name")

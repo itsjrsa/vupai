@@ -563,3 +563,20 @@ def test_read_max_sentences_defaults_to_two():
 def test_read_max_sentences_in_annotated_template():
     from vupai.config import ANNOTATED_TEMPLATE
     assert "read_max_sentences" in ANNOTATED_TEMPLATE
+
+
+def test_activity_config_defaults():
+    c = Config()
+    assert c.activity_enabled is True
+    assert c.activity_poll_interval == 2.0
+    assert c.activity_recency_window_s == 30.0
+    assert c.activity_history_limit == 500
+    assert c.activity_dir == ".vupai"
+    assert "uv.lock" in c.activity_path_excludes
+
+
+def test_activity_path_excludes_loads_as_tuple(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text('activity_path_excludes = ["*.lock", "dist/"]\n', encoding="utf-8")
+    c = load_config(p)
+    assert c.activity_path_excludes == ("*.lock", "dist/")

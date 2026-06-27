@@ -244,6 +244,17 @@ def pane_session(pane_id: str) -> str:
         return ""
 
 
+def pane_current_path(pane_id: str) -> str:
+    """Working directory of `pane_id`'s foreground process (empty when it
+    can't be resolved). Used to group panes by their git tree."""
+    try:
+        return run(
+            ["display-message", "-p", "-t", pane_id, "#{pane_current_path}"]
+        ).strip()
+    except TmuxError:
+        return ""
+
+
 def find_board_pane(session: str) -> str | None:
     """Pane id of an existing supervision board in `session`, else None.
 

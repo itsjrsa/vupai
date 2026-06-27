@@ -233,7 +233,8 @@ MAX_CREATE_COUNT = 30
 @dataclass(frozen=True)
 class Command:
     # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|ssh|board|
-    # read|talkback|volume|stop|slash|broadcast|unknown
+    # read|talkback|volume|stop|slash|broadcast|activity|unknown
+    # activity: reads the cross-pane activity ledger (who's editing / what's active)
     kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
@@ -402,6 +403,29 @@ def _parse_board(toks: list[str]) -> Command | None:
     return None
 
 
+_ACTIVITY_VERBS = ("activity",)
+# Curated ASR mishearings of "activity" (implausible as literal words only).
+_ACTIVITY_VERB_ALIASES = frozenset({"activty", "activitie", "activ"})
+# Multi-word phrases. Note: _tokens strips only leading/trailing marks, so
+# the apostrophe in "who's" is preserved mid-token ("who's", not "who", "s").
+_ACTIVITY_PHRASES = (
+    ("who's", "editing"), ("who", "s", "editing"), ("who", "is", "editing"),
+    ("who's", "touching"), ("who", "s", "touching"), ("what", "s", "happening"),
+)
+
+
+def _parse_activity(toks: list[str]) -> Command | None:
+    """`activity` / `who's editing` -> a pull of the cross-pane ledger."""
+    if not toks:
+        return None
+    if toks[0] in _ACTIVITY_VERBS or toks[0] in _ACTIVITY_VERB_ALIASES:
+        return Command(kind="activity")
+    for phrase in _ACTIVITY_PHRASES:
+        if tuple(toks[:len(phrase)]) == phrase:
+            return Command(kind="activity")
+    return None
+
+
 _READ_VERBS = ("read",)
 # Curated ASR mishearings of "read": the homophone "reed", the past-tense
 # spelling "red", and the parakeet mishearings "reve" / "reeve" / "wreath" seen
@@ -553,7 +577,8 @@ def _parse_body(body: str, macros: dict[str, list[str]],
             or _parse_layout(toks) or _parse_ssh(toks)
             or _parse_board(toks) or _parse_talkback(toks)
             or _parse_volume(toks) or _parse_stop(toks)
-            or _parse_slash(toks, slash_commands) or _parse_read(toks))
+            or _parse_slash(toks, slash_commands)
+            or _parse_activity(toks) or _parse_read(toks))
 
 
 def parse_command(
@@ -1056,6 +1081,27 @@ def _exec_read_board(registry, config, io, *, speak_fn=None,
     return CommandResult(True, spoken)
 
 
+def _exec_activity(registry, config, io, *, collect_fn=None, render_fn=None,
+                   speak_fn=None, cancel=None) -> CommandResult:
+    from . import activity
+    collect_fn = collect_fn or (
+        lambda reg, session: activity.collect_activity(reg, session=session))
+    render_fn = render_fn or activity.render_activity
+    focused = registry.focused()
+    session = focused.session if focused is not None else None
+    try:
+        records = collect_fn(registry, session)
+    except Exception:
+        return CommandResult(False, "couldn't read activity")
+    spoken = render_fn(records)
+    if speak_fn is not None:
+        try:
+            speak_fn(spoken)
+        except Exception:
+            pass  # TTS is best-effort; the digest still surfaces as the message
+    return CommandResult(True, spoken)
+
+
 def _exec_read_board_stream(panes, config, *, speak_fn=None, cancel=None) -> CommandResult:
     """Streaming "read board": speak the header now, each agent as it lands.
 
@@ -1316,7 +1362,8 @@ def execute_command(cmd: Command, registry, config, *,
                     io=tmuxio, inject_fn=inject,
                     capture_fn=None, summarize_fn=None,
                     speak_fn=None, title_fn=None, statuses_fn=None,
-                    stream_fn=None, cancel=None, hosts=None) -> CommandResult:
+                    stream_fn=None, cancel=None, hosts=None,
+                    collect_fn=None, render_fn=None) -> CommandResult:
     # capture_fn/summarize_fn/speak_fn/title_fn/statuses_fn/stream_fn are read-command
     # seams (None -> built from config); only the read path consumes them. Mirrors the
     # inject_fn seam, which only the slash/broadcast paths consume.
@@ -1366,6 +1413,10 @@ def execute_command(cmd: Command, registry, config, *,
                               summarize_fn=summarize_fn, speak_fn=speak_fn,
                               title_fn=title_fn, statuses_fn=statuses_fn,
                               stream_fn=stream_fn, cancel=cancel)
+        if cmd.kind == "activity":
+            return _exec_activity(registry, config, io, collect_fn=collect_fn,
+                                  render_fn=render_fn, speak_fn=speak_fn,
+                                  cancel=cancel)
         if cmd.kind == "slash":
             return _exec_slash(cmd, registry, config, inject_fn)
         if cmd.kind == "broadcast":

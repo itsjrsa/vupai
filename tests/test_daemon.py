@@ -2029,3 +2029,27 @@ def test_process_two_names_empty_message_falls_through_to_route(tmp_path):
     assert "%2" not in injected_panes, (
         "empty message must not fan out to sage - subset broadcast requires a non-empty message"
     )
+
+
+class _FakeActivity:
+    def __init__(self):
+        self.started = 0
+        self.stopped = 0
+
+    def start(self):
+        self.started += 1
+
+    def stop(self):
+        self.stopped += 1
+
+
+def test_daemon_starts_and_stops_activity_poller(tmp_path):
+    wav = tmp_path / "x.wav"
+    wav.write_bytes(b"")
+    fa = _FakeActivity()
+    d = Daemon(
+        Config(), FakeRecorder(wav), FakeTranscriber("hi"),
+        make_registry([PANE_LINE], "%1"), FakeFeedback(), activity=fa)
+    d.stop()
+    d.run()
+    assert fa.started == 1 and fa.stopped == 1

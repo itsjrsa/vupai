@@ -1877,3 +1877,29 @@ def test_cmd_hosts_init_preserves_existing(monkeypatch, tmp_path, capsys):
     rc = cli._cmd_hosts(_hosts_args(init=True))
     assert rc == 0
     assert target.read_text() == "# mine\n"  # untouched
+
+
+def test_activity_groups_by_tree(monkeypatch, capsys, fake_env):
+    _stub_registry(monkeypatch, [_pane("echo", "%1", session="proj", active=True)])
+    monkeypatch.setattr(
+        "vupai.activity.collect_activity",
+        lambda reg, session=None: [
+            {"pane": "echo", "tree": "/repo", "files": ["router.py"],
+             "coverage": "git-delta", "contended_with": ["orion"]}])
+    assert cli.main(["activity"]) == 0
+    out = capsys.readouterr().out
+    assert "/repo" in out
+    assert "echo [git-delta] router.py" in out
+    assert "contended_with orion" in out
+
+
+def test_activity_stats(monkeypatch, capsys, fake_env):
+    _stub_registry(monkeypatch, [_pane("echo", "%1", session="proj", active=True)])
+    monkeypatch.setattr(
+        "vupai.activity.collect_history",
+        lambda reg, session=None: [
+            {"coverage": "git-delta", "contended_with": ["x"]}])
+    assert cli.main(["activity", "--stats"]) == 0
+    out = capsys.readouterr().out
+    assert "events: 1" in out
+    assert "contention rate: 100%" in out

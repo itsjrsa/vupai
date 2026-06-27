@@ -171,6 +171,16 @@ class Config:
     # filename charset (letters, digits, dot, dash, underscore) so it round-trips
     # through tmux's run-shell command strings.
     tmux_socket: str = "vupai"
+    # --- Activity ledger (Layer 1): pull-only cross-pane awareness. ---
+    activity_enabled: bool = True            # run the background activity poller
+    activity_poll_interval: float = 2.0      # seconds between ledger ticks
+    activity_recency_window_s: float = 30.0  # how recent a mention counts as active
+    activity_history_limit: int = 500        # max activity.jsonl lines (ring)
+    activity_path_excludes: tuple[str, ...] = field(  # never attributed (noise)
+        default_factory=lambda: (
+            "*.lock", "uv.lock", "package-lock.json",
+            "generated/", "dist/", "*.min.*"))
+    activity_dir: str = ".vupai"             # ledger dir name at the tree root
 
     def __post_init__(self) -> None:
         # Coerce hotkey fields to deduped tuples regardless of how the Config was
@@ -223,6 +233,9 @@ def load_config(path: Path | None = None) -> Config:
     if "filler_words" in kwargs:
         kwargs["filler_words"] = frozenset(
             str(w).lower() for w in kwargs["filler_words"])
+    if "activity_path_excludes" in kwargs:
+        kwargs["activity_path_excludes"] = tuple(
+            str(g) for g in kwargs["activity_path_excludes"])
     return Config(**kwargs)
 
 
@@ -435,6 +448,25 @@ _FIELD_BLOCKS: tuple[tuple[str, str], ...] = (
      '# to share the default server (legacy). Allowed: letters, digits, dot, dash,\n'
      '# underscore.\n'
      '# tmux_socket = "vupai"\n'),
+    ("activity_enabled",
+     '# Run the pull-only cross-pane activity ledger poller (Layer 1).\n'
+     '# activity_enabled = true\n'),
+    ("activity_poll_interval",
+     '# Seconds between activity-ledger ticks.\n'
+     '# activity_poll_interval = 2.0\n'),
+    ("activity_recency_window_s",
+     '# How recent a scrollback mention / change counts as active (seconds).\n'
+     '# activity_recency_window_s = 30.0\n'),
+    ("activity_history_limit",
+     '# Max retained activity.jsonl lines per tree (ring-bounded).\n'
+     '# activity_history_limit = 500\n'),
+    ("activity_path_excludes",
+     '# Globs never attributed/contended (lockfile/generated noise).\n'
+     '# activity_path_excludes = ["*.lock", "uv.lock", "package-lock.json", '
+     '"generated/", "dist/", "*.min.*"]\n'),
+    ("activity_dir",
+     '# Ledger directory name created at each git tree root.\n'
+     '# activity_dir = ".vupai"\n'),
 )
 
 ANNOTATED_TEMPLATE = _TEMPLATE_HEADER + "".join(

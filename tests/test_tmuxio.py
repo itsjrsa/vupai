@@ -214,6 +214,20 @@ def test_pane_title_swallows_tmux_error(monkeypatch):
     assert tmuxio.pane_title("%9") == ""  # best-effort: never raises
 
 
+def test_pane_current_path_queries_pane_cwd(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tmuxio, "run", lambda args: calls.append(args) or "/repo/x\n")
+    assert tmuxio.pane_current_path("%7") == "/repo/x"
+    assert calls == [["display-message", "-p", "-t", "%7", "#{pane_current_path}"]]
+
+
+def test_pane_current_path_empty_on_tmux_error(monkeypatch):
+    def boom(args):
+        raise tmuxio.TmuxError("no server")
+    monkeypatch.setattr(tmuxio, "run", boom)
+    assert tmuxio.pane_current_path("%7") == ""
+
+
 def test_set_pane_name_argv(monkeypatch):
     fake = FakeRun()
     patch_run(monkeypatch, fake)
