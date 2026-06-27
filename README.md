@@ -29,6 +29,8 @@ mouse. New panes launch an agent by default (`claude` out of the box) and should
 work with other agentic coding tools (Codex, Gemini, …), though testing so far
 has focused on Claude Code.
 
+**Jump to:** [Requirements](#requirements) · [Install](#install) · [Set up](#set-up-once) · [Usage](#usage) · [Voice commands](#voice-commands) · [Supervision board](#supervision-board) · [Configuration](#configuration) · [tmux tips](#tmux-tips) · [Uninstall](#uninstall)
+
 ## Why not plain tmux?
 
 vupai *runs on* tmux: it doesn't replace it, it adds a voice layer on top. tmux
@@ -129,36 +131,30 @@ Contributing? See [AGENTS.md](AGENTS.md).
 
 ## Set up (once)
 
-The fastest path after install is the interactive bootstrap:
+After install, run the interactive bootstrap:
 
 ```bash
 vupai setup
 ```
 
-It walks you through everything first-run: checks the Homebrew tools, captures
-consent for the local transcript journal, lets you pick a mic and your push-to-talk key(s),
-downloads the speech model up front (so the first hotkey press doesn't
-stall on a silent fetch), then deep-links you to each macOS permission pane that
-still needs your terminal app enabled. It's safe to re-run any time.
+It handles everything first-run: checks the Homebrew tools, captures consent for
+the local transcript journal, lets you pick a mic and your push-to-talk key(s),
+downloads the speech model up front (so the first hotkey press doesn't stall on a
+silent fetch), then deep-links you to each macOS permission pane that still needs
+your terminal app enabled. Safe to re-run any time.
 
-### Grant macOS permissions
+### macOS permissions
 
-`setup` handles these, but to check them on their own: vupai needs three
-permissions, granted to **your terminal app** (Ghostty / iTerm / Terminal / …),
-under **System Settings → Privacy & Security**: **Accessibility**, **Input
-Monitoring**, and **Microphone**. Run:
-
-```bash
-vupai doctor
-```
-
-It probes each one and prints the exact System-Settings path for anything
-missing.
+vupai needs three permissions, granted to **your terminal app** (Ghostty / iTerm /
+Terminal / …) under **System Settings → Privacy & Security**: **Accessibility**,
+**Input Monitoring**, and **Microphone**. `vupai setup` deep-links you to each; to
+audit them on their own, run `vupai doctor` (it probes each and prints the exact
+System-Settings path for anything missing).
 
 > [!WARNING]
 > macOS grants these to the terminal binary, not the script, so the hotkey and
-> mic silently fail until you grant them. If voice seems dead, this is the first
-> thing to check (`vupai doctor`).
+> mic silently fail until you grant them. If voice seems dead, check this first
+> (`vupai doctor`).
 
 ## Usage
 
