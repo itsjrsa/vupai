@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import curses
 
-_COVERAGE_RANK = {"exact": 3, "git-delta": 2, "churn-only": 1, "none": 0}
-
 
 def _pane_files(files: list[dict], pane: str) -> list[dict]:
     fs = [f for f in files if pane in f["panes"]]
@@ -98,9 +96,7 @@ def diff_lines(patch: str) -> list[tuple]:
 def _pane_of(rows: list[dict], idx: int) -> str | None:
     if 0 <= idx < len(rows):
         r = rows[idx]
-        if r["kind"] in ("pane", "active"):
-            return r["pane"]
-        if r["kind"] == "file":
+        if r["kind"] in ("pane", "active", "file"):
             return r["pane"]
     return None
 

@@ -46,7 +46,7 @@ def test_build_rows_conflict_pane_first():
     ]
     rows = reviewtui.build_rows([_view(files, ledger)])
     pane_order = [r["pane"] for r in rows if r["kind"] == "pane"]
-    assert pane_order[0] in ("aria", "zeta")  # both own the conflict file
+    assert pane_order[0] == "aria"  # conflict-first then name: aria < zeta
     # The conflict file sorts first within each pane group.
     first_file_under_first_pane = next(r for r in rows if r["kind"] == "file")
     assert first_file_under_first_pane["record"]["path"] == "hot.py"
