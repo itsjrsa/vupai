@@ -124,3 +124,68 @@ def test_step_toggle_pause():
 def test_step_move_resets_diff_scroll():
     st, action = reviewtui.step(_state(_rows_one_file()), 258)  # KEY_DOWN
     assert action is None and st["diff_scroll"] == 0
+
+
+class _FakeStdscr:
+    """Minimal curses screen capturing drawn text, ignoring positioning."""
+
+    def __init__(self, h=24, w=200):
+        self._h, self._w = h, w
+        self.drawn: list[str] = []
+
+    def getmaxyx(self):
+        return (self._h, self._w)
+
+    def erase(self):
+        self.drawn.clear()
+
+    def addnstr(self, y, x, text, n, *attr):
+        self.drawn.append(text[:n])
+
+    def addstr(self, y, x, text, *attr):
+        self.drawn.append(text)
+
+    def hline(self, *a):
+        pass
+
+    def refresh(self):
+        pass
+
+
+def test_render_frame_draws_panes_and_diff_without_error():
+    files = [_file("a.py", panes=["sage"])]
+    files[0]["patch"] = "@@ -1 +1 @@\n-old\n+new\n"
+    ledger = [{"pane": "sage", "files": ["a.py"], "coverage": "git-delta"}]
+    rows = reviewtui.build_rows([_view(files, ledger)])
+    state = {"views": [_view(files, ledger)], "folded": set(), "rows": rows,
+             "sel": reviewtui.first_file_index(rows), "diff_scroll": 0,
+             "paused": False}
+    scr = _FakeStdscr()
+    reviewtui.render_frame(scr, state)  # must not raise
+    blob = "\n".join(scr.drawn)
+    assert "sage" in blob
+    assert "a.py" in blob
+    assert "sage's changes (exact)" in blob  # single-author provenance header
+
+
+def test_render_frame_conflict_banner_for_multi_pane_file():
+    files = [_file("hot.py", panes=["sage", "orion"], conflict=True)]
+    ledger = [
+        {"pane": "sage", "files": ["hot.py"], "coverage": "git-delta"},
+        {"pane": "orion", "files": ["hot.py"], "coverage": "git-delta"},
+    ]
+    rows = reviewtui.build_rows([_view(files, ledger)])
+    sel = next(i for i, r in enumerate(rows) if r["kind"] == "file")
+    state = {"views": [_view(files, ledger)], "folded": set(), "rows": rows,
+             "sel": sel, "diff_scroll": 0, "paused": False}
+    scr = _FakeStdscr()
+    reviewtui.render_frame(scr, state)
+    blob = "\n".join(scr.drawn)
+    assert "combined" in blob and "not splittable without worktrees" in blob
+
+
+def test_cli_review_parser_registered():
+    from vupai import cli
+    parser = cli.build_parser()
+    ns = parser.parse_args(["review"])
+    assert ns.func is cli._cmd_review
