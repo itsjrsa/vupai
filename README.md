@@ -29,7 +29,7 @@ mouse. New panes launch an agent by default (`claude` out of the box) and should
 work with other agentic coding tools (Codex, Gemini, …), though testing so far
 has focused on Claude Code.
 
-**Jump to:** [Requirements](#requirements) · [Install](#install) · [Set up](#set-up-once) · [Usage](#usage) · [Voice commands](#voice-commands) · [Supervision board](#supervision-board) · [Configuration](#configuration) · [tmux tips](#tmux-tips) · [Uninstall](#uninstall)
+**Jump to:** [Requirements](#requirements) · [Install](#install) · [Set up](#set-up-once) · [Usage](#usage) · [Voice commands](#voice-commands) · [Supervision board](#supervision-board) · [Activity ledger](#cross-pane-activity-ledger) · [Configuration](#configuration) · [tmux tips](#tmux-tips) · [Uninstall](#uninstall)
 
 ## Why not plain tmux?
 
@@ -251,6 +251,49 @@ who's done, who's stuck, and who needs you.
   single pane.
 
 One board per session. Close the pane to stop it.
+
+## Cross-pane activity ledger
+
+When several agents share one working tree, they edit files unaware of each other
+and can clobber each other's uncommitted work. The **activity ledger** is a
+best-effort, **pull-only** awareness surface: a background poller records which
+pane last touched which file in each git tree, so you (or your agents) can spot
+overlaps before they become conflicts.
+
+- **What it records.** Per git tree, in a `.vupai/` directory at the tree root:
+  `activity.current.json` (latest state per pane) plus `activity.jsonl` (history).
+  Each entry names the pane, the files it touched, a coverage flag
+  (`exact` / `git-delta`), and any `contended_with` panes editing the same file.
+  `.vupai/` is auto-gitignored, so it never appears in `git status`.
+- **How it decides.** `git status` provides *what* changed; each pane's scrollback
+  provides *which pane*; their intersection is the attribution. It is post-write on
+  a ~2s poll, so it *reduces* clobbering by surfacing overlaps; it does not prevent
+  a sub-2-second race, and it never blocks or injects into a pane.
+- **Read it.**
+  - `vupai activity` shows the current ledger, grouped by tree.
+  - `vupai activity --stats` reports contention and attribution rates (use these to
+    judge whether it earns its keep in your workflow).
+  - Say **"activity"** (or *"who's editing"*) to hear the digest.
+
+### Let your agents use it
+
+The ledger is pull-only by design, so nothing forces an agent to read it. If you
+want your agents to coordinate through it, tell them to: add a few lines to your
+project's `AGENTS.md` (or `CLAUDE.md`, or whatever instructions file your agent
+loads):
+
+```markdown
+## Before editing a shared file
+This repo may have several agents working at once. Before editing a file, read
+`.vupai/activity.current.json` at the repo root. If another pane is already listed
+as touching that file (or the file shows up under `contended_with`), stop and
+coordinate, or pick different work, instead of overwriting it.
+```
+
+This is opt-in and best-effort: an agent consults the ledger only if its
+instructions tell it to, and even then it will not monitor the file continuously
+on its own. For a hard guarantee, give each agent its own git worktree (a planned
+opt-in) so panes physically cannot clobber one another.
 
 ## Configuration
 
