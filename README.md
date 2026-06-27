@@ -113,6 +113,13 @@ uv sync            # creates .venv and installs everything (incl. the MLX runtim
 Run the CLI with `uv run vupai …` from the repo, or see the live-reload loop
 (`vupai reload` / `vupai --reload`) in [AGENTS.md](AGENTS.md).
 
+To install **this** checkout as a real `vupai` on your `PATH` (no PyPI), instead
+of `uv run`:
+
+```bash
+uv tool install .            # from the repo root; re-run after pulling changes
+```
+
 > [!NOTE]
 > The examples below use the bare `vupai` command (the installed tool). If you're
 > running from a source checkout, prefix each one with `uv run` (e.g. `uv run
@@ -330,7 +337,7 @@ vupai is young and evolving. A few things on the horizon (in no particular
 order):
 
 - **Tighter pane-state and activity awareness** so routing and the board react
-  faster to what each agent is actually doing.
+  faster to what each agent is actually doing. *(in progress)*
 - **Broader agent-CLI coverage**: validate the flow end-to-end with Codex,
   opencode, Gemini, and other agentic tools (testing so far has centered on
   Claude Code).
