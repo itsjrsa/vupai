@@ -29,7 +29,7 @@ from .filler import strip_fillers
 from .hotkey import Hotkey, MultiHotkey
 from .injector import inject
 from .journal import Journal
-from .recorder import MIN_WAV_BYTES, Recorder
+from .recorder import MIN_WAV_BYTES, Recorder, reap_orphan_recordings
 from .registry import PaneRegistry
 from .router import Route, _peel_fillers, match_leading_names, route
 
@@ -715,6 +715,15 @@ class Daemon:
         # every _process -> transcribe below runs on the same thread, so the
         # stream always matches. Heavy work is kept off the listener thread (see
         # on_release), so the consumer loop lives here on the warm thread.
+        # A previous daemon that died hard (kill -9, crash) can leave its `rec`
+        # child orphaned to launchd, holding the mic open. We haven't spawned any
+        # rec yet, so anything matching vupai's signature now is stale - reap it.
+        try:
+            reaped = reap_orphan_recordings()
+            if reaped:
+                logger.warning("reaped %d orphaned rec process(es) at startup", reaped)
+        except Exception:
+            logger.exception("orphan reap at startup failed")
         # Paint a warming state BEFORE the (potentially multi-minute first-run)
         # model load, so a cold start doesn't look like a dead hotkey.
         self._feedback.warming(downloading=not model_cached(self._config.model_id))
