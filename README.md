@@ -307,6 +307,26 @@ instructions tell it to, and even then it will not monitor the file continuously
 on its own. For a hard guarantee, give each agent its own git worktree (a planned
 opt-in) so panes physically cannot clobber one another.
 
+### Reviewing uncommitted changes (`vupai review`)
+
+`vupai review` opens a live, in-terminal review of every uncommitted change
+across your panes, grouped by the pane that touched it. It is a read-only,
+pull-only view: it runs `git diff` (the authoritative change set) and joins the
+activity ledger for attribution. It never stages, commits, or writes to a pane.
+
+- Left: files grouped under the pane editing them, with `+`/`-` counts. Files
+  touched by two or more panes are flagged `!` and float to the top.
+- Right: the selected file's diff, updating as you move. A file only one pane
+  touched shows that pane's exact diff (its whole change is that agent's work).
+  A file two or more panes edited shows the combined diff, flagged because it
+  cannot be split per agent in a shared tree without worktree isolation.
+- A trailing **unattributed** bucket lists changed files no pane claimed
+  (including untracked files); names are never fabricated.
+- It re-polls about every two seconds, so it tracks edits as they land.
+
+Keys: up/down move, Enter (or `o`) opens the file in `$EDITOR`, space folds a
+pane group, `p` pauses live polling, `r` refreshes now, `q` quits.
+
 ## Configuration
 
 vupai reads `~/.config/vupai/config.toml`. `vupai setup` writes it on first run,
