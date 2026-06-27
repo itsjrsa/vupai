@@ -102,8 +102,7 @@ def _process(text, mode, reg, cfg, *, dry, forced=None):
 
     # System key (button): a command, or an utterance addressed to a pane by name.
     cmd = parse_command(text, broadcast_word=cfg.broadcast_word, macros=cfg.macros,
-                        programs=cfg.programs, slash_commands=cfg.slash_commands,
-                        addressing="button")
+                        programs=cfg.programs, slash_commands=cfg.slash_commands)
     if cmd is not None:
         print(f"  command: {cmd.kind}" + (f" name={cmd.name!r}" if cmd.name else ""))
         if dry:
