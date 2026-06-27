@@ -270,7 +270,8 @@ overlaps before they become conflicts.
 - **What it records.** Per git tree, in a `.vupai/` directory at the tree root:
   `activity.current.json` (latest state per pane) plus `activity.jsonl` (history).
   Each entry names the pane, the files it touched, a coverage flag
-  (`exact` / `git-delta`), and any `contended_with` panes editing the same file.
+  (`exact`, `git-delta`, or `churn-only` for an active pane no file could be
+  pinned on), and any `contended_with` panes editing the same file.
   `.vupai/` is auto-gitignored, so it never appears in `git status`.
 - **How it decides.** `git status` provides *what* changed; each pane's scrollback
   provides *which pane*; their intersection is the attribution. It is post-write on
@@ -291,10 +292,13 @@ loads):
 
 ```markdown
 ## Before editing a shared file
-This repo may have several agents working at once. Before editing a file, read
-`.vupai/activity.current.json` at the repo root. If another pane is already listed
-as touching that file (or the file shows up under `contended_with`), stop and
-coordinate, or pick different work, instead of overwriting it.
+This repo may have several agents working in sibling panes at once. Before you
+edit a file, read `.vupai/activity.current.json` at the repo root. If another
+pane is listed as touching that file, or the file appears under a pane's
+`contended_with`, stop and coordinate or pick different work instead of
+overwriting it (the sibling's edits are uncommitted and you would clobber them).
+A pane with coverage `churn-only` is active but its file is unknown: treat the
+tree as contended and be cautious.
 ```
 
 This is opt-in and best-effort: an agent consults the ledger only if its
