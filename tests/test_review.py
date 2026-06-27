@@ -97,3 +97,65 @@ def test_build_file_records_drops_excluded_paths():
     counts = {}
     recs = review.build_file_records(changes, counts, ledger=[], excludes=("uv.lock",))
     assert [r["path"] for r in recs] == ["src/a.py"]
+
+
+def _git_fixture(responses):
+    """responses: dict mapping a stringified args list to stdout. Returns a
+    fake git_fn accepting the same (tree, args, **kwargs) shape as _run_git."""
+    def fake_git(tree, args, **kwargs):
+        return responses.get(" ".join(args))
+    return fake_git
+
+
+def test_collect_tree_attaches_tracked_patch():
+    git = _git_fixture({
+        "status --porcelain -z": " M src/a.py\x00",
+        "diff HEAD --numstat -z": "5\t2\tsrc/a.py\x00",
+        "diff HEAD -- src/a.py": "@@ -1 +1 @@\n-old\n+new\n",
+    })
+    ledger = [{"pane": "sage", "files": ["src/a.py"], "coverage": "git-delta"}]
+    view = review.collect_tree("/repo", ledger=ledger, git_fn=git)
+    assert view["tree"] == "/repo"
+    assert len(view["files"]) == 1
+    f = view["files"][0]
+    assert f["path"] == "src/a.py" and f["panes"] == ["sage"]
+    assert f["patch"] == "@@ -1 +1 @@\n-old\n+new\n"
+
+
+def test_collect_tree_untracked_uses_no_index_patch():
+    git = _git_fixture({
+        "status --porcelain -z": "?? notes.md\x00",
+        "diff HEAD --numstat -z": "",
+        "diff --no-index -- /dev/null notes.md": "@@ -0,0 +1 @@\n+hello\n",
+    })
+    view = review.collect_tree("/repo", ledger=[], git_fn=git)
+    f = view["files"][0]
+    assert f["status"] == "?" and f["attributed"] is False
+    assert f["patch"] == "@@ -0,0 +1 @@\n+hello\n"
+
+
+def test_collect_tree_binary_has_empty_patch():
+    git = _git_fixture({
+        "status --porcelain -z": " M logo.png\x00",
+        "diff HEAD --numstat -z": "-\t-\tlogo.png\x00",
+    })
+    f = review.collect_tree("/repo", ledger=[], git_fn=git)["files"][0]
+    assert f["binary"] is True and f["patch"] == ""
+
+
+def test_collect_tree_caps_large_patch():
+    big = "+x\n" * 200_000
+    git = _git_fixture({
+        "status --porcelain -z": " M big.py\x00",
+        "diff HEAD --numstat -z": "1\t0\tbig.py\x00",
+        "diff HEAD -- big.py": big,
+    })
+    f = review.collect_tree("/repo", ledger=[], git_fn=git)["files"][0]
+    assert len(f["patch"]) <= review.MAX_PATCH_BYTES + 32
+    assert f["patch"].endswith("... (truncated)\n")
+
+
+def test_collect_tree_no_changes_returns_empty_files():
+    git = _git_fixture({"status --porcelain -z": "", "diff HEAD --numstat -z": ""})
+    assert review.collect_tree("/repo", ledger=[], git_fn=git) == {
+        "tree": "/repo", "files": []}

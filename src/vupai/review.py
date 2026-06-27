@@ -3,7 +3,11 @@ the Layer 1 activity ledger. Never mutates the index, never injects."""
 
 from __future__ import annotations
 
+import subprocess
+
 from .activity import _excluded
+
+MAX_PATCH_BYTES = 200_000
 
 
 def parse_numstat(out: str) -> dict[str, dict]:
@@ -100,3 +104,46 @@ def build_file_records(changes: list[dict], counts: dict,
         })
     records.sort(key=lambda r: (not r["conflict"], not r["attributed"], r["path"]))
     return records
+
+
+def _run_git(tree: str, args: list[str], *, ok_codes: tuple = (0,),
+             timeout: float = 2.0) -> str | None:
+    """Run `git -C <tree> <args>` read-only. Returns stdout, or None on a
+    disallowed exit code / OSError / timeout. `ok_codes` lets `diff --no-index`
+    (which exits 1 when files differ) count as success."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", tree, *args],
+            capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode not in ok_codes:
+        return None
+    return proc.stdout
+
+
+def _file_patch(tree: str, rec: dict, git_fn) -> str:
+    if rec["binary"]:
+        return ""
+    if rec["status"] == "?":
+        out = git_fn(tree, ["diff", "--no-index", "--", "/dev/null", rec["path"]],
+                     ok_codes=(0, 1))
+    else:
+        out = git_fn(tree, ["diff", "HEAD", "--", rec["path"]])
+    out = out or ""
+    if len(out) > MAX_PATCH_BYTES:
+        out = out[:MAX_PATCH_BYTES] + "\n... (truncated)\n"
+    return out
+
+
+def collect_tree(tree: str, *, ledger: list[dict], git_fn=_run_git,
+                 excludes: tuple = ()) -> dict:
+    """Per-tree change set joined to attribution, each file's patch attached."""
+    status_out = git_fn(tree, ["status", "--porcelain", "-z"]) or ""
+    numstat_out = git_fn(tree, ["diff", "HEAD", "--numstat", "-z"]) or ""
+    changes = parse_status(status_out)
+    counts = parse_numstat(numstat_out)
+    records = build_file_records(changes, counts, ledger, excludes=excludes)
+    for rec in records:
+        rec["patch"] = _file_patch(tree, rec, git_fn)
+    return {"tree": tree, "files": records}
