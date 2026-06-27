@@ -108,52 +108,45 @@ def _git_fixture(responses):
     return fake_git
 
 
-def test_collect_tree_attaches_tracked_patch():
+def test_collect_tree_tags_tree_and_defers_patch():
     git = _git_fixture({
         "status --porcelain -z": " M src/a.py\x00",
         "diff HEAD --numstat -z": "5\t2\tsrc/a.py\x00",
-        "diff HEAD -- src/a.py": "@@ -1 +1 @@\n-old\n+new\n",
     })
     ledger = [{"pane": "sage", "files": ["src/a.py"], "coverage": "git-delta"}]
     view = review.collect_tree("/repo", ledger=ledger, git_fn=git)
     assert view["tree"] == "/repo"
-    assert len(view["files"]) == 1
     f = view["files"][0]
     assert f["path"] == "src/a.py" and f["panes"] == ["sage"]
-    assert f["patch"] == "@@ -1 +1 @@\n-old\n+new\n"
+    assert f["tree"] == "/repo"          # tagged for lazy load
+    assert "patch" not in f              # patch is no longer eager
 
 
-def test_collect_tree_untracked_uses_no_index_patch():
+def test_load_patch_tracked():
+    git = _git_fixture({"diff HEAD -- src/a.py": "@@ -1 +1 @@\n-old\n+new\n"})
+    rec = {"tree": "/repo", "path": "src/a.py", "status": "M", "binary": False}
+    assert review.load_patch(rec, git_fn=git) == "@@ -1 +1 @@\n-old\n+new\n"
+
+
+def test_load_patch_untracked_uses_no_index():
     git = _git_fixture({
-        "status --porcelain -z": "?? notes.md\x00",
-        "diff HEAD --numstat -z": "",
-        "diff --no-index -- /dev/null notes.md": "@@ -0,0 +1 @@\n+hello\n",
-    })
-    view = review.collect_tree("/repo", ledger=[], git_fn=git)
-    f = view["files"][0]
-    assert f["status"] == "?" and f["attributed"] is False
-    assert f["patch"] == "@@ -0,0 +1 @@\n+hello\n"
+        "diff --no-index -- /dev/null notes.md": "@@ -0,0 +1 @@\n+hello\n"})
+    rec = {"tree": "/repo", "path": "notes.md", "status": "?", "binary": False}
+    assert review.load_patch(rec, git_fn=git) == "@@ -0,0 +1 @@\n+hello\n"
 
 
-def test_collect_tree_binary_has_empty_patch():
-    git = _git_fixture({
-        "status --porcelain -z": " M logo.png\x00",
-        "diff HEAD --numstat -z": "-\t-\tlogo.png\x00",
-    })
-    f = review.collect_tree("/repo", ledger=[], git_fn=git)["files"][0]
-    assert f["binary"] is True and f["patch"] == ""
+def test_load_patch_binary_is_empty():
+    rec = {"tree": "/repo", "path": "logo.png", "status": "M", "binary": True}
+    assert review.load_patch(rec, git_fn=lambda *a, **k: "ignored") == ""
 
 
-def test_collect_tree_caps_large_patch():
+def test_load_patch_caps_large_patch():
     big = "+x\n" * 200_000
-    git = _git_fixture({
-        "status --porcelain -z": " M big.py\x00",
-        "diff HEAD --numstat -z": "1\t0\tbig.py\x00",
-        "diff HEAD -- big.py": big,
-    })
-    f = review.collect_tree("/repo", ledger=[], git_fn=git)["files"][0]
-    assert len(f["patch"]) <= review.MAX_PATCH_BYTES + 32
-    assert f["patch"].endswith("... (truncated)\n")
+    git = _git_fixture({"diff HEAD -- big.py": big})
+    rec = {"tree": "/repo", "path": "big.py", "status": "M", "binary": False}
+    p = review.load_patch(rec, git_fn=git)
+    assert len(p) <= review.MAX_PATCH_BYTES + 32
+    assert p.endswith("... (truncated)\n")
 
 
 def test_collect_tree_no_changes_returns_empty_files():

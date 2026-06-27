@@ -138,16 +138,26 @@ def _file_patch(tree: str, rec: dict, git_fn) -> str:
     return out
 
 
+def load_patch(rec: dict, *, git_fn=_run_git) -> str:
+    """Fetch one file record's unified diff on demand. Reads rec['tree'] (set
+    by collect_tree). Read-only; never mutates the index. Kept separate from
+    collect_tree so a live caller fetches only the patch it is about to show,
+    not one per changed file per poll."""
+    return _file_patch(rec["tree"], rec, git_fn)
+
+
 def collect_tree(tree: str, *, ledger: list[dict], git_fn=_run_git,
                  excludes: tuple = ()) -> dict:
-    """Per-tree change set joined to attribution, each file's patch attached."""
+    """Per-tree change set joined to attribution. Each record is tagged with
+    its tree; patches are fetched lazily via load_patch, not here, so a live
+    caller does not spawn one git diff per changed file on every poll."""
     status_out = git_fn(tree, ["status", "--porcelain", "-z"]) or ""
     numstat_out = git_fn(tree, ["diff", "HEAD", "--numstat", "-z"]) or ""
     changes = parse_status(status_out)
     counts = parse_numstat(numstat_out)
     records = build_file_records(changes, counts, ledger, excludes=excludes)
     for rec in records:
-        rec["patch"] = _file_patch(tree, rec, git_fn)
+        rec["tree"] = tree
     return {"tree": tree, "files": records}
 
 

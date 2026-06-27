@@ -630,7 +630,10 @@ def _cmd_review(args: argparse.Namespace) -> int:
         return review_mod.gather_review(
             registry, session=session, excludes=excludes)
 
-    reviewtui.run_review_tui(gather)
+    def load_patch(rec):
+        return review_mod.load_patch(rec)
+
+    reviewtui.run_review_tui(gather, load_patch)
     return 0
 
 

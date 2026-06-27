@@ -103,6 +103,21 @@ def _pane_of(rows: list[dict], idx: int) -> str | None:
     return None
 
 
+def _ensure_selected_patch(state: dict, patch_fn) -> None:
+    """Load the selected file's patch into its record on demand, cached by
+    (tree, path) for the life of the current snapshot. Only the file being
+    viewed is fetched, never the whole changeset."""
+    rows, sel = state["rows"], state["sel"]
+    if not (0 <= sel < len(rows) and rows[sel]["kind"] == "file"):
+        return
+    rec = rows[sel]["record"]
+    key = (rec.get("tree"), rec["path"])
+    cache = state["patch_cache"]
+    if key not in cache:
+        cache[key] = patch_fn(rec)
+    rec["patch"] = cache[key]
+
+
 def _selected_path(state: dict) -> str | None:
     rows, sel = state["rows"], state["sel"]
     if 0 <= sel < len(rows) and rows[sel]["kind"] == "file":
@@ -130,9 +145,15 @@ def step(state: dict, key: int) -> tuple[dict, str | None]:
         state["diff_scroll"] = 0
         return state, None
     if key == ord(" "):
-        pane = _pane_of(state["rows"], state["sel"])
-        if pane:
-            state["folded"] ^= {pane}
+        sel = state["sel"]
+        rows = state["rows"]
+        row = rows[sel] if 0 <= sel < len(rows) else None
+        if row and row["kind"] == "file" and row["pane"] is None:
+            target = "unattributed"
+        else:
+            target = _pane_of(rows, sel)
+        if target:
+            state["folded"] ^= {target}
             prev = _selected_path(state)
             state["rows"] = build_rows(state["views"], state["folded"])
             state["sel"] = reselect(state["rows"], prev)
@@ -282,19 +303,21 @@ def _regather(state: dict, gather) -> dict:
     state["views"] = views
     state["rows"] = build_rows(views, state["folded"])
     state["sel"] = reselect(state["rows"], prev)
+    state["patch_cache"] = {}
     return state
 
 
-def _loop(stdscr, gather, interval: float) -> None:
+def _loop(stdscr, gather, patch_fn, interval: float) -> None:
     curses.curs_set(0)
     stdscr.timeout(int(interval * 1000))
     _init_colors()
     views = gather()
     state = {"views": views, "folded": set(),
              "rows": build_rows(views, set()), "sel": 0,
-             "diff_scroll": 0, "paused": False}
+             "diff_scroll": 0, "paused": False, "patch_cache": {}}
     state["sel"] = first_file_index(state["rows"])
     while True:
+        _ensure_selected_patch(state, patch_fn)
         render_frame(stdscr, state)
         key = stdscr.getch()
         if key == -1:  # timeout tick -> live refresh
@@ -310,7 +333,9 @@ def _loop(stdscr, gather, interval: float) -> None:
             _open_in_editor(stdscr, state)
 
 
-def run_review_tui(gather, *, interval: float = 2.0) -> None:
+def run_review_tui(gather, patch_fn, *, interval: float = 2.0) -> None:
     """Run the master-detail review TUI until the user quits. `gather` is a
-    zero-arg callable returning the current list of tree views."""
-    curses.wrapper(_loop, gather, interval)
+    zero-arg callable returning the current tree views; `patch_fn(rec)` returns
+    the unified diff for one file record, fetched lazily for the selected file
+    only."""
+    curses.wrapper(_loop, gather, patch_fn, interval)

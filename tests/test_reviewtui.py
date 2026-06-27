@@ -184,6 +184,38 @@ def test_render_frame_conflict_banner_for_multi_pane_file():
     assert "combined" in blob and "not splittable without worktrees" in blob
 
 
+def test_ensure_selected_patch_loads_once_and_caches():
+    calls = []
+
+    def patch_fn(rec):
+        calls.append(rec["path"])
+        return "PATCH:" + rec["path"]
+
+    files = [_file("a.py", panes=["s"])]
+    files[0]["tree"] = "/repo"
+    ledger = [{"pane": "s", "files": ["a.py"], "coverage": "git-delta"}]
+    rows = reviewtui.build_rows([_view(files, ledger)])
+    sel = reviewtui.first_file_index(rows)
+    state = {"views": [_view(files, ledger)], "folded": set(), "rows": rows,
+             "sel": sel, "diff_scroll": 0, "paused": False, "patch_cache": {}}
+    reviewtui._ensure_selected_patch(state, patch_fn)
+    reviewtui._ensure_selected_patch(state, patch_fn)  # second call hits cache
+    assert calls == ["a.py"]                            # fetched exactly once
+    assert rows[sel]["record"]["patch"] == "PATCH:a.py"
+
+
+def test_step_space_folds_unattributed_bucket():
+    files = [_file("orphan.py", panes=[])]
+    rows = reviewtui.build_rows([_view(files, ledger=[])])
+    sel = next(i for i, r in enumerate(rows) if r["kind"] == "file")
+    state = {"views": [_view(files, ledger=[])], "folded": set(), "rows": rows,
+             "sel": sel, "diff_scroll": 0, "paused": False, "patch_cache": {}}
+    st, action = reviewtui.step(state, ord(" "))
+    assert action is None
+    assert "unattributed" in st["folded"]
+    assert all(r["kind"] != "file" for r in st["rows"])  # file rows hidden
+
+
 def test_cli_review_parser_registered():
     from vupai import cli
     parser = cli.build_parser()
