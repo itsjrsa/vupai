@@ -174,12 +174,13 @@ vupai kill backend    # kill the "backend" session
 > setup. The trade-off: its sessions don't show in a plain `tmux ls`; reach them
 > with `vupai attach`. (Set `tmux_socket = ""` to share your default server.)
 
-**It's still tmux.** The voice layer sits on top; every normal tmux binding keeps
-working. Detach with `<prefix> d`, split panes by hand (`<prefix> %` / `"`),
-switch with `<prefix>`-arrow, scroll/copy-mode, resize, your own custom
-keybindings: all unchanged. Use voice when it's faster, the prefix key when it's
-not. (Your `~/.tmux.conf` is sourced too, with the few exceptions noted in
-[tmux tips](#tmux-tips).)
+> [!IMPORTANT]
+> **It's still tmux.** The voice layer sits on top; every normal tmux binding keeps
+> working. Detach with `<prefix> d`, split panes by hand (`<prefix> %` / `"`),
+> switch with `<prefix>`-arrow, scroll/copy-mode, resize, your own custom
+> keybindings: all unchanged. Use voice when it's faster, the prefix key when it's
+> not. (Your `~/.tmux.conf` is sourced too, with the few exceptions noted in
+> [tmux tips](#tmux-tips).)
 
 Once attached, you talk to vupai with **two push-to-talk keys**:
 
