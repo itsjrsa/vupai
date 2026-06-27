@@ -1,4 +1,5 @@
-from vupai import review
+from vupai import activity, review
+from vupai.registry import PaneRegistry
 
 
 def test_parse_numstat_normal_and_binary():
@@ -159,3 +160,56 @@ def test_collect_tree_no_changes_returns_empty_files():
     git = _git_fixture({"status --porcelain -z": "", "diff HEAD --numstat -z": ""})
     assert review.collect_tree("/repo", ledger=[], git_fn=git) == {
         "tree": "/repo", "files": []}
+
+
+def _pane_line(pid, name, *, session="proj", command="claude"):
+    # tmuxio.PANE_FORMAT order: id, window_id, window, index, name, command,
+    # active, session
+    return "\t".join([pid, "@1", "win", "0", name, command, "1", session])
+
+
+def test_gather_review_joins_ledger_and_diff_for_session(tmp_path):
+    root = str(tmp_path)
+    store = activity.ActivityStore(tmp_path)
+    store.write_current({"sage": {
+        "pane": "sage", "session": "proj", "tree": root,
+        "files": ["src/a.py"], "coverage": "git-delta", "contended_with": []}})
+
+    reg = PaneRegistry(
+        lister=lambda: [_pane_line("%1", "sage", session="proj")],
+        focuser=lambda: None)
+
+    def fake_git(tree, args, **kwargs):
+        if args[:1] == ["rev-parse"]:
+            return root + "\n"
+        if args == ["status", "--porcelain", "-z"]:
+            return " M src/a.py\x00"
+        if args == ["diff", "HEAD", "--numstat", "-z"]:
+            return "5\t2\tsrc/a.py\x00"
+        if args[:2] == ["diff", "HEAD"]:
+            return "@@ -1 +1 @@\n-old\n+new\n"
+        return None
+
+    views = review.gather_review(
+        reg, session="proj", cwd_fn=lambda pid: root, git_fn=fake_git)
+    assert len(views) == 1
+    assert views[0]["tree"] == root
+    assert [r["pane"] for r in views[0]["ledger"]] == ["sage"]
+    assert views[0]["files"][0]["path"] == "src/a.py"
+    assert views[0]["files"][0]["panes"] == ["sage"]
+
+
+def test_gather_review_skips_trees_with_no_changes(tmp_path):
+    root = str(tmp_path)
+    reg = PaneRegistry(
+        lister=lambda: [_pane_line("%1", "sage", session="proj")],
+        focuser=lambda: None)
+
+    def fake_git(tree, args, **kwargs):
+        if args[:1] == ["rev-parse"]:
+            return root + "\n"
+        return ""  # clean tree: no status, no numstat
+
+    views = review.gather_review(
+        reg, session="proj", cwd_fn=lambda pid: root, git_fn=fake_git)
+    assert views == []

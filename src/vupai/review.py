@@ -4,8 +4,10 @@ the Layer 1 activity ledger. Never mutates the index, never injects."""
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
-from .activity import _excluded
+from . import tmuxio
+from .activity import ActivityStore, _excluded, git_toplevel
 
 MAX_PATCH_BYTES = 200_000
 
@@ -147,3 +149,33 @@ def collect_tree(tree: str, *, ledger: list[dict], git_fn=_run_git,
     for rec in records:
         rec["patch"] = _file_patch(tree, rec, git_fn)
     return {"tree": tree, "files": records}
+
+
+def gather_review(registry, *, session=None, cwd_fn=tmuxio.pane_current_path,
+                  git_fn=_run_git, dir_name: str = ".vupai",
+                  excludes: tuple = ()) -> list[dict]:
+    """One tree view per distinct git root under the session's panes, each
+    joining that tree's ledger snapshot to its live diff. Empty trees dropped."""
+    registry.refresh()
+    roots: dict[str, None] = {}
+    for pane in registry.panes:
+        if session and pane.session != session:
+            continue
+        cwd = cwd_fn(pane.id)
+        if not cwd:
+            continue
+        root = git_toplevel(cwd, git_fn)
+        if root:
+            roots[root] = None
+    views: list[dict] = []
+    for root in roots:
+        ledger = [
+            rec for rec in ActivityStore(Path(root), dir_name=dir_name)
+            .read_current().values()
+            if not session or rec.get("session") in (None, session)
+        ]
+        view = collect_tree(root, ledger=ledger, git_fn=git_fn, excludes=excludes)
+        if view["files"]:
+            view["ledger"] = ledger
+            views.append(view)
+    return views
