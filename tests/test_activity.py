@@ -222,6 +222,50 @@ def test_tick_swallows_registry_failure():
     p.tick()  # must not raise
 
 
+def test_tick_emits_churn_only_for_active_unattributed_pane(tmp_path):
+    # ember is active (its tail keeps changing) but names no path -> surfaced as
+    # "active, files unknown" rather than silently omitted.
+    store = activity.ActivityStore(tmp_path)
+    captures = {"%1": "editing foo.py", "%2": "thinking"}
+    dirty = {"/tree": " M foo.py\n"}
+    p = _poller(
+        [_pane_line("%1", "echo"), _pane_line("%2", "ember", command="opencode")],
+        captures=captures, dirty=dirty, store=store)
+    p.tick()  # baseline: ember has no prior tail, so no churn signal yet
+    assert "ember" not in store.read_current()
+    captures["%2"] = "thinking lots of brand new different output now here"
+    p.tick()  # ember tail churned -> churn-only
+    cur = store.read_current()
+    assert cur["ember"]["coverage"] == "churn-only"
+    assert cur["ember"]["files"] == []
+    assert cur["ember"]["contended_with"] == []
+    assert cur["echo"]["files"] == ["foo.py"]  # attribution still works alongside
+
+
+def test_tick_idle_unattributed_pane_is_not_recorded(tmp_path):
+    store = activity.ActivityStore(tmp_path)
+    captures = {"%1": "editing foo.py", "%2": "$ "}
+    dirty = {"/tree": " M foo.py\n"}
+    p = _poller(
+        [_pane_line("%1", "echo"), _pane_line("%2", "ember", command="opencode")],
+        captures=captures, dirty=dirty, store=store)
+    p.tick()
+    p.tick()  # ember tail unchanged -> no churn, no marker -> never recorded
+    assert "ember" not in store.read_current()
+
+
+def test_tick_churn_only_via_working_marker_on_first_tick(tmp_path):
+    # A Claude pane shows the working marker ("esc to interrupt") but no path:
+    # active immediately, even with no prior tail to churn against.
+    store = activity.ActivityStore(tmp_path)
+    p = _poller(
+        [_pane_line("%1", "echo"), _pane_line("%2", "nova", command="claude")],
+        captures={"%1": "editing foo.py", "%2": "Esc to interrupt"},
+        dirty={"/tree": " M foo.py\n"}, store=store)
+    p.tick()
+    assert store.read_current()["nova"]["coverage"] == "churn-only"
+
+
 def test_collect_activity_reads_current_for_session(tmp_path):
     store = activity.ActivityStore(tmp_path)
     store.write_current({"echo": {

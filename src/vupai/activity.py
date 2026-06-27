@@ -20,6 +20,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 from . import tmuxio
+from .panestate import CHURN_ACTIVE, churn, markers_for
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +218,18 @@ def _excluded(path: str, excludes: tuple[str, ...]) -> bool:
     return any(fnmatch(path, pat) or fnmatch(base, pat) for pat in excludes)
 
 
+def _is_working(prev_tail: str | None, tail: str, program: str) -> bool:
+    """Best-effort "this pane is active" signal for churn-only coverage: the
+    tail churned since the last tick, or it shows a tool working-marker. Churn
+    is tool-agnostic (it covers non-Claude tools that print no edit marker)."""
+    if not tail:
+        return False
+    if churn(prev_tail, tail) >= CHURN_ACTIVE:
+        return True
+    low = tail.lower()
+    return any(marker in low for marker in markers_for(program).working)
+
+
 class ActivityPoller:
     """Background poller. Clones board.Board's thread skeleton. Owns its own
     PaneRegistry; touches only tmux capture-pane + read-only git + its store."""
@@ -234,9 +247,8 @@ class ActivityPoller:
         self._git = git_fn
         self._stat = stat_fn
         self._clock = clock
-        # _now and _recency are reserved for the deferred churn-only / recency
-        # phase; the MVP poller is edge-driven by the git delta and does not
-        # read them yet.
+        # _now and _recency are reserved for a future time-windowed recency
+        # mode; the edge-driven poller (including churn-only) does not read them.
         self._now = now
         self._poll_interval = poll_interval
         self._recency = recency_window_s
@@ -248,6 +260,7 @@ class ActivityPoller:
             lambda root: ActivityStore(
                 Path(root), dir_name=dir_name, history_limit=history_limit))
         self._snapshots: dict[str, dict[str, float]] = {}  # tree -> {path: mtime}
+        self._prev_tails: dict[str, str] = {}  # pane id -> last seen tail (churn)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -303,6 +316,10 @@ class ActivityPoller:
                 self._process_tree(root, panes)
             except Exception:
                 logger.debug("activity tree failed: %s", root, exc_info=True)
+        live = {pane.id for pane in self._registry.panes}
+        for pid in list(self._prev_tails):
+            if pid not in live:
+                self._prev_tails.pop(pid, None)
 
     def _dirty_mtimes(self, root: str) -> dict[str, float]:
         out = self._git(root, ["status", "--porcelain"])
@@ -327,11 +344,13 @@ class ActivityPoller:
             return
         pane_tokens: dict[str, set[str]] = {}
         markers: dict[str, bool] = {}
+        tails: dict[str, str] = {}
         for pane in panes:
             try:
                 tail = self._capture(pane.id)
             except Exception:
                 tail = ""
+            tails[pane.id] = tail
             pane_tokens[pane.id] = extract_paths(tail)
             markers[pane.id] = _has_edit_marker(tail)
         attribution = attribute(delta, pane_tokens)
@@ -342,7 +361,18 @@ class ActivityPoller:
                 contended.add(path)
             for pid in pids:
                 by_pane.setdefault(pid, []).append(path)
-        if not by_pane:
+        # Churn-only: a pane that is active (its tail changed since the last tick,
+        # or it shows a working marker) but has no attributable file is surfaced
+        # as "active, files unknown" so a busy sibling is never silently omitted.
+        churn_only = [
+            pane for pane in panes
+            if pane.id not in by_pane
+            and _is_working(self._prev_tails.get(pane.id), tails[pane.id],
+                            pane.command)
+        ]
+        for pane in panes:
+            self._prev_tails[pane.id] = tails[pane.id]
+        if not by_pane and not churn_only:
             return
         store = self._store_factory(root)
         snapshot = store.read_current()
@@ -366,6 +396,17 @@ class ActivityPoller:
                 "pane": pane.name, "pane_id": pid, "files": files,
                 "coverage": coverage, "state": "working",
                 "contended_with": others,
+            }
+            store.append(record)
+            snapshot[pane.name] = record
+        for pane in churn_only:
+            record = {
+                "ts": ts, "session": pane.session, "tree": root,
+                "pane": pane.name, "pane_id": pane.id, "files": [],
+                "coverage": classify_coverage(
+                    in_repo=True, attributed=False,
+                    marker=markers.get(pane.id, False), working=True),
+                "state": "working", "contended_with": [],
             }
             store.append(record)
             snapshot[pane.name] = record
