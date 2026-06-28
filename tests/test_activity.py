@@ -281,6 +281,93 @@ def test_collect_activity_reads_current_for_session(tmp_path):
     assert records == [store.read_current()["echo"]]
 
 
+def test_collect_activity_omits_closed_panes(tmp_path):
+    # "ghost" lingers in the ledger but is no longer a live pane: it must not
+    # appear in the current activity view.
+    store = activity.ActivityStore(tmp_path)
+    store.write_current({
+        "echo": {"pane": "echo", "session": "proj", "tree": str(tmp_path),
+                 "files": ["a.py"], "coverage": "git-delta",
+                 "contended_with": []},
+        "ghost": {"pane": "ghost", "session": "proj", "tree": str(tmp_path),
+                  "files": ["b.py"], "coverage": "git-delta",
+                  "contended_with": []},
+    })
+    reg = PaneRegistry(
+        lister=lambda: [_pane_line("%1", "echo", session="proj")],
+        focuser=lambda: None)
+    records = activity.collect_activity(
+        reg, session="proj",
+        cwd_fn=lambda pid: str(tmp_path),
+        git_fn=lambda tree, args: str(tmp_path) + "\n")
+    assert [r["pane"] for r in records] == ["echo"]
+
+
+def test_tick_prunes_closed_pane_from_current(tmp_path):
+    # current.json carries a stale "ghost" record; once a live pane edits, the
+    # poller rewrites the snapshot without the vanished pane.
+    store = activity.ActivityStore(tmp_path)
+    store.write_current({
+        "ghost": {"pane": "ghost", "session": "proj", "tree": "/tree",
+                  "files": ["old.py"], "coverage": "git-delta",
+                  "contended_with": []}})
+    p = _poller(
+        [_pane_line("%1", "echo")],
+        captures={"%1": "Update(src/router.py) done"},
+        dirty={"/tree": " M src/router.py\n"},
+        store=store)
+    p.tick()
+    cur = store.read_current()
+    assert "ghost" not in cur          # vanished pane pruned
+    assert "echo" in cur               # live editor recorded
+
+
+def test_extract_marked_paths_pulls_edited_file_from_markers():
+    tail = "Update(src/router.py) then Updated lib/util.py with 3 additions"
+    assert activity.extract_marked_paths(tail) == {"src/router.py", "lib/util.py"}
+
+
+def test_extract_marked_paths_ignores_bare_mentions():
+    assert activity.extract_marked_paths("we read README.md earlier") == set()
+
+
+def test_tick_marker_owner_excludes_mention_only_pane(tmp_path):
+    # astra PROVES it edited README.md (the Update() marker names the path);
+    # nova merely mentions README.md in its scrollback. The change must be
+    # attributed to astra alone, with no phantom cross-pane conflict.
+    store = activity.ActivityStore(tmp_path)
+    p = _poller(
+        [_pane_line("%1", "astra"), _pane_line("%2", "nova")],
+        captures={"%1": "Update(README.md) done",
+                  "%2": "earlier we edited README.md then moved on"},
+        dirty={"/tree": " M README.md\n"},
+        store=store)
+    p.tick()
+    cur = store.read_current()
+    assert cur["astra"]["files"] == ["README.md"]
+    assert cur["astra"]["coverage"] == "exact"
+    assert cur["astra"]["contended_with"] == []          # no phantom conflict
+    # nova never claims README.md (it may still surface as churn-only active).
+    assert "README.md" not in cur.get("nova", {}).get("files", [])
+
+
+def test_tick_no_marker_still_flags_real_contention(tmp_path):
+    # When NO pane proves the edit (markerless tools), fall back to mention-based
+    # attribution so a genuine same-file conflict is still surfaced.
+    store = activity.ActivityStore(tmp_path)
+    p = _poller(
+        [_pane_line("%1", "echo", command="codex"),
+         _pane_line("%2", "orion", command="codex")],
+        captures={"%1": "editing src/app.py", "%2": "writing src/app.py now"},
+        dirty={"/tree": " M src/app.py\n"},
+        store=store)
+    p.tick()
+    cur = store.read_current()
+    assert cur["echo"]["contended_with"] == ["orion"]
+    assert cur["orion"]["contended_with"] == ["echo"]
+    assert cur["orion"]["coverage"] == "git-delta"
+
+
 def test_render_activity_coverage_aware():
     out = activity.render_activity([
         {"pane": "echo", "files": ["router.py"], "coverage": "git-delta",

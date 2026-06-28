@@ -616,6 +616,27 @@ def _cmd_activity(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_review(args: argparse.Namespace) -> int:
+    from . import review as review_mod
+    from . import reviewtui
+    registry = PaneRegistry()
+    registry.refresh()
+    focused_id = tmuxio.focused_pane_id()
+    session = next(
+        (p.session for p in registry.panes if p.id == focused_id), None)
+    excludes = load_config().activity_path_excludes
+
+    def gather():
+        return review_mod.gather_review(
+            registry, session=session, excludes=excludes)
+
+    def load_patch(rec):
+        return review_mod.load_patch(rec)
+
+    reviewtui.run_review_tui(gather, load_patch)
+    return 0
+
+
 def _cmd_ls(args: argparse.Namespace) -> int:
     # Lightweight session list (tmux `ls` style): one line per session on
     # vupai's server, the voice-focused session first and marked `*`, with
@@ -1383,6 +1404,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--stats", action="store_true",
         help="print Phase 0 contention/attribution counters instead")
     p_activity.set_defaults(func=_cmd_activity)
+
+    p_review = sub.add_parser(
+        "review", help="live TUI review of uncommitted cross-pane changes")
+    p_review.set_defaults(func=_cmd_review)
 
     p_name = sub.add_parser("name")
     p_name.add_argument("name")

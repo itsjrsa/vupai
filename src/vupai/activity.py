@@ -208,9 +208,28 @@ def _mtime(path: str) -> float | None:
 # have none and degrade to "git-delta". Tiebreak only, never required.
 _EDIT_MARKER_RE = re.compile(r"\bUpdate\(|\bUpdated .+ with \d+ (addition|removal)")
 
+# Path-bound edit markers: Claude prints `Update(<path>)` and `Updated <path>
+# with N additions/removals`. The captured path is proof the pane wrote that
+# file, unlike a bare scrollback mention.
+_MARKER_PATH_RE = re.compile(
+    r"Update\(([^)]+)\)|Updated\s+(\S+)\s+with\s+\d+\s+(?:additions?|removals?)")
+
 
 def _has_edit_marker(tail: str) -> bool:
     return bool(_EDIT_MARKER_RE.search(tail))
+
+
+def extract_marked_paths(tail: str) -> set[str]:
+    """Paths a tool reported it EDITED (Claude's `Update(<path>)` /
+    `Updated <path> with N additions`), normalized like extract_paths. A marker
+    is proof the pane wrote that file, so it outranks a bare path mention when
+    attributing a change."""
+    out: set[str] = set()
+    for m in _MARKER_PATH_RE.finditer(tail):
+        path = m.group(1) or m.group(2)
+        if path:
+            out.add(path.lstrip("./"))
+    return out
 
 
 def _excluded(path: str, excludes: tuple[str, ...]) -> bool:
@@ -343,6 +362,7 @@ class ActivityPoller:
         if not delta:
             return
         pane_tokens: dict[str, set[str]] = {}
+        pane_marked: dict[str, set[str]] = {}
         markers: dict[str, bool] = {}
         tails: dict[str, str] = {}
         for pane in panes:
@@ -352,8 +372,23 @@ class ActivityPoller:
                 tail = ""
             tails[pane.id] = tail
             pane_tokens[pane.id] = extract_paths(tail)
+            pane_marked[pane.id] = extract_marked_paths(tail)
             markers[pane.id] = _has_edit_marker(tail)
-        attribution = attribute(delta, pane_tokens)
+        mention_attr = attribute(delta, pane_tokens)
+        marked_attr = attribute(delta, pane_marked)
+        # A tool edit-marker proves a pane wrote the file; a bare path mention is
+        # only a guess. When any pane proves it edited a changed file, attribute
+        # that file to the proven pane(s) alone, so a sibling that merely
+        # mentioned the path is not credited and no phantom conflict is raised.
+        # With no proof (markerless tools), fall back to all mentioning panes.
+        # Tradeoff: a markerless tool genuinely co-editing a file that a
+        # marker-proving pane also edited is dropped from that file's owners
+        # (the proven pane wins); a rare real conflict is preferred lost over
+        # the common phantom one. Exact attribution is Layer 3 (worktrees).
+        attribution: dict[str, list[str]] = {}
+        for path, mentioners in mention_attr.items():
+            proven = marked_attr.get(path) or []
+            attribution[path] = proven if proven else mentioners
         by_pane: dict[str, list[str]] = {}
         contended: set[str] = set()
         for path, pids in attribution.items():
@@ -375,7 +410,12 @@ class ActivityPoller:
         if not by_pane and not churn_only:
             return
         store = self._store_factory(root)
-        snapshot = store.read_current()
+        # Prune panes that have since closed: current.json is a live snapshot,
+        # and a record keyed by a name no longer present in this tree is stale.
+        live_names = {p.name for p in panes}
+        snapshot = {
+            name: rec for name, rec in store.read_current().items()
+            if name in live_names}
         by_id = {p.id: p for p in panes}
         ts = self._clock()
         for pid, files in by_pane.items():
@@ -388,9 +428,11 @@ class ActivityPoller:
                 if op != pid and op in by_id
                 and set(by_pane[op]) & set(files) & contended
             })
+            # "exact" only when this pane proved (via a marker) it edited one of
+            # its attributed files, not merely that its tail held some marker.
+            proven = any(pid in marked_attr.get(f, []) for f in files)
             coverage = classify_coverage(
-                in_repo=True, attributed=True, marker=markers.get(pid, False),
-                working=True)
+                in_repo=True, attributed=True, marker=proven, working=True)
             record = {
                 "ts": ts, "session": pane.session, "tree": root,
                 "pane": pane.name, "pane_id": pid, "files": files,
@@ -431,13 +473,20 @@ def _session_tree_roots(registry, *, session, cwd_fn, git_fn) -> list[str]:
 def collect_activity(registry, *, session=None,
                      cwd_fn=tmuxio.pane_current_path, git_fn=_run_git,
                      dir_name: str = ".vupai") -> list[dict]:
-    """Latest per-pane record from each tree's current.json, for the session."""
+    """Latest per-pane record from each tree's current.json, for the session.
+    Records for panes no longer present (closed since the ledger was written)
+    are dropped, so the view only ever shows currently-live panes."""
     records: list[dict] = []
-    for root in _session_tree_roots(
-            registry, session=session, cwd_fn=cwd_fn, git_fn=git_fn):
+    roots = _session_tree_roots(
+        registry, session=session, cwd_fn=cwd_fn, git_fn=git_fn)
+    live = {p.name for p in registry.panes
+            if not session or p.session == session}
+    for root in roots:
         store = ActivityStore(Path(root), dir_name=dir_name)
         for rec in store.read_current().values():
             if session and rec.get("session") not in (None, session):
+                continue
+            if rec.get("pane") not in live:
                 continue
             records.append(rec)
     return records

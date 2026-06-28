@@ -19,6 +19,11 @@ a date, bumps `version` in `pyproject.toml`, and tags `vX.Y.Z`.
   Read it with `vupai activity`, the `activity` voice verb, or directly from
   the JSON. New `activity_*` config keys. `vupai activity --stats` reports the
   Phase 0 contention/attribution counters.
+- `vupai review` (activity ledger, Layer 2 Phase 1): a live, in-terminal
+  master-detail TUI of uncommitted changes across panes. Runs `git diff`
+  (authoritative) joined to the ledger for attribution, flags files touched by
+  two or more panes, and shows the selected file's diff alongside the list.
+  Read-only and pull-only: it never stages, commits, or writes to a pane.
 
 ## [0.3.0] - 2026-06-26
 
