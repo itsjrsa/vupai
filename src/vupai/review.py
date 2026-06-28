@@ -177,12 +177,17 @@ def gather_review(registry, *, session=None, cwd_fn=tmuxio.pane_current_path,
         root = git_toplevel(cwd, git_fn)
         if root:
             roots[root] = None
+    # Only attribute to panes that are live right now: a ledger record for a
+    # since-closed pane is stale and must not show up as an active editor.
+    live = {pane.name for pane in registry.panes
+            if not session or pane.session == session}
     views: list[dict] = []
     for root in roots:
         ledger = [
             rec for rec in ActivityStore(Path(root), dir_name=dir_name)
             .read_current().values()
-            if not session or rec.get("session") in (None, session)
+            if (not session or rec.get("session") in (None, session))
+            and rec.get("pane") in live
         ]
         view = collect_tree(root, ledger=ledger, git_fn=git_fn, excludes=excludes)
         if view["files"]:

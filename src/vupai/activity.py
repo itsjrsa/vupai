@@ -375,7 +375,12 @@ class ActivityPoller:
         if not by_pane and not churn_only:
             return
         store = self._store_factory(root)
-        snapshot = store.read_current()
+        # Prune panes that have since closed: current.json is a live snapshot,
+        # and a record keyed by a name no longer present in this tree is stale.
+        live_names = {p.name for p in panes}
+        snapshot = {
+            name: rec for name, rec in store.read_current().items()
+            if name in live_names}
         by_id = {p.id: p for p in panes}
         ts = self._clock()
         for pid, files in by_pane.items():
@@ -431,13 +436,20 @@ def _session_tree_roots(registry, *, session, cwd_fn, git_fn) -> list[str]:
 def collect_activity(registry, *, session=None,
                      cwd_fn=tmuxio.pane_current_path, git_fn=_run_git,
                      dir_name: str = ".vupai") -> list[dict]:
-    """Latest per-pane record from each tree's current.json, for the session."""
+    """Latest per-pane record from each tree's current.json, for the session.
+    Records for panes no longer present (closed since the ledger was written)
+    are dropped, so the view only ever shows currently-live panes."""
     records: list[dict] = []
-    for root in _session_tree_roots(
-            registry, session=session, cwd_fn=cwd_fn, git_fn=git_fn):
+    roots = _session_tree_roots(
+        registry, session=session, cwd_fn=cwd_fn, git_fn=git_fn)
+    live = {p.name for p in registry.panes
+            if not session or p.session == session}
+    for root in roots:
         store = ActivityStore(Path(root), dir_name=dir_name)
         for rec in store.read_current().values():
             if session and rec.get("session") not in (None, session):
+                continue
+            if rec.get("pane") not in live:
                 continue
             records.append(rec)
     return records

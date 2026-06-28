@@ -281,6 +281,47 @@ def test_collect_activity_reads_current_for_session(tmp_path):
     assert records == [store.read_current()["echo"]]
 
 
+def test_collect_activity_omits_closed_panes(tmp_path):
+    # "ghost" lingers in the ledger but is no longer a live pane: it must not
+    # appear in the current activity view.
+    store = activity.ActivityStore(tmp_path)
+    store.write_current({
+        "echo": {"pane": "echo", "session": "proj", "tree": str(tmp_path),
+                 "files": ["a.py"], "coverage": "git-delta",
+                 "contended_with": []},
+        "ghost": {"pane": "ghost", "session": "proj", "tree": str(tmp_path),
+                  "files": ["b.py"], "coverage": "git-delta",
+                  "contended_with": []},
+    })
+    reg = PaneRegistry(
+        lister=lambda: [_pane_line("%1", "echo", session="proj")],
+        focuser=lambda: None)
+    records = activity.collect_activity(
+        reg, session="proj",
+        cwd_fn=lambda pid: str(tmp_path),
+        git_fn=lambda tree, args: str(tmp_path) + "\n")
+    assert [r["pane"] for r in records] == ["echo"]
+
+
+def test_tick_prunes_closed_pane_from_current(tmp_path):
+    # current.json carries a stale "ghost" record; once a live pane edits, the
+    # poller rewrites the snapshot without the vanished pane.
+    store = activity.ActivityStore(tmp_path)
+    store.write_current({
+        "ghost": {"pane": "ghost", "session": "proj", "tree": "/tree",
+                  "files": ["old.py"], "coverage": "git-delta",
+                  "contended_with": []}})
+    p = _poller(
+        [_pane_line("%1", "echo")],
+        captures={"%1": "Update(src/router.py) done"},
+        dirty={"/tree": " M src/router.py\n"},
+        store=store)
+    p.tick()
+    cur = store.read_current()
+    assert "ghost" not in cur          # vanished pane pruned
+    assert "echo" in cur               # live editor recorded
+
+
 def test_render_activity_coverage_aware():
     out = activity.render_activity([
         {"pane": "echo", "files": ["router.py"], "coverage": "git-delta",
