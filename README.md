@@ -10,10 +10,13 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/itsjrsa/vupai/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/itsjrsa/vupai/ci.yml?branch=master&label=CI"></a>
   <a href="https://pypi.org/project/vupai/"><img alt="PyPI" src="https://img.shields.io/pypi/v/vupai.svg?v=0.4.0"></a>
+  <a href="https://pypi.org/project/vupai/"><img alt="Downloads" src="https://img.shields.io/pypi/dm/vupai.svg"></a>
   <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/python-%3E%3D3.11-brightgreen.svg"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-black.svg">
+  <a href="https://github.com/astral-sh/ruff"><img alt="Ruff" src="https://img.shields.io/badge/lint-ruff-261230.svg"></a>
 </p>
 
 *vupai* (say "voo-pie") is a **V**oice **U**I for your AI **pa**nes.
