@@ -21,6 +21,7 @@ class FakeTmux:
         self._inside_vupai = inside_vupai
         self._footprint = footprint
         self._board_pane = None        # set to a pane id to simulate an open board
+        self._review_pane = None       # set to a pane id to simulate open review
         self.calls: list[tuple] = []
         self.daemon_spawns: list = []
 
@@ -104,6 +105,16 @@ class FakeTmux:
 
     def mark_board_pane(self, pane_id):
         self.calls.append(("mark_board_pane", pane_id))
+
+    def new_window(self, session, program, *, name=None):
+        self.calls.append(("new_window", session, program, name))
+        return "%8"
+
+    def mark_review_pane(self, pane_id):
+        self.calls.append(("mark_review_pane", pane_id))
+
+    def find_review_pane(self, session):
+        return self._review_pane
 
     def pane_session(self, pane_id):
         return "repo"
@@ -1375,6 +1386,53 @@ def test_board_does_not_open_second_board_in_session(fake_env, monkeypatch, caps
     assert [c for c in ft.calls if c[0] == "split_window"] == []  # no second split
     assert ("select_pane", "%5") in ft.calls                      # focuses the existing one
     assert "already open" in capsys.readouterr().out
+
+
+def test_review_opens_window_for_focused_session(fake_env):
+    ft, _ = fake_env
+    rc = cli.main(["review"])
+    assert rc == 0
+    windows = [c for c in ft.calls if c[0] == "new_window"]
+    assert len(windows) == 1
+    session, program, name = windows[0][1:]
+    assert session == "repo"                 # focused pane's session
+    assert program.endswith("_review repo")  # hidden render, scoped to session
+    assert name == "review"
+    assert ("mark_review_pane", "%8") in ft.calls
+
+
+def test_review_uses_explicit_session_arg(fake_env):
+    ft, _ = fake_env
+    rc = cli.main(["review", "backend"])
+    assert rc == 0
+    windows = [c for c in ft.calls if c[0] == "new_window"]
+    assert windows[0][1] == "backend"               # the arg wins
+    assert windows[0][2].endswith("_review backend")
+
+
+def test_review_does_not_open_second_window_in_session(fake_env, monkeypatch, capsys):
+    ft, _ = fake_env
+    monkeypatch.setattr(ft, "_review_pane", "%5")   # review already open
+    rc = cli.main(["review"])
+    assert rc == 0
+    assert [c for c in ft.calls if c[0] == "new_window"] == []
+    assert ("select_pane", "%5") in ft.calls
+    assert "already open" in capsys.readouterr().out
+
+
+def test_review_errors_without_session(fake_env, monkeypatch, capsys):
+    ft, _ = fake_env
+    monkeypatch.setattr(ft, "_focused", None)       # no focused pane, no arg
+    rc = cli.main(["review"])
+    assert rc == 1
+    assert "Specify a session" in capsys.readouterr().out
+
+
+def test_hidden_review_parser_accepts_session():
+    parser = cli.build_parser()
+    ns = parser.parse_args(["_review", "backend"])
+    assert ns.func is cli._cmd_review_render
+    assert ns.session == "backend"
 
 
 def test_prompt_yes_no_default_on_empty():

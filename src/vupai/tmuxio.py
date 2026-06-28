@@ -236,6 +236,43 @@ def mark_board_pane(pane_id: str) -> None:
     run(["set", "-p", "-t", pane_id, "@vupai_board", "1"])
 
 
+def mark_review_pane(pane_id: str) -> None:
+    """Tag a pane as the review window so a second `open review` focuses it."""
+    run(["set", "-p", "-t", pane_id, "@vupai_review", "1"])
+
+
+def find_review_pane(session: str) -> str | None:
+    """Pane id of an existing review window in `session`, else None. Keeps
+    `open review` from opening a second one. Reads the @vupai_review tag."""
+    fmt = "\t".join(["#{@vupai_review}", "#{session_name}", "#{pane_id}"])
+    try:
+        out = run(["list-panes", "-a", "-F", fmt])
+    except TmuxError:
+        return None
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[0] == "1" and parts[1] == session:
+            return parts[2]
+    return None
+
+
+def new_window(session: str, program: str, *, name: str | None = None) -> str:
+    """Create a window in `session` running `program`; return its pane id.
+
+    `-c "#{pane_current_path}"` pins the window to the session's active-pane
+    directory (the project), not the daemon's arbitrary cwd. Empty `program`
+    launches the default shell. The program stays last so it parses as the
+    window command, not a flag value.
+    """
+    args = ["new-window", "-P", "-F", "#{pane_id}",
+            "-c", "#{pane_current_path}", "-t", session]
+    if name:
+        args += ["-n", name]
+    if program:
+        args.append(program)
+    return run(args).strip()
+
+
 def pane_session(pane_id: str) -> str:
     """Session name owning `pane_id` (empty string when it can't be resolved)."""
     try:

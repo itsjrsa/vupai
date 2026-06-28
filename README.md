@@ -214,6 +214,7 @@ cheat sheet tailored to your config.
 | *"tile"* / *"layout …"* | Re-layout the window (tiled, main-vertical, …) |
 | *"close atlas"* / *"kill atlas"* | Close a pane (asks y/n by default) |
 | *"board"* | Open the **supervision board** (one per session) |
+| *"open review"* | Open a full-window **diff review** of the session (one per session) |
 | *"read atlas"* / *"read all"* | Speak a pane's summary aloud (`read board` for a digest) |
 | *"clear atlas"* / *"clear all"* | Send a slash command (`/clear`) to a pane or every agent |
 | *"everyone, pull main"* | **Broadcast** the message to every named agent |
@@ -317,8 +318,11 @@ opt-in) so panes physically cannot clobber one another.
 
 ### Reviewing uncommitted changes (`vupai review`)
 
-`vupai review` opens a live, in-terminal review of every uncommitted change
-across your panes, grouped by the pane that touched it. It is a read-only,
+`vupai review` opens a live, full-window review of every uncommitted change
+across a session's panes, grouped by the pane that touched it. Run it inside a
+pane (it scopes to that session) or name one explicitly: `vupai review backend`.
+You can also just say **"open review"**. It opens one review window per session,
+focusing the existing one rather than opening a second. It is a read-only,
 pull-only view: it runs `git diff` (the authoritative change set) and joins the
 activity ledger for attribution. It never stages, commits, or writes to a pane.
 

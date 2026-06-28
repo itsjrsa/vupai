@@ -6,14 +6,20 @@ from vupai.registry import Pane
 
 
 class FakeTmux:
-    def __init__(self, new_ids=(), zoomed=False, board_pane=None):
+    def __init__(self, new_ids=(), zoomed=False, board_pane=None,
+                 review_pane=None):
         self.calls = []
         self._ids = list(new_ids)
         self._zoomed = zoomed
         self._board_pane = board_pane
+        self._review_pane = review_pane
 
     def split_window(self, target, program, *, horizontal=False, size=None):
         self.calls.append(("split_window", target, program))
+        return self._ids.pop(0)
+
+    def new_window(self, session, program, *, name=None):
+        self.calls.append(("new_window", session, program, name))
         return self._ids.pop(0)
 
     def find_board_pane(self, session):
@@ -21,6 +27,12 @@ class FakeTmux:
 
     def mark_board_pane(self, pane_id):
         self.calls.append(("mark_board_pane", pane_id))
+
+    def find_review_pane(self, session):
+        return self._review_pane
+
+    def mark_review_pane(self, pane_id):
+        self.calls.append(("mark_review_pane", pane_id))
 
     def select_layout(self, target, layout):
         self.calls.append(("select_layout", target, layout))
@@ -1333,6 +1345,52 @@ def test_exec_board_focuses_existing_instead_of_second_split():
 def test_exec_board_no_focused_pane():
     reg = FakeRegistry([], focused=None)
     res = handle_command("board", reg, Config(), io=FakeTmux(),
+                         inject_fn=lambda *a, **k: True)
+    assert res is not None and res.ok is False
+
+
+# --- review executor tests ---------------------------------------------------
+
+def test_parse_review_bare_and_lead_verbs():
+    for phrase in ("review", "open review", "show review", "make review",
+                   "the review", "open the review"):
+        assert _parse_btn(phrase) == Command(kind="review"), phrase
+
+
+def test_parse_review_requires_review_noun():
+    assert _parse_btn("show") is None
+    assert _parse_btn("open the nova") is None
+
+
+def test_exec_review_opens_window_for_focused_session():
+    focused = _pane("%0", "nova", active=True, session="proj")
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux(new_ids=["%7"])
+    res = handle_command("open review", reg, Config(), io=io,
+                         inject_fn=lambda *a, **k: True)
+    assert res is not None and res.ok
+    windows = [c for c in io.calls if c[0] == "new_window"]
+    assert len(windows) == 1
+    assert windows[0][1] == "proj"                # session
+    assert windows[0][2].endswith("_review proj")  # inner command
+    assert windows[0][3] == "review"              # window name
+    assert ("mark_review_pane", "%7") in io.calls
+
+
+def test_exec_review_focuses_existing_instead_of_second_window():
+    focused = _pane("%0", "nova", active=True, session="proj")
+    reg = FakeRegistry([focused], focused=focused)
+    io = FakeTmux(review_pane="%5")          # a review window already exists
+    res = handle_command("review", reg, Config(), io=io,
+                         inject_fn=lambda *a, **k: True)
+    assert res is not None and res.ok
+    assert [c for c in io.calls if c[0] == "new_window"] == []
+    assert ("select_pane", "%5") in io.calls
+
+
+def test_exec_review_no_focused_pane():
+    reg = FakeRegistry([], focused=None)
+    res = handle_command("review", reg, Config(), io=FakeTmux(),
                          inject_fn=lambda *a, **k: True)
     assert res is not None and res.ok is False
 

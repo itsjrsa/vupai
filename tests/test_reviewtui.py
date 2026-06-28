@@ -168,6 +168,19 @@ def test_render_frame_draws_panes_and_diff_without_error():
     assert "sage's changes (exact)" in blob  # single-author provenance header
 
 
+def test_render_frame_header_shows_scoped_session():
+    files = [_file("a.py", panes=["sage"])]
+    ledger = [{"pane": "sage", "files": ["a.py"], "coverage": "git-delta"}]
+    rows = reviewtui.build_rows([_view(files, ledger)])
+    state = {"views": [_view(files, ledger)], "folded": set(), "rows": rows,
+             "sel": reviewtui.first_file_index(rows), "diff_scroll": 0,
+             "paused": False, "session": "backend"}
+    scr = _FakeStdscr()
+    reviewtui.render_frame(scr, state)
+    blob = "\n".join(scr.drawn)
+    assert "vupai review · backend" in blob  # which session is scoped
+
+
 def test_render_frame_conflict_banner_for_multi_pane_file():
     files = [_file("hot.py", panes=["sage", "orion"], conflict=True)]
     ledger = [

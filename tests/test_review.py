@@ -242,3 +242,52 @@ def test_gather_review_drops_records_for_closed_panes(tmp_path):
     f = views[0]["files"][0]
     assert f["panes"] == ["sage"]      # not attributed to the dead ghost pane
     assert f["conflict"] is False      # so no false cross-pane conflict
+
+
+class _ReviewIo:
+    """Records the tmux calls open_review makes."""
+
+    def __init__(self, existing=None, new_pane="%9"):
+        self.calls = []
+        self._existing = existing
+        self._new_pane = new_pane
+
+    def find_review_pane(self, session):
+        self.calls.append(("find", session))
+        return self._existing
+
+    def select_pane(self, pane_id):
+        self.calls.append(("select", pane_id))
+
+    def new_window(self, session, program, *, name=None):
+        self.calls.append(("new_window", session, program, name))
+        return self._new_pane
+
+    def mark_review_pane(self, pane_id):
+        self.calls.append(("mark", pane_id))
+
+
+def test_open_review_opens_window_when_none_exists():
+    io = _ReviewIo(existing=None, new_pane="%9")
+    opened, _msg = review.open_review("proj", io=io, self_cmd="PY -m vupai")
+    assert opened is True
+    win = next(c for c in io.calls if c[0] == "new_window")
+    assert win[1] == "proj"                       # session
+    assert win[2] == "PY -m vupai _review proj"    # inner command
+    assert win[3] == "review"                      # window name
+    assert ("mark", "%9") in io.calls
+
+
+def test_open_review_focuses_existing_instead_of_second():
+    io = _ReviewIo(existing="%5")
+    opened, _msg = review.open_review("proj", io=io, self_cmd="PY")
+    assert opened is False
+    assert ("select", "%5") in io.calls
+    assert not any(c[0] == "new_window" for c in io.calls)
+
+
+def test_open_review_quotes_session_with_spaces():
+    io = _ReviewIo(existing=None)
+    review.open_review("my proj", io=io, self_cmd="PY")
+    win = next(c for c in io.calls if c[0] == "new_window")
+    assert win[2] == "PY _review 'my proj'"        # shlex.quote

@@ -12,7 +12,7 @@ import shlex
 import shutil
 from dataclasses import dataclass
 
-from vupai import board, speech, summarize, tmuxio
+from vupai import board, review, speech, summarize, tmuxio
 from vupai.hosts import resolve_host
 from vupai.injector import inject
 from vupai.router import (
@@ -403,6 +403,20 @@ def _parse_board(toks: list[str]) -> Command | None:
     return None
 
 
+# Same lead verbs as the board ("open review", "show review", bare "review").
+_REVIEW_LEAD = frozenset(_CREATE_VERBS) | {"show"}
+
+
+def _parse_review(toks: list[str]) -> Command | None:
+    """`review` / `<open|show|create> review` -> open the review window."""
+    rest = [t for t in toks if t != "the"]
+    if rest == ["review"]:
+        return Command(kind="review")
+    if len(rest) == 2 and rest[1] == "review" and rest[0] in _REVIEW_LEAD:
+        return Command(kind="review")
+    return None
+
+
 _ACTIVITY_VERBS = ("activity",)
 # Curated ASR mishearings of "activity" (implausible as literal words only).
 _ACTIVITY_VERB_ALIASES = frozenset({"activty", "activitie", "activ"})
@@ -575,7 +589,8 @@ def _parse_body(body: str, macros: dict[str, list[str]],
     return (_parse_create(toks, programs) or _parse_close(toks)
             or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks)
             or _parse_layout(toks) or _parse_ssh(toks)
-            or _parse_board(toks) or _parse_talkback(toks)
+            or _parse_board(toks) or _parse_review(toks)
+            or _parse_talkback(toks)
             or _parse_volume(toks) or _parse_stop(toks)
             or _parse_slash(toks, slash_commands)
             or _parse_activity(toks) or _parse_read(toks))
@@ -667,6 +682,8 @@ def intent_phrase(cmd: Command) -> str:
         return f"{_LAYOUT_LABELS.get(cmd.layout, 'arranging the')} layout"
     if cmd.kind == "board":
         return "opening the board"
+    if cmd.kind == "review":
+        return "opening review"
     if cmd.kind == "broadcast":
         return f"broadcasting to {_speak_join(cmd.names)}" if cmd.names else "broadcasting"
     if cmd.kind == "slash":
@@ -992,6 +1009,16 @@ def _exec_board(cmd: Command, registry, config, io) -> CommandResult:
     # open_board is one-per-session: it focuses an existing board instead of
     # splitting a second one. Both outcomes are a success for the speaker.
     _, message = board.open_board(focused.id, focused.session, io=io)
+    return CommandResult(True, message)
+
+
+def _exec_review(cmd: Command, registry, config, io) -> CommandResult:
+    focused = registry.focused()
+    if focused is None:
+        return CommandResult(False, "no focused pane to open review from")
+    # open_review is one-per-session: it focuses an existing review window
+    # instead of opening a second. Both outcomes are a success for the speaker.
+    _, message = review.open_review(focused.session, io=io)
     return CommandResult(True, message)
 
 
@@ -1390,6 +1417,8 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_layout(cmd, registry, config, io)
         if cmd.kind == "board":
             return _exec_board(cmd, registry, config, io)
+        if cmd.kind == "review":
+            return _exec_review(cmd, registry, config, io)
         if cmd.kind == "talkback":
             # The runtime mute flag lives on the daemon (it survives across
             # utterances); this just reports the toggle. "on" confirms aloud, "off"

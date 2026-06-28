@@ -230,7 +230,9 @@ def render_frame(stdscr, state) -> None:
 
     np, nf, nc = _counts(state["views"])
     live = "paused" if state["paused"] else "live"
-    put(0, 0, f" vupai review   {live}   {np} panes - {nf} files - {nc} conflict",
+    session = state.get("session")
+    label = f"vupai review · {session}" if session else "vupai review"
+    put(0, 0, f" {label}   {live}   {np} panes - {nf} files - {nc} conflict",
         _attr(_CP_HEADER) | curses.A_BOLD)
 
     top = 1
@@ -307,14 +309,15 @@ def _regather(state: dict, gather) -> dict:
     return state
 
 
-def _loop(stdscr, gather, patch_fn, interval: float) -> None:
+def _loop(stdscr, gather, patch_fn, interval: float, session=None) -> None:
     curses.curs_set(0)
     stdscr.timeout(int(interval * 1000))
     _init_colors()
     views = gather()
     state = {"views": views, "folded": set(),
              "rows": build_rows(views, set()), "sel": 0,
-             "diff_scroll": 0, "paused": False, "patch_cache": {}}
+             "diff_scroll": 0, "paused": False, "patch_cache": {},
+             "session": session}
     state["sel"] = first_file_index(state["rows"])
     while True:
         _ensure_selected_patch(state, patch_fn)
@@ -333,9 +336,10 @@ def _loop(stdscr, gather, patch_fn, interval: float) -> None:
             _open_in_editor(stdscr, state)
 
 
-def run_review_tui(gather, patch_fn, *, interval: float = 2.0) -> None:
+def run_review_tui(gather, patch_fn, *, interval: float = 2.0,
+                   session=None) -> None:
     """Run the master-detail review TUI until the user quits. `gather` is a
     zero-arg callable returning the current tree views; `patch_fn(rec)` returns
     the unified diff for one file record, fetched lazily for the selected file
-    only."""
-    curses.wrapper(_loop, gather, patch_fn, interval)
+    only. `session` labels the header (which session is scoped)."""
+    curses.wrapper(_loop, gather, patch_fn, interval, session)

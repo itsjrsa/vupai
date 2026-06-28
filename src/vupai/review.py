@@ -3,13 +3,38 @@ the Layer 1 activity ledger. Never mutates the index, never injects."""
 
 from __future__ import annotations
 
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 from . import tmuxio
 from .activity import ActivityStore, _excluded, git_toplevel
 
 MAX_PATCH_BYTES = 200_000
+
+
+def _self_cmd() -> str:
+    """How to re-invoke this CLI from a tmux window (absolute interpreter,
+    socket-prefixed) so the spawned review window queries vupai's own server.
+    Mirrors board._self_cmd; the spoken 'open review' verb calls open_review
+    with no self_cmd, so this fallback must carry the socket too."""
+    return f"{tmuxio.socket_env_prefix()}{sys.executable} -m vupai"
+
+
+def open_review(session: str, *, io=tmuxio,
+                self_cmd: str | None = None) -> tuple[bool, str]:
+    """Open (or focus) a full-window review TUI for `session`. One per session:
+    if a review window already exists, focus it instead of opening a second.
+    Shared by the `vupai review` CLI command and the spoken 'open review' verb."""
+    existing = io.find_review_pane(session) if session else None
+    if existing is not None:
+        io.select_pane(existing)
+        return False, "review already open in this session"
+    inner = f"{self_cmd or _self_cmd()} _review {shlex.quote(session)}"
+    pane_id = io.new_window(session, inner, name="review")
+    io.mark_review_pane(pane_id)
+    return True, "opened review"
 
 
 def parse_numstat(out: str) -> dict[str, dict]:
