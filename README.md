@@ -274,13 +274,18 @@ overlaps before they become conflicts.
 - **What it records.** Per git tree, in a `.vupai/` directory at the tree root:
   `activity.current.json` (latest state per pane) plus `activity.jsonl` (history).
   Each entry names the pane, the files it touched, a coverage flag
-  (`exact`, `git-delta`, or `churn-only` for an active pane no file could be
-  pinned on), and any `contended_with` panes editing the same file.
+  (`exact` when a tool edit-marker proves the pane wrote the file, `git-delta`
+  when only scrollback ties it, or `churn-only` for an active pane no file could
+  be pinned on), and any `contended_with` panes editing the same file.
   `.vupai/` is auto-gitignored, so it never appears in `git status`.
 - **How it decides.** `git status` provides *what* changed; each pane's scrollback
-  provides *which pane*; their intersection is the attribution. It is post-write on
-  a ~2s poll, so it *reduces* clobbering by surfacing overlaps; it does not prevent
-  a sub-2-second race, and it never blocks or injects into a pane.
+  provides *which pane*; their intersection is the attribution. A tool edit-marker
+  (e.g. Claude's `Update(<path>)`) counts as proof a pane wrote that file and
+  outranks a bare path mention, so a pane that merely *discussed* a file is not
+  credited as its editor (and you don't get phantom conflicts from panes that just
+  talked about it). It is post-write on a ~2s poll, so it *reduces* clobbering by
+  surfacing overlaps; it does not prevent a sub-2-second race, and it never blocks
+  or injects into a pane.
 - **Read it.**
   - `vupai activity` shows the current ledger, grouped by tree.
   - `vupai activity --stats` reports contention and attribution rates (use these to
@@ -412,6 +417,10 @@ order):
 
 - **Tighter pane-state and activity awareness** so routing and the board react
   faster to what each agent is actually doing. *(in progress)*
+- **Worktree isolation** (opt-in): give each agent its own git worktree so panes
+  physically cannot clobber one another, which also makes cross-pane attribution
+  exact. The hard-guarantee complement to the pull-only
+  [activity ledger](#cross-pane-activity-ledger) and `vupai review`.
 - **Broader agent-CLI coverage**: validate the flow end-to-end with Codex,
   opencode, Gemini, and other agentic tools (testing so far has centered on
   Claude Code).
