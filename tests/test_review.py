@@ -206,3 +206,39 @@ def test_gather_review_skips_trees_with_no_changes(tmp_path):
     views = review.gather_review(
         reg, session="proj", cwd_fn=lambda pid: root, git_fn=fake_git)
     assert views == []
+
+
+def test_gather_review_drops_records_for_closed_panes(tmp_path):
+    # The ledger still holds a record for "ghost", a pane that has since been
+    # closed (it is not in the live registry). gather_review must omit it, so a
+    # file only that dead pane touched is not shown nor flagged as a conflict.
+    root = str(tmp_path)
+    store = activity.ActivityStore(tmp_path)
+    store.write_current({
+        "sage": {"pane": "sage", "session": "proj", "tree": root,
+                 "files": ["src/a.py"], "coverage": "git-delta",
+                 "contended_with": []},
+        "ghost": {"pane": "ghost", "session": "proj", "tree": root,
+                  "files": ["src/a.py"], "coverage": "git-delta",
+                  "contended_with": []},
+    })
+    reg = PaneRegistry(  # only sage is live now; ghost is gone
+        lister=lambda: [_pane_line("%1", "sage", session="proj")],
+        focuser=lambda: None)
+
+    def fake_git(tree, args, **kwargs):
+        if args[:1] == ["rev-parse"]:
+            return root + "\n"
+        if args == ["status", "--porcelain", "-z"]:
+            return " M src/a.py\x00"
+        if args == ["diff", "HEAD", "--numstat", "-z"]:
+            return "5\t2\tsrc/a.py\x00"
+        return None
+
+    views = review.gather_review(
+        reg, session="proj", cwd_fn=lambda pid: root, git_fn=fake_git)
+    assert len(views) == 1
+    assert [r["pane"] for r in views[0]["ledger"]] == ["sage"]
+    f = views[0]["files"][0]
+    assert f["panes"] == ["sage"]      # not attributed to the dead ghost pane
+    assert f["conflict"] is False      # so no false cross-pane conflict
