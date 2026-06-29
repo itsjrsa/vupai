@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <strong>Voice UI for AI panes</strong>: push-to-talk voice control for your tmux agent panes, on macOS, fully local.
+  <strong>Voice UI for AI panes</strong>: push-to-talk voice control for your tmux agent panes, on macOS, with on-device speech.
 </p>
 
 <p align="center">
@@ -75,10 +75,12 @@ hold dictation key (Right-Option) → record (sox) → transcribe (Parakeet) →
   current window.
 - **Injection is safe.** vupai pastes your text and waits until it actually
   appears in the pane before pressing Enter — it never blindly submits.
-- **Fully local, fully private.** Speech-to-text runs entirely on-device via
-  Apple MLX (NVIDIA Parakeet). There is no cloud service, no API key, and no
-  account: your voice and transcripts never leave your Mac. The only network
-  access is a one-time model download (~2 GB) on first use.
+- **Local-first speech.** Speech-to-text runs entirely on-device via Apple MLX
+  (NVIDIA Parakeet): no cloud service, no API key, no account, so your voice and
+  transcripts never leave your Mac. vupai itself makes no network calls beyond a
+  one-time model download (~2 GB) on first use. The agents you drive, and the
+  optional board summarizer, use whatever model *you* point them at, which may
+  be a cloud service.
 
 ## Requirements
 
