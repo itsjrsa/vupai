@@ -191,6 +191,15 @@ def test_capture_pane_argv_returns_stdout(monkeypatch):
     assert fake.calls[0]["args"] == ["tmux", "capture-pane", "-J", "-p", "-t", "%3"]
 
 
+def test_capture_scrollback_argv_includes_history_start(monkeypatch):
+    fake = FakeRun(stdout="old\nnew\n")
+    patch_run(monkeypatch, fake)
+    out = tmuxio.capture_scrollback("%3", lines=120)
+    assert out == "old\nnew\n"
+    assert fake.calls[0]["args"] == [
+        "tmux", "capture-pane", "-J", "-p", "-S", "-120", "-t", "%3"]
+
+
 def test_send_enter_argv(monkeypatch):
     fake = FakeRun()
     patch_run(monkeypatch, fake)

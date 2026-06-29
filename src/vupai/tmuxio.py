@@ -182,6 +182,16 @@ def capture_pane(pane_id: str) -> str:
     return run(["capture-pane", "-J", "-p", "-t", pane_id])
 
 
+def capture_scrollback(pane_id: str, lines: int = 200) -> str:
+    # Like capture_pane but reaches `lines` rows up into the pane's scrollback
+    # history (-S -<lines>) so the summarizer can see work that scrolled above the
+    # viewport (e.g. an agent's output now hidden behind an idle input box). NOT
+    # for state detection: a stale "esc to interrupt" left in history would pin a
+    # pane to WORKING, so the watcher/churn paths keep using capture_pane (visible
+    # only). Best-effort: a tool with no history simply yields the visible frame.
+    return run(["capture-pane", "-J", "-p", "-S", f"-{lines}", "-t", pane_id])
+
+
 _LEAD_GLYPH_RE = re.compile(r"^[^\w]+")
 
 

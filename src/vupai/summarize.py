@@ -160,6 +160,21 @@ def _fallback(tail: str) -> Summary:
     return Summary(lines[-1][:_FALLBACK_MAX], needs, "fallback")
 
 
+def _has_content(tail: str) -> bool:
+    """Whether `tail` survives denoising with any work content left to summarize.
+
+    The board's low-information guard tests the RAW tail, but the prompt carries
+    the DENOISED tail. A pane that is non-empty raw yet all-chrome (an idle input
+    box + footer, the real output having scrolled off) slips past that guard and
+    would hand the model an EMPTY '--- recent agent output ---' block; the model
+    then apologizes ("no terminal output provided, please paste it"), and that
+    non-blank apology would be shown as a genuine summary. Gate every LLM call on
+    this so an empty content block degrades to the stdlib fallback instead - the
+    module's contract that no failure path is ever load-bearing.
+    """
+    return bool(denoise(tail).strip())
+
+
 def _run_summarizer(cmd: str, prompt: str, timeout: float, runner) -> str | None:
     """Run `cmd` with `prompt` as the final argv arg; stdout, or None on failure.
 
@@ -191,6 +206,8 @@ def _run_summarizer(cmd: str, prompt: str, timeout: float, runner) -> str | None
 def summarize(tail: str, *, cmd: str, timeout: float = 20.0,
               max_chars: int = 100, runner=subprocess.run) -> Summary:
     """One glanceable board line from `tail`, degrading to the stdlib fallback."""
+    if not _has_content(tail):
+        return _fallback(tail)
     out = _run_summarizer(cmd, build_prompt(tail), timeout, runner)
     if out is None:
         return _fallback(tail)
@@ -252,6 +269,8 @@ def summarize_read(tail: str, *, cmd: str, timeout: float = 20.0, title: str = "
     keeps the WHOLE model reply, collapsed to a single spoken paragraph and capped
     on a word boundary, and feeds the pane `title` to the model for context.
     """
+    if not _has_content(tail):
+        return _fallback(tail)
     out = _run_summarizer(cmd, build_read_prompt(tail, title), timeout, runner)
     if out is None:
         return _fallback(tail)
@@ -348,6 +367,13 @@ def summarize_read_stream(tail: str, *, cmd: str, timeout: float = 20.0,
     for the status line. On any failure the stdlib fallback is both returned AND
     pushed once through `on_text`, so the fallback still gets spoken.
     """
+    if not _has_content(tail):
+        fb = _fallback(tail)
+        try:
+            on_text(fb.text)
+        except Exception:
+            pass
+        return fb
     full = stream_run(cmd, build_read_prompt(tail, title), timeout, on_text,
                       popen=popen, cancel=cancel)
     if full is None:

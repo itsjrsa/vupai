@@ -1024,14 +1024,18 @@ def _exec_review(cmd: Command, registry, config, io) -> CommandResult:
 
 # Read bounds the captured scrollback before summarizing, same budget as the
 # board's tail (board._CAPTURE_LINES / _TAIL_BYTES): enough for a conclusion,
-# capped so a long-running pane can't blow up the summarizer's input.
-_READ_CAPTURE_LINES = 40
+# capped so a long-running pane can't blow up the summarizer's input. Read uses a
+# scrollback capture (capture_scrollback) so work hidden behind an idle input box
+# is still reachable, and bounds by NON-BLANK lines so blank TUI padding between
+# the last output and the prompt can't push real work out of the window.
+_READ_CAPTURE_LINES = 80
 _READ_TAIL_BYTES = 6000
 
 
 def _bound_tail(text: str) -> str:
-    """Last N lines then last M UTF-8 bytes of `text` (mirrors board._bounded)."""
-    tail = "\n".join(text.splitlines()[-_READ_CAPTURE_LINES:])
+    """Last N non-blank lines then last M UTF-8 bytes of `text`."""
+    kept = [ln for ln in text.splitlines() if ln.strip()][-_READ_CAPTURE_LINES:]
+    tail = "\n".join(kept)
     raw = tail.encode("utf-8", "replace")
     if len(raw) > _READ_TAIL_BYTES:
         tail = raw[-_READ_TAIL_BYTES:].decode("utf-8", "replace")
@@ -1224,7 +1228,7 @@ def _exec_read(cmd: Command, registry, config, io, *, capture_fn=None,
     if err is not None:
         return CommandResult(False, err)
     pane_id, label = target
-    capture_fn = capture_fn or tmuxio.capture_pane
+    capture_fn = capture_fn or tmuxio.capture_scrollback
     title_fn = title_fn or tmuxio.pane_title
     if summarize_fn is None and config.tts_stream:
         return _exec_read_stream(pane_id, label, config, capture_fn, title_fn,

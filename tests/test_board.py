@@ -51,6 +51,9 @@ def _board(panes, frames, **kw):
         _Reg(panes),
         self_pane_id=kw.pop("self_pane_id", "%99"),
         capture_fn=_seq(frames),
+        # Default: no scrollback source -> _summary_tail degrades to the visible
+        # tail, so existing assertions see the same content. Override per test.
+        summary_capture_fn=kw.pop("summary_capture_fn", lambda pid: ""),
         summarize_fn=kw.pop("summarize_fn", fake_summarize),
         program_resolver=lambda p: p.command,
         dispatch=lambda fn: fn(),          # synchronous
@@ -146,6 +149,44 @@ def test_low_information_edge_skips_llm():
         b.tick()
     assert b._calls == []                            # nothing worth summarizing
     assert b._tracks["%1"].summary == ""
+
+
+def test_summary_reads_scrollback_not_just_visible_frame():
+    # The visible frame is an idle input box (work scrolled off); the poem lives
+    # only in scrollback. The summarizer must receive the poem, not the box.
+    panes = [_pane("%99", "board"), _pane("%1", "nova")]
+    idle_box = (
+        "╭───────────────╮\n│ >             │\n╰───────────────╯\n"
+        "  ? for shortcuts          auto mode on"
+    )
+    scrollback = (
+        "Distributed systems hum,\nmachines agree through the storm,\n"
+        "consensus at dawn.\n\n" + idle_box
+    )
+    # Two identical idle frames so the pane settles IDLE and a summary fires.
+    frames = {"%1": [idle_box, idle_box, idle_box]}
+    b = _board(panes, frames, summary_capture_fn=lambda pid: scrollback)
+    for _ in range(3):
+        b.tick()
+    assert len(b._calls) == 1
+    sent = b._calls[0]
+    assert "consensus at dawn." in sent          # the poem reached the summarizer
+    assert "? for shortcuts" in sent             # chrome still present; denoise drops it
+
+
+def test_summary_scrollback_failure_degrades_to_visible_tail():
+    # If the scrollback capture raises, the summarizer still gets the visible tail.
+    panes = [_pane("%99", "board"), _pane("%1", "nova")]
+    frames = {"%1": ["real work output here", "real work output here"]}
+
+    def boom(pid):
+        raise RuntimeError("no history")
+
+    b = _board(panes, frames, summary_capture_fn=boom)
+    for _ in range(2):
+        b.tick()
+    assert len(b._calls) == 1
+    assert "real work output here" in b._calls[0]
 
 
 def test_needs_input_is_sticky_until_working_resumes():
@@ -260,6 +301,7 @@ def _statuses(panes, frames, **kw):
     return collect_statuses(
         panes,
         capture_fn=_seq(frames),
+        summary_capture_fn=kw.pop("summary_capture_fn", lambda pid: ""),
         summarize_fn=kw.pop("summarize_fn", fake_summarize),
         program_resolver=kw.pop("program_resolver", lambda p: p.command),
         sleep=lambda _s: None,                 # no real settle delay in tests

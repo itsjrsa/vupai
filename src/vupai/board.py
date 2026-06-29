@@ -41,6 +41,12 @@ _DEFAULT_SUMMARIZER = "claude -p --model claude-haiku-4-5"
 # Internal tuning (kept out of the TOML surface; constructor-overridable for tests).
 _CAPTURE_LINES = 40
 _TAIL_BYTES = 6000
+# Bound for the SUMMARY content only (not state detection): a deeper window than
+# _CAPTURE_LINES so work that scrolled above an idle input box is still reachable
+# (the scrollback depth itself lives in tmuxio.capture_scrollback). Bounded by
+# non-blank lines so blank TUI padding between the last output and the prompt
+# doesn't crowd real lines out of the window.
+_SUMMARY_LINES = 80
 _MAX_CONCURRENT = 2
 
 _GLYPHS = {
@@ -116,6 +122,7 @@ class Board:
 
     def __init__(self, registry, *, self_pane_id: str | None = None,
                  capture_fn=tmuxio.capture_pane, summarize_fn=None,
+                 summary_capture_fn=tmuxio.capture_scrollback,
                  program_resolver=None, writer=_default_writer,
                  dispatch=None, clock=lambda: time.strftime("%H:%M"),
                  now=time.monotonic, poll_interval: float = 2.0,
@@ -129,6 +136,7 @@ class Board:
             self_pane_id if self_pane_id is not None
             else os.environ.get("TMUX_PANE"))
         self._capture_fn = capture_fn
+        self._summary_capture_fn = summary_capture_fn
         self._summarize_fn = summarize_fn or (
             lambda tail: summarize_mod.summarize(
                 tail, cmd=summarizer_cmd, timeout=summary_timeout))
@@ -183,7 +191,7 @@ class Board:
                 # Unchanged tail keeps the summary's verdict (don't second-guess).
                 track.needs_input = self._needs(track, tail)
             track.state = PaneState.NEEDS_INPUT if track.needs_input else obs.state
-            self._maybe_summarize(track, tail, obs, now)
+            self._maybe_summarize(track, pane.id, tail, obs, now)
         # Drop vanished panes so a recreated id starts fresh.
         with self._lock:
             for pid in list(self._tracks):
@@ -240,9 +248,25 @@ class Board:
                 tail = raw[-self._tail_bytes:].decode("utf-8", "replace")
         return tail
 
+    def _summary_tail(self, pane_id: str, fallback_tail: str) -> str:
+        """Scrollback content to summarize, bounded by NON-BLANK lines.
+
+        Captures deeper than the visible frame so output hidden behind an idle
+        input box is still reachable, and bounds by non-blank lines so blank TUI
+        padding can't push real work out of the window. Best-effort: any capture
+        failure (or a tool without history) degrades to the visible `fallback_tail`
+        the poll thread already has, so a summary still fires.
+        """
+        try:
+            text = self._summary_capture_fn(pane_id)
+        except Exception:
+            return fallback_tail
+        return _bound_summary(text, _SUMMARY_LINES, self._tail_bytes) or fallback_tail
+
     # --- summary gating -----------------------------------------------------
 
-    def _maybe_summarize(self, track: PaneTrack, tail: str, obs, now: float) -> None:
+    def _maybe_summarize(self, track: PaneTrack, pane_id: str, tail: str, obs,
+                         now: float) -> None:
         trigger = obs.settled_edge
         if track.cold_start_pending:
             # Summarize a pane found already-idle at board open, once.
@@ -270,12 +294,18 @@ class Board:
         # committed only on success (in _run_summary) so a failed summary retries
         # on the next edge instead of being suppressed for min_interval.
         track.inflight = True
-        self._dispatch(lambda: self._run_summary(track, tail, obs.content_hash, now))
+        self._dispatch(
+            lambda: self._run_summary(track, pane_id, tail, obs.content_hash, now))
 
-    def _run_summary(self, track: PaneTrack, tail: str,
+    def _run_summary(self, track: PaneTrack, pane_id: str, tail: str,
                      content_hash: bytes, at: float) -> None:
+        # Summarize a deeper scrollback capture (work hidden behind an idle box),
+        # not just the visible `tail`. The gate above (state/hash/throttle) and the
+        # committed `content_hash` stay on the visible frame, so re-summarizing is
+        # still driven by what changed on screen; only the CONTENT reaches deeper.
+        summary_tail = self._summary_tail(pane_id, tail)
         try:
-            res = self._summarize_fn(tail)
+            res = self._summarize_fn(summary_tail)
         except Exception:
             logger.debug("board summarizer failed", exc_info=True)
             res = None
@@ -379,10 +409,27 @@ def _bound(text: str, capture_lines: int, tail_bytes: int) -> str:
     return tail
 
 
+def _bound_summary(text: str, lines: int, tail_bytes: int) -> str:
+    """Last N NON-BLANK lines then last M bytes (the scrollback-summary bound).
+
+    Drops blank lines first so blank TUI padding between the last output and an
+    idle input box doesn't crowd real work out of the window. Summary-only: keep
+    state detection on the visible frame via `_bound`.
+    """
+    kept = [ln for ln in text.splitlines() if ln.strip()][-lines:]
+    tail = "\n".join(kept)
+    if tail_bytes:
+        raw = tail.encode("utf-8", "replace")
+        if len(raw) > tail_bytes:
+            tail = raw[-tail_bytes:].decode("utf-8", "replace")
+    return tail
+
+
 def collect_statuses(panes, *, summarize_fn, capture_fn=tmuxio.capture_pane,
+                     summary_capture_fn=tmuxio.capture_scrollback,
                      program_resolver=_default_program, settle_pause: float = 0.6,
                      sleep=time.sleep, capture_lines: int = _CAPTURE_LINES,
-                     tail_bytes: int = _TAIL_BYTES,
+                     tail_bytes: int = _TAIL_BYTES, summary_lines: int = _SUMMARY_LINES,
                      max_workers: int = _MAX_CONCURRENT,
                      on_status=None) -> list[PaneStatus]:
     """Snapshot each pane's state + a one-line summary on demand, no board pane.
@@ -421,6 +468,16 @@ def collect_statuses(panes, *, summarize_fn, capture_fn=tmuxio.capture_pane,
         state = PaneState.NEEDS_INPUT if needs else obs.state
         pending.append((p, program, state, needs, tail))
 
+    def _summary_tail(pane_id: str, fallback: str) -> str:
+        # Deeper scrollback for the summary content (work hidden behind an idle
+        # box); state/needs above stay on the visible frame. Best-effort: any
+        # capture failure degrades to the visible tail already sampled.
+        try:
+            text = summary_capture_fn(pane_id)
+        except Exception:
+            return fallback
+        return _bound_summary(text, summary_lines, tail_bytes) or fallback
+
     def _summ(tail: str):
         try:
             return summarize_fn(tail)
@@ -435,7 +492,8 @@ def collect_statuses(panes, *, summarize_fn, capture_fn=tmuxio.capture_pane,
         # agent k is voiced the moment its summary lands, while later agents are
         # still being summarized. `out` is still the full ordered list.
         with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
-            futures = [ex.submit(_summ, item[4]) for item in pending]
+            futures = [ex.submit(_summ, _summary_tail(item[0].id, item[4]))
+                       for item in pending]
             for (p, program, state, needs, _tail), fut in zip(pending, futures):
                 summary = fut.result()
                 text = summary.text if summary is not None else ""
