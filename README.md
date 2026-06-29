@@ -32,7 +32,11 @@ mouse. New panes launch an agent by default (`claude` out of the box) and should
 work with other agentic coding tools (Codex, Gemini, …), though testing so far
 has focused on Claude Code.
 
-**Jump to:** [Requirements](#requirements) · [Install](#install) · [Set up](#set-up-once) · [Usage](#usage) · [Voice commands](#voice-commands) · [Supervision board](#supervision-board) · [Activity ledger](#cross-pane-activity-ledger) · [Configuration](#configuration) · [tmux tips](#tmux-tips) · [Uninstall](#uninstall)
+## Demo
+
+https://github.com/user-attachments/assets/fa2b4a62-87fe-45d3-9957-48e25852a005
+
+**Jump to:** [Demo](#demo) · [Requirements](#requirements) · [Install](#install) · [Set up](#set-up-once) · [Usage](#usage) · [Voice commands](#voice-commands) · [Supervision board](#supervision-board) · [Activity ledger](#cross-pane-activity-ledger) · [Configuration](#configuration) · [tmux tips](#tmux-tips) · [Uninstall](#uninstall)
 
 ## Why not plain tmux?
 
