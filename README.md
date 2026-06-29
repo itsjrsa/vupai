@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/itsjrsa/vupai/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/itsjrsa/vupai/ci.yml?branch=master&label=CI"></a>
-  <a href="https://pypi.org/project/vupai/"><img alt="PyPI" src="https://img.shields.io/pypi/v/vupai.svg"></a>
+  <a href="https://pypi.org/project/vupai/"><img alt="PyPI" src="https://img.shields.io/pypi/v/vupai.svg?v=0.4.1"></a>
   <a href="https://pypi.org/project/vupai/"><img alt="Downloads" src="https://img.shields.io/pypi/dm/vupai.svg"></a>
   <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/python-%3E%3D3.11-brightgreen.svg"></a>
