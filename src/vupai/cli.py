@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from vupai import audio, tmuxio
+from vupai.activity import ActivityPoller
 from vupai.asr import ParakeetTranscriber, model_cached
 from vupai.board import Board, open_board
 from vupai.commands import (
@@ -579,6 +580,87 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_activity(args: argparse.Namespace) -> int:
+    from . import activity as activity_mod
+    registry = PaneRegistry()
+    registry.refresh()
+    focused_id = tmuxio.focused_pane_id()
+    session = next(
+        (p.session for p in registry.panes if p.id == focused_id), None)
+    if getattr(args, "stats", False):
+        stats = activity_mod.summarize_history(
+            activity_mod.collect_history(registry, session=session))
+        print("activity stats (focused session):")
+        print(f"  events: {stats['events']}")
+        print(f"  contention rate: {stats['contention_rate']:.0%}")
+        print(f"  attributed rate: {stats['attributed_rate']:.0%}")
+        for cov, count in sorted(stats["coverage_counts"].items()):
+            print(f"    {cov}: {count}")
+        return 0
+    records = activity_mod.collect_activity(registry, session=session)
+    by_tree: dict[str, list] = {}
+    for rec in records:
+        by_tree.setdefault(rec.get("tree", "?"), []).append(rec)
+    print("activity:")
+    if not by_tree:
+        print("  (none - no recent cross-pane activity)")
+    for tree in sorted(by_tree):
+        print(f"  {tree}")
+        for rec in by_tree[tree]:
+            files = ", ".join(rec.get("files") or []) or "-"
+            extra = ""
+            if rec.get("contended_with"):
+                extra = f"  contended_with {', '.join(rec['contended_with'])}"
+            print(f"    {rec.get('pane', '?')} [{rec.get('coverage', '?')}] "
+                  f"{files}{extra}")
+    return 0
+
+
+def _cmd_review(args: argparse.Namespace) -> int:
+    """Open (or focus) a full-window review TUI for a session. The session is
+    the positional arg, else the focused pane's session. The window runs the
+    hidden `_review` renderer (mirrors `vupai board` -> `_board`)."""
+    from . import review as review_mod
+    session = args.session
+    if not session:
+        focused = tmuxio.focused_pane_id()
+        session = tmuxio.pane_session(focused) if focused else ""
+    if not session:
+        print("Specify a session: vupai review <session> "
+              "(or run it inside a vupai pane).")
+        return 1
+    try:
+        opened, _ = review_mod.open_review(
+            session, io=tmuxio, self_cmd=_self_cmd())
+    except TmuxError as exc:
+        print(f"Could not open the review window: {exc}")
+        return 1
+    if not opened:
+        print("Review already open in this session.")
+    return 0
+
+
+def _cmd_review_render(args: argparse.Namespace) -> int:
+    """Hidden `_review <session>`: the in-window master-detail TUI (foreground
+    process of its pane). Scoped to `session`; patches fetched lazily."""
+    from . import review as review_mod
+    from . import reviewtui
+    session = args.session
+    registry = PaneRegistry()
+    registry.refresh()
+    excludes = load_config().activity_path_excludes
+
+    def gather():
+        return review_mod.gather_review(
+            registry, session=session, excludes=excludes)
+
+    def load_patch(rec):
+        return review_mod.load_patch(rec)
+
+    reviewtui.run_review_tui(gather, load_patch, session=session)
+    return 0
+
+
 def _cmd_ls(args: argparse.Namespace) -> int:
     # Lightweight session list (tmux `ls` style): one line per session on
     # vupai's server, the voice-focused session first and marked `*`, with
@@ -1131,6 +1213,8 @@ def _voice_commands_text(cfg: Config) -> str:
         "  unzoom                       restore layout (also: minimize / restore)",
         "  layout <name>                rearrange the window: grid / left / top / columns / rows",
         "  board                        open the supervision board (also: open / show board)",
+        "  review                       open a full-window diff review of the session "
+        "(also: open / show review)",
         "  read [name]                  speak a pane's summary aloud (focused / named)",
         "  read board                    speak a status digest of every agent (also: read all)",
         "  mute / unmute                silence or restore talk-back (also: quiet / talk back)",
@@ -1197,10 +1281,20 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     tip_rotator = None
     if cfg.status_tips:
         tip_rotator = TipRotator(build_tips(cfg), interval=cfg.status_tips_interval)
+    activity = None
+    if cfg.activity_enabled:
+        activity = ActivityPoller(
+            PaneRegistry(),
+            poll_interval=cfg.activity_poll_interval,
+            recency_window_s=cfg.activity_recency_window_s,
+            history_limit=cfg.activity_history_limit,
+            excludes=tuple(cfg.activity_path_excludes),
+            dir_name=cfg.activity_dir,
+        )
     daemon = Daemon(cfg, recorder, transcriber, registry, feedback,
                     hosts=load_hosts(),
                     state_writer=lambda phase: write_daemon_state(phase, pid=pid),
-                    watcher=watcher, tip_rotator=tip_rotator)
+                    watcher=watcher, tip_rotator=tip_rotator, activity=activity)
     # `vupai down` sends SIGTERM; the default disposition kills the process
     # outright, so run()'s teardown (which reaps the sox child) never executes.
     # Translate SIGTERM/SIGINT into a clean stop(), then restore the prior
@@ -1330,6 +1424,21 @@ def build_parser() -> argparse.ArgumentParser:
         "ls", help="list vupai sessions (agents/panes, attached state)"
     ).set_defaults(func=_cmd_ls)
 
+    p_activity = sub.add_parser(
+        "activity", help="show the cross-pane activity ledger")
+    p_activity.add_argument(
+        "--stats", action="store_true",
+        help="print Phase 0 contention/attribution counters instead")
+    p_activity.set_defaults(func=_cmd_activity)
+
+    p_review = sub.add_parser(
+        "review",
+        help="open a full-window review of uncommitted cross-pane changes")
+    p_review.add_argument(
+        "session", nargs="?",
+        help="session to review (default: the focused pane's session)")
+    p_review.set_defaults(func=_cmd_review)
+
     p_name = sub.add_parser("name")
     p_name.add_argument("name")
     p_name.add_argument("pane", nargs="?", default=None)
@@ -1388,6 +1497,11 @@ def build_parser() -> argparse.ArgumentParser:
     hidden_board = argparse.ArgumentParser(prog="vupai _board")
     hidden_board.set_defaults(func=_cmd_board_render, command="_board")
     sub._name_parser_map["_board"] = hidden_board
+
+    hidden_review = argparse.ArgumentParser(prog="vupai _review")
+    hidden_review.add_argument("session")
+    hidden_review.set_defaults(func=_cmd_review_render, command="_review")
+    sub._name_parser_map["_review"] = hidden_review
 
     return parser
 

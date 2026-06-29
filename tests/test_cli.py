@@ -21,6 +21,7 @@ class FakeTmux:
         self._inside_vupai = inside_vupai
         self._footprint = footprint
         self._board_pane = None        # set to a pane id to simulate an open board
+        self._review_pane = None       # set to a pane id to simulate open review
         self.calls: list[tuple] = []
         self.daemon_spawns: list = []
 
@@ -104,6 +105,16 @@ class FakeTmux:
 
     def mark_board_pane(self, pane_id):
         self.calls.append(("mark_board_pane", pane_id))
+
+    def new_window(self, session, program, *, name=None):
+        self.calls.append(("new_window", session, program, name))
+        return "%8"
+
+    def mark_review_pane(self, pane_id):
+        self.calls.append(("mark_review_pane", pane_id))
+
+    def find_review_pane(self, session):
+        return self._review_pane
 
     def pane_session(self, pane_id):
         return "repo"
@@ -1377,6 +1388,53 @@ def test_board_does_not_open_second_board_in_session(fake_env, monkeypatch, caps
     assert "already open" in capsys.readouterr().out
 
 
+def test_review_opens_window_for_focused_session(fake_env):
+    ft, _ = fake_env
+    rc = cli.main(["review"])
+    assert rc == 0
+    windows = [c for c in ft.calls if c[0] == "new_window"]
+    assert len(windows) == 1
+    session, program, name = windows[0][1:]
+    assert session == "repo"                 # focused pane's session
+    assert program.endswith("_review repo")  # hidden render, scoped to session
+    assert name == "review"
+    assert ("mark_review_pane", "%8") in ft.calls
+
+
+def test_review_uses_explicit_session_arg(fake_env):
+    ft, _ = fake_env
+    rc = cli.main(["review", "backend"])
+    assert rc == 0
+    windows = [c for c in ft.calls if c[0] == "new_window"]
+    assert windows[0][1] == "backend"               # the arg wins
+    assert windows[0][2].endswith("_review backend")
+
+
+def test_review_does_not_open_second_window_in_session(fake_env, monkeypatch, capsys):
+    ft, _ = fake_env
+    monkeypatch.setattr(ft, "_review_pane", "%5")   # review already open
+    rc = cli.main(["review"])
+    assert rc == 0
+    assert [c for c in ft.calls if c[0] == "new_window"] == []
+    assert ("select_pane", "%5") in ft.calls
+    assert "already open" in capsys.readouterr().out
+
+
+def test_review_errors_without_session(fake_env, monkeypatch, capsys):
+    ft, _ = fake_env
+    monkeypatch.setattr(ft, "_focused", None)       # no focused pane, no arg
+    rc = cli.main(["review"])
+    assert rc == 1
+    assert "Specify a session" in capsys.readouterr().out
+
+
+def test_hidden_review_parser_accepts_session():
+    parser = cli.build_parser()
+    ns = parser.parse_args(["_review", "backend"])
+    assert ns.func is cli._cmd_review_render
+    assert ns.session == "backend"
+
+
 def test_prompt_yes_no_default_on_empty():
     assert cli._prompt_yes_no("q?", default=True, reader=lambda _: "") is True
     assert cli._prompt_yes_no("q?", default=False, reader=lambda _: "") is False
@@ -1877,3 +1935,29 @@ def test_cmd_hosts_init_preserves_existing(monkeypatch, tmp_path, capsys):
     rc = cli._cmd_hosts(_hosts_args(init=True))
     assert rc == 0
     assert target.read_text() == "# mine\n"  # untouched
+
+
+def test_activity_groups_by_tree(monkeypatch, capsys, fake_env):
+    _stub_registry(monkeypatch, [_pane("echo", "%1", session="proj", active=True)])
+    monkeypatch.setattr(
+        "vupai.activity.collect_activity",
+        lambda reg, session=None: [
+            {"pane": "echo", "tree": "/repo", "files": ["router.py"],
+             "coverage": "git-delta", "contended_with": ["orion"]}])
+    assert cli.main(["activity"]) == 0
+    out = capsys.readouterr().out
+    assert "/repo" in out
+    assert "echo [git-delta] router.py" in out
+    assert "contended_with orion" in out
+
+
+def test_activity_stats(monkeypatch, capsys, fake_env):
+    _stub_registry(monkeypatch, [_pane("echo", "%1", session="proj", active=True)])
+    monkeypatch.setattr(
+        "vupai.activity.collect_history",
+        lambda reg, session=None: [
+            {"coverage": "git-delta", "contended_with": ["x"]}])
+    assert cli.main(["activity", "--stats"]) == 0
+    out = capsys.readouterr().out
+    assert "events: 1" in out
+    assert "contention rate: 100%" in out

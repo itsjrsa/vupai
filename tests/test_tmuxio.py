@@ -191,6 +191,15 @@ def test_capture_pane_argv_returns_stdout(monkeypatch):
     assert fake.calls[0]["args"] == ["tmux", "capture-pane", "-J", "-p", "-t", "%3"]
 
 
+def test_capture_scrollback_argv_includes_history_start(monkeypatch):
+    fake = FakeRun(stdout="old\nnew\n")
+    patch_run(monkeypatch, fake)
+    out = tmuxio.capture_scrollback("%3", lines=120)
+    assert out == "old\nnew\n"
+    assert fake.calls[0]["args"] == [
+        "tmux", "capture-pane", "-J", "-p", "-S", "-120", "-t", "%3"]
+
+
 def test_send_enter_argv(monkeypatch):
     fake = FakeRun()
     patch_run(monkeypatch, fake)
@@ -212,6 +221,20 @@ def test_pane_title_swallows_tmux_error(monkeypatch):
     fake = FakeRun(returncode=1, stderr="no such pane")
     patch_run(monkeypatch, fake)
     assert tmuxio.pane_title("%9") == ""  # best-effort: never raises
+
+
+def test_pane_current_path_queries_pane_cwd(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tmuxio, "run", lambda args: calls.append(args) or "/repo/x\n")
+    assert tmuxio.pane_current_path("%7") == "/repo/x"
+    assert calls == [["display-message", "-p", "-t", "%7", "#{pane_current_path}"]]
+
+
+def test_pane_current_path_empty_on_tmux_error(monkeypatch):
+    def boom(args):
+        raise tmuxio.TmuxError("no server")
+    monkeypatch.setattr(tmuxio, "run", boom)
+    assert tmuxio.pane_current_path("%7") == ""
 
 
 def test_set_pane_name_argv(monkeypatch):

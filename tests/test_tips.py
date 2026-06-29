@@ -55,6 +55,11 @@ def test_pool_includes_ssh_example():
     assert any("ssh" in t for t in pool)
 
 
+def test_pool_includes_activity_example():
+    pool = tips.build_tips(_cfg())
+    assert "tip: activity" in pool
+
+
 def test_order_is_deterministic():
     cfg = _cfg()
     assert tips.build_tips(cfg) == tips.build_tips(cfg)

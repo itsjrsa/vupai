@@ -10,10 +10,13 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/vupai/"><img alt="PyPI" src="https://img.shields.io/pypi/v/vupai.svg?v=0.3.0"></a>
+  <a href="https://github.com/itsjrsa/vupai/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/itsjrsa/vupai/ci.yml?branch=master&label=CI"></a>
+  <a href="https://pypi.org/project/vupai/"><img alt="PyPI" src="https://img.shields.io/pypi/v/vupai.svg"></a>
+  <a href="https://pypi.org/project/vupai/"><img alt="Downloads" src="https://img.shields.io/pypi/dm/vupai.svg"></a>
   <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/python-%3E%3D3.11-brightgreen.svg"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-black.svg">
+  <a href="https://github.com/astral-sh/ruff"><img alt="Ruff" src="https://img.shields.io/badge/lint-ruff-261230.svg"></a>
 </p>
 
 *vupai* (say "voo-pie") is a **V**oice **U**I for your AI **pa**nes.
@@ -28,6 +31,8 @@ shells open at once and want to drive them by voice without reaching for the
 mouse. New panes launch an agent by default (`claude` out of the box) and should
 work with other agentic coding tools (Codex, Gemini, …), though testing so far
 has focused on Claude Code.
+
+**Jump to:** [Requirements](#requirements) · [Install](#install) · [Set up](#set-up-once) · [Usage](#usage) · [Voice commands](#voice-commands) · [Supervision board](#supervision-board) · [Activity ledger](#cross-pane-activity-ledger) · [Configuration](#configuration) · [tmux tips](#tmux-tips) · [Uninstall](#uninstall)
 
 ## Why not plain tmux?
 
@@ -113,6 +118,13 @@ uv sync            # creates .venv and installs everything (incl. the MLX runtim
 Run the CLI with `uv run vupai …` from the repo, or see the live-reload loop
 (`vupai reload` / `vupai --reload`) in [AGENTS.md](AGENTS.md).
 
+To install **this** checkout as a real `vupai` on your `PATH` (no PyPI), instead
+of `uv run`:
+
+```bash
+uv tool install .            # from the repo root; re-run after pulling changes
+```
+
 > [!NOTE]
 > The examples below use the bare `vupai` command (the installed tool). If you're
 > running from a source checkout, prefix each one with `uv run` (e.g. `uv run
@@ -122,36 +134,30 @@ Contributing? See [AGENTS.md](AGENTS.md).
 
 ## Set up (once)
 
-The fastest path after install is the interactive bootstrap:
+After install, run the interactive bootstrap:
 
 ```bash
 vupai setup
 ```
 
-It walks you through everything first-run: checks the Homebrew tools, captures
-consent for the local transcript journal, lets you pick a mic and your push-to-talk key(s),
-downloads the speech model up front (so the first hotkey press doesn't
-stall on a silent fetch), then deep-links you to each macOS permission pane that
-still needs your terminal app enabled. It's safe to re-run any time.
+It handles everything first-run: checks the Homebrew tools, captures consent for
+the local transcript journal, lets you pick a mic and your push-to-talk key(s),
+downloads the speech model up front (so the first hotkey press doesn't stall on a
+silent fetch), then deep-links you to each macOS permission pane that still needs
+your terminal app enabled. Safe to re-run any time.
 
-### Grant macOS permissions
+### macOS permissions
 
-`setup` handles these, but to check them on their own: vupai needs three
-permissions, granted to **your terminal app** (Ghostty / iTerm / Terminal / …),
-under **System Settings → Privacy & Security**: **Accessibility**, **Input
-Monitoring**, and **Microphone**. Run:
-
-```bash
-vupai doctor
-```
-
-It probes each one and prints the exact System-Settings path for anything
-missing.
+vupai needs three permissions, granted to **your terminal app** (Ghostty / iTerm /
+Terminal / …) under **System Settings → Privacy & Security**: **Accessibility**,
+**Input Monitoring**, and **Microphone**. `vupai setup` deep-links you to each; to
+audit them on their own, run `vupai doctor` (it probes each and prints the exact
+System-Settings path for anything missing).
 
 > [!WARNING]
 > macOS grants these to the terminal binary, not the script, so the hotkey and
-> mic silently fail until you grant them. If voice seems dead, this is the first
-> thing to check (`vupai doctor`).
+> mic silently fail until you grant them. If voice seems dead, check this first
+> (`vupai doctor`).
 
 ## Usage
 
@@ -170,6 +176,14 @@ vupai kill backend    # kill the "backend" session
 > **vupai runs on its own tmux server**, so it never touches your existing tmux
 > setup. The trade-off: its sessions don't show in a plain `tmux ls`; reach them
 > with `vupai attach`. (Set `tmux_socket = ""` to share your default server.)
+
+> [!IMPORTANT]
+> **It's still tmux.** The voice layer sits on top; every normal tmux binding keeps
+> working. Detach with `<prefix> d`, split panes by hand (`<prefix> %` / `"`),
+> switch with `<prefix>`-arrow, scroll/copy-mode, resize, your own custom
+> keybindings: all unchanged. Use voice when it's faster, the prefix key when it's
+> not. (Your `~/.tmux.conf` is sourced too, with the few exceptions noted in
+> [tmux tips](#tmux-tips).)
 
 Once attached, you talk to vupai with **two push-to-talk keys**:
 
@@ -200,6 +214,7 @@ cheat sheet tailored to your config.
 | *"tile"* / *"layout …"* | Re-layout the window (tiled, main-vertical, …) |
 | *"close atlas"* / *"kill atlas"* | Close a pane (asks y/n by default) |
 | *"board"* | Open the **supervision board** (one per session) |
+| *"open review"* | Open a full-window **diff review** of the session (one per session) |
 | *"read atlas"* / *"read all"* | Speak a pane's summary aloud (`read board` for a digest) |
 | *"clear atlas"* / *"clear all"* | Send a slash command (`/clear`) to a pane or every agent |
 | *"everyone, pull main"* | **Broadcast** the message to every named agent |
@@ -248,6 +263,81 @@ who's done, who's stuck, and who needs you.
   single pane.
 
 One board per session. Close the pane to stop it.
+
+## Cross-pane activity ledger
+
+When several agents share one working tree, they edit files unaware of each other
+and can clobber each other's uncommitted work. The **activity ledger** is a
+best-effort, **pull-only** awareness surface: a background poller records which
+pane last touched which file in each git tree, so you (or your agents) can spot
+overlaps before they become conflicts.
+
+- **What it records.** Per git tree, in a `.vupai/` directory at the tree root:
+  `activity.current.json` (latest state per pane) plus `activity.jsonl` (history).
+  Each entry names the pane, the files it touched, a coverage flag
+  (`exact` when a tool edit-marker proves the pane wrote the file, `git-delta`
+  when only scrollback ties it, or `churn-only` for an active pane no file could
+  be pinned on), and any `contended_with` panes editing the same file.
+  `.vupai/` is auto-gitignored, so it never appears in `git status`.
+- **How it decides.** `git status` provides *what* changed; each pane's scrollback
+  provides *which pane*; their intersection is the attribution. A tool edit-marker
+  (e.g. Claude's `Update(<path>)`) counts as proof a pane wrote that file and
+  outranks a bare path mention, so a pane that merely *discussed* a file is not
+  credited as its editor (and you don't get phantom conflicts from panes that just
+  talked about it). It is post-write on a ~2s poll, so it *reduces* clobbering by
+  surfacing overlaps; it does not prevent a sub-2-second race, and it never blocks
+  or injects into a pane.
+- **Read it.**
+  - `vupai activity` shows the current ledger, grouped by tree.
+  - `vupai activity --stats` reports contention and attribution rates (use these to
+    judge whether it earns its keep in your workflow).
+  - Say **"activity"** (or *"who's editing"*) to hear the digest.
+
+### Let your agents use it
+
+The ledger is pull-only by design, so nothing forces an agent to read it. If you
+want your agents to coordinate through it, tell them to: add a few lines to your
+project's `AGENTS.md` (or `CLAUDE.md`, or whatever instructions file your agent
+loads):
+
+```markdown
+## Before editing a shared file
+This repo may have several agents working in sibling panes at once. Before you
+edit a file, read `.vupai/activity.current.json` at the repo root. If another
+pane is listed as touching that file, or the file appears under a pane's
+`contended_with`, stop and coordinate or pick different work instead of
+overwriting it (the sibling's edits are uncommitted and you would clobber them).
+A pane with coverage `churn-only` is active but its file is unknown: treat the
+tree as contended and be cautious.
+```
+
+This is opt-in and best-effort: an agent consults the ledger only if its
+instructions tell it to, and even then it will not monitor the file continuously
+on its own. For a hard guarantee, give each agent its own git worktree (a planned
+opt-in) so panes physically cannot clobber one another.
+
+### Reviewing uncommitted changes (`vupai review`)
+
+`vupai review` opens a live, full-window review of every uncommitted change
+across a session's panes, grouped by the pane that touched it. Run it inside a
+pane (it scopes to that session) or name one explicitly: `vupai review backend`.
+You can also just say **"open review"**. It opens one review window per session,
+focusing the existing one rather than opening a second. It is a read-only,
+pull-only view: it runs `git diff` (the authoritative change set) and joins the
+activity ledger for attribution. It never stages, commits, or writes to a pane.
+
+- Left: files grouped under the pane editing them, with `+`/`-` counts. Files
+  touched by two or more panes are flagged `!` and float to the top.
+- Right: the selected file's diff, updating as you move. A file only one pane
+  touched shows that pane's exact diff (its whole change is that agent's work).
+  A file two or more panes edited shows the combined diff, flagged because it
+  cannot be split per agent in a shared tree without worktree isolation.
+- A trailing **unattributed** bucket lists changed files no pane claimed
+  (including untracked files); names are never fabricated.
+- It re-polls about every two seconds, so it tracks edits as they land.
+
+Keys: up/down move, Enter (or `o`) opens the file in `$EDITOR`, space folds a
+pane group, `p` pauses live polling, `r` refreshes now, `q` quits.
 
 ## Configuration
 
@@ -330,7 +420,11 @@ vupai is young and evolving. A few things on the horizon (in no particular
 order):
 
 - **Tighter pane-state and activity awareness** so routing and the board react
-  faster to what each agent is actually doing.
+  faster to what each agent is actually doing. *(in progress)*
+- **Worktree isolation** (opt-in): give each agent its own git worktree so panes
+  physically cannot clobber one another, which also makes cross-pane attribution
+  exact. The hard-guarantee complement to the pull-only
+  [activity ledger](#cross-pane-activity-ledger) and `vupai review`.
 - **Broader agent-CLI coverage**: validate the flow end-to-end with Codex,
   opencode, Gemini, and other agentic tools (testing so far has centered on
   Claude Code).

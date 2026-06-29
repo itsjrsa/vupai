@@ -16,7 +16,7 @@ import logging
 import threading
 
 from vupai import tmuxio
-from vupai.commands import _CLOSE_VERBS, _CREATE_VERBS
+from vupai.commands import _ACTIVITY_VERBS, _CLOSE_VERBS, _CREATE_VERBS
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,8 @@ def build_tips(cfg) -> list[str]:
         f"{_CLOSE_VERBS[0]} nova and atlas",  # and-joined multi-target list
         "swap nova and atlas",
         "open board",
+        "open review",  # full-window diff review of the session
+        _ACTIVITY_VERBS[0],  # "activity": who is editing what across panes
         "ssh vm1",  # ssh to a configured host (hosts.toml)
     ]
     commands += [f"{verb} all" for verb in sorted(cfg.slash_commands)]

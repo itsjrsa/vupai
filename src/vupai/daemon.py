@@ -29,7 +29,7 @@ from .filler import strip_fillers
 from .hotkey import Hotkey, MultiHotkey
 from .injector import inject
 from .journal import Journal
-from .recorder import MIN_WAV_BYTES, Recorder
+from .recorder import MIN_WAV_BYTES, Recorder, reap_orphan_recordings
 from .registry import PaneRegistry
 from .router import Route, _peel_fillers, match_leading_names, route
 
@@ -110,7 +110,7 @@ class Daemon:
                  parse_fn=parse_command, execute_fn=execute_command,
                  confirm_fn=popup_confirm,
                  journal: Journal | None = None, async_fn=None,
-                 state_writer=None, watcher=None, tip_rotator=None,
+                 state_writer=None, watcher=None, tip_rotator=None, activity=None,
                  read_registry_factory=None) -> None:
         self._config = config
         self._hosts = hosts or {}
@@ -134,6 +134,9 @@ class Daemon:
         # Optional rotating status-bar tips (tips.TipRotator) - own thread,
         # touches only tmux, never this pipeline. None = off.
         self._tip_rotator = tip_rotator
+        self._activity = activity  # Optional cross-pane activity ledger poller
+        # (activity.ActivityPoller) - own thread, touches only tmux + read-only
+        # git + its .vupai store, never this pipeline. None = off.
         # Optional lifecycle marker writer: state_writer("ready") after warm(),
         # state_writer("stopped") on a clean exit. The marker's absence after a
         # dead pid is how `vupai status` distinguishes a crash from a clean stop.
@@ -317,6 +320,10 @@ class Daemon:
                 if cmd.kind == "read":
                     # Read is slow (LLM summary) and audible; it runs off the main
                     # thread so it never stalls the next utterance. See _dispatch_read.
+                    self._dispatch_read(cmd, entry)
+                    return
+                if cmd.kind == "activity":
+                    # Slow (git + capture) and audible: run off the main thread.
                     self._dispatch_read(cmd, entry)
                     return
                 if cmd.kind == "talkback":
@@ -708,6 +715,15 @@ class Daemon:
         # every _process -> transcribe below runs on the same thread, so the
         # stream always matches. Heavy work is kept off the listener thread (see
         # on_release), so the consumer loop lives here on the warm thread.
+        # A previous daemon that died hard (kill -9, crash) can leave its `rec`
+        # child orphaned to launchd, holding the mic open. We haven't spawned any
+        # rec yet, so anything matching vupai's signature now is stale - reap it.
+        try:
+            reaped = reap_orphan_recordings()
+            if reaped:
+                logger.warning("reaped %d orphaned rec process(es) at startup", reaped)
+        except Exception:
+            logger.exception("orphan reap at startup failed")
         # Paint a warming state BEFORE the (potentially multi-minute first-run)
         # model load, so a cold start doesn't look like a dead hotkey.
         self._feedback.warming(downloading=not model_cached(self._config.model_id))
@@ -721,6 +737,8 @@ class Daemon:
             self._watcher.start()  # background agent-state poller (own thread)
         if self._tip_rotator is not None:
             self._tip_rotator.start()  # rotating status-bar tips (own thread)
+        if self._activity is not None:
+            self._activity.start()  # background cross-pane activity poller
         try:
             while not self._stop_event.is_set():
                 job = self._jobs.get()  # blocks until an utterance or the sentinel
@@ -736,12 +754,20 @@ class Daemon:
                     except Exception:
                         pass
         finally:
+            # Quiesce the activity poll thread first so it can't capture-pane /
+            # git mid-teardown.
+            if self._activity is not None:
+                try:
+                    self._activity.stop()
+                except Exception:
+                    logger.exception("activity poller stop on shutdown failed")
             if self._tip_rotator is not None:
                 try:
                     self._tip_rotator.stop()
                 except Exception:
                     logger.exception("tip rotator stop on shutdown failed")
-            # Quiesce the poll thread first so it can't capture-pane mid-teardown.
+            # Quiesce the watcher poll thread before the hotkey so it can't
+            # capture-pane mid-teardown (the activity poller is stopped above).
             if self._watcher is not None:
                 try:
                     self._watcher.stop()

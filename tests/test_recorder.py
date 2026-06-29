@@ -1,10 +1,12 @@
 import signal
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
 
-from vupai.recorder import Recorder
+from vupai import recorder as recorder_mod
+from vupai.recorder import Recorder, _is_vupai_rec, reap_orphan_recordings
 
 
 class FakePopen:
@@ -163,3 +165,76 @@ def test_stop_kills_and_reaps_when_sigint_times_out(monkeypatch):
     assert proc.killed is True              # then escalated to a force-kill
     assert rec.is_recording is False        # state cleared
     assert isinstance(path, Path)
+
+
+# ---------------------------------------------------------------------------
+# reap_orphan_recordings: kill stray `rec` children a crashed daemon left behind
+# without touching a user's own sox/rec session.
+# ---------------------------------------------------------------------------
+
+def _vupai_cmd(rate: int = 16000) -> str:
+    wav = f"{tempfile.gettempdir()}/tmpABCDEF.wav"
+    return f"rec -q -c 1 -r {rate} -b 16 {wav}"
+
+
+def test_is_vupai_rec_matches_our_signature():
+    assert _is_vupai_rec(_vupai_cmd()) is True
+    assert _is_vupai_rec(_vupai_cmd(rate=22050)) is True
+    # absolute path to the rec binary still matches on basename
+    assert _is_vupai_rec(f"/usr/local/bin/{_vupai_cmd()}") is True
+
+
+def test_is_vupai_rec_rejects_foreign_sessions():
+    tmp = tempfile.gettempdir()
+    # user's own stereo/8-bit/loud rec - not our fingerprint
+    assert _is_vupai_rec(f"rec -c 2 -b 24 {tmp}/song.wav") is False
+    # right flags but writing outside the temp dir (user-chosen path)
+    assert _is_vupai_rec("rec -q -c 1 -r 16000 -b 16 /Users/me/voice.wav") is False
+    # a different binary entirely
+    assert _is_vupai_rec(f"sox -q -c 1 -b 16 {tmp}/x.wav") is False
+    assert _is_vupai_rec("") is False
+
+
+def test_reap_kills_matching_processes_and_skips_self(monkeypatch):
+    me = 4242
+    ps_out = (
+        f"{me} {_vupai_cmd()}\n"        # our own pid - must be skipped
+        "111 " + _vupai_cmd() + "\n"     # stray vupai rec - kill
+        "222 rec -c 2 -b 24 /tmp/song.wav\n"  # foreign - leave alone
+    )
+
+    class _PS:
+        stdout = ps_out
+
+    monkeypatch.setattr(recorder_mod.os, "getpid", lambda: me)
+    monkeypatch.setattr(recorder_mod.subprocess, "run", lambda *a, **k: _PS())
+    monkeypatch.setattr(recorder_mod.time, "sleep", lambda *_: None)
+
+    killed: list[tuple[int, int]] = []
+    monkeypatch.setattr(recorder_mod.os, "kill",
+                        lambda pid, sig: killed.append((pid, sig)))
+
+    n = reap_orphan_recordings()
+
+    assert n == 1
+    assert (111, signal.SIGINT) in killed
+    assert (111, signal.SIGKILL) in killed
+    assert all(pid != me and pid != 222 for pid, _ in killed)
+
+
+def test_reap_returns_zero_when_nothing_matches(monkeypatch):
+    class _PS:
+        stdout = "999 rec -c 2 -b 24 /tmp/song.wav\n"
+
+    monkeypatch.setattr(recorder_mod.subprocess, "run", lambda *a, **k: _PS())
+    monkeypatch.setattr(recorder_mod.os, "kill",
+                        lambda *a: pytest.fail("must not kill foreign rec"))
+    assert reap_orphan_recordings() == 0
+
+
+def test_reap_survives_ps_failure(monkeypatch):
+    def _boom(*a, **k):
+        raise OSError("ps missing")
+
+    monkeypatch.setattr(recorder_mod.subprocess, "run", _boom)
+    assert reap_orphan_recordings() == 0  # best-effort, no raise

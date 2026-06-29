@@ -108,6 +108,29 @@ def test_blank_command_falls_back():
     assert s.source == "fallback"
 
 
+def test_all_chrome_tail_never_calls_llm_and_falls_back():
+    # A non-empty raw tail that denoises to empty (idle input box + footer, the
+    # real output scrolled off) must NOT be handed to the model: an empty content
+    # block makes the model apologize ("no terminal output provided"), and that
+    # apology would otherwise show as a genuine summary. Degrade to the fallback.
+    idle = (
+        "╭────────────────────────────╮\n"
+        "│ >                          │\n"
+        "╰────────────────────────────╯\n"
+        "  ? for shortcuts          auto mode on\n"
+    )
+    called = False
+
+    def runner(*a, **k):
+        nonlocal called
+        called = True
+        return _runner("I don't see any terminal output provided. Please paste it.")(*a, **k)
+
+    s = summarize(idle, cmd="claude -p", runner=runner)
+    assert called is False
+    assert s.source == "fallback"
+
+
 def test_max_chars_truncates():
     long = "x" * 200
     s = summarize("t", cmd="claude -p", max_chars=20, runner=_runner(long))

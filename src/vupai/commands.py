@@ -12,7 +12,7 @@ import shlex
 import shutil
 from dataclasses import dataclass
 
-from vupai import board, speech, summarize, tmuxio
+from vupai import board, review, speech, summarize, tmuxio
 from vupai.hosts import resolve_host
 from vupai.injector import inject
 from vupai.router import (
@@ -233,7 +233,8 @@ MAX_CREATE_COUNT = 30
 @dataclass(frozen=True)
 class Command:
     # create|macro|close|close_others|focus|swap|zoom|unzoom|layout|ssh|board|
-    # read|talkback|volume|stop|slash|broadcast|unknown
+    # read|talkback|volume|stop|slash|broadcast|activity|unknown
+    # activity: reads the cross-pane activity ledger (who's editing / what's active)
     kind: str
     count: int = 0
     program: str | None = None             # None = config default; "" = default shell
@@ -402,6 +403,43 @@ def _parse_board(toks: list[str]) -> Command | None:
     return None
 
 
+# Same lead verbs as the board ("open review", "show review", bare "review").
+_REVIEW_LEAD = frozenset(_CREATE_VERBS) | {"show"}
+
+
+def _parse_review(toks: list[str]) -> Command | None:
+    """`review` / `<open|show|create> review` -> open the review window."""
+    rest = [t for t in toks if t != "the"]
+    if rest == ["review"]:
+        return Command(kind="review")
+    if len(rest) == 2 and rest[1] == "review" and rest[0] in _REVIEW_LEAD:
+        return Command(kind="review")
+    return None
+
+
+_ACTIVITY_VERBS = ("activity",)
+# Curated ASR mishearings of "activity" (implausible as literal words only).
+_ACTIVITY_VERB_ALIASES = frozenset({"activty", "activitie", "activ"})
+# Multi-word phrases. Note: _tokens strips only leading/trailing marks, so
+# the apostrophe in "who's" is preserved mid-token ("who's", not "who", "s").
+_ACTIVITY_PHRASES = (
+    ("who's", "editing"), ("who", "s", "editing"), ("who", "is", "editing"),
+    ("who's", "touching"), ("who", "s", "touching"), ("what", "s", "happening"),
+)
+
+
+def _parse_activity(toks: list[str]) -> Command | None:
+    """`activity` / `who's editing` -> a pull of the cross-pane ledger."""
+    if not toks:
+        return None
+    if toks[0] in _ACTIVITY_VERBS or toks[0] in _ACTIVITY_VERB_ALIASES:
+        return Command(kind="activity")
+    for phrase in _ACTIVITY_PHRASES:
+        if tuple(toks[:len(phrase)]) == phrase:
+            return Command(kind="activity")
+    return None
+
+
 _READ_VERBS = ("read",)
 # Curated ASR mishearings of "read": the homophone "reed", the past-tense
 # spelling "red", and the parakeet mishearings "reve" / "reeve" / "wreath" seen
@@ -551,9 +589,11 @@ def _parse_body(body: str, macros: dict[str, list[str]],
     return (_parse_create(toks, programs) or _parse_close(toks)
             or _parse_focus(toks) or _parse_swap(toks) or _parse_zoom(toks)
             or _parse_layout(toks) or _parse_ssh(toks)
-            or _parse_board(toks) or _parse_talkback(toks)
+            or _parse_board(toks) or _parse_review(toks)
+            or _parse_talkback(toks)
             or _parse_volume(toks) or _parse_stop(toks)
-            or _parse_slash(toks, slash_commands) or _parse_read(toks))
+            or _parse_slash(toks, slash_commands)
+            or _parse_activity(toks) or _parse_read(toks))
 
 
 def parse_command(
@@ -642,6 +682,8 @@ def intent_phrase(cmd: Command) -> str:
         return f"{_LAYOUT_LABELS.get(cmd.layout, 'arranging the')} layout"
     if cmd.kind == "board":
         return "opening the board"
+    if cmd.kind == "review":
+        return "opening review"
     if cmd.kind == "broadcast":
         return f"broadcasting to {_speak_join(cmd.names)}" if cmd.names else "broadcasting"
     if cmd.kind == "slash":
@@ -970,16 +1012,30 @@ def _exec_board(cmd: Command, registry, config, io) -> CommandResult:
     return CommandResult(True, message)
 
 
+def _exec_review(cmd: Command, registry, config, io) -> CommandResult:
+    focused = registry.focused()
+    if focused is None:
+        return CommandResult(False, "no focused pane to open review from")
+    # open_review is one-per-session: it focuses an existing review window
+    # instead of opening a second. Both outcomes are a success for the speaker.
+    _, message = review.open_review(focused.session, io=io)
+    return CommandResult(True, message)
+
+
 # Read bounds the captured scrollback before summarizing, same budget as the
 # board's tail (board._CAPTURE_LINES / _TAIL_BYTES): enough for a conclusion,
-# capped so a long-running pane can't blow up the summarizer's input.
-_READ_CAPTURE_LINES = 40
+# capped so a long-running pane can't blow up the summarizer's input. Read uses a
+# scrollback capture (capture_scrollback) so work hidden behind an idle input box
+# is still reachable, and bounds by NON-BLANK lines so blank TUI padding between
+# the last output and the prompt can't push real work out of the window.
+_READ_CAPTURE_LINES = 80
 _READ_TAIL_BYTES = 6000
 
 
 def _bound_tail(text: str) -> str:
-    """Last N lines then last M UTF-8 bytes of `text` (mirrors board._bounded)."""
-    tail = "\n".join(text.splitlines()[-_READ_CAPTURE_LINES:])
+    """Last N non-blank lines then last M UTF-8 bytes of `text`."""
+    kept = [ln for ln in text.splitlines() if ln.strip()][-_READ_CAPTURE_LINES:]
+    tail = "\n".join(kept)
     raw = tail.encode("utf-8", "replace")
     if len(raw) > _READ_TAIL_BYTES:
         tail = raw[-_READ_TAIL_BYTES:].decode("utf-8", "replace")
@@ -1053,6 +1109,27 @@ def _exec_read_board(registry, config, io, *, speak_fn=None,
         speak_fn(spoken)
     except Exception:
         pass  # TTS is best-effort; the digest still surfaces as the message
+    return CommandResult(True, spoken)
+
+
+def _exec_activity(registry, config, io, *, collect_fn=None, render_fn=None,
+                   speak_fn=None, cancel=None) -> CommandResult:
+    from . import activity
+    collect_fn = collect_fn or (
+        lambda reg, session: activity.collect_activity(reg, session=session))
+    render_fn = render_fn or activity.render_activity
+    focused = registry.focused()
+    session = focused.session if focused is not None else None
+    try:
+        records = collect_fn(registry, session)
+    except Exception:
+        return CommandResult(False, "couldn't read activity")
+    spoken = render_fn(records)
+    if speak_fn is not None:
+        try:
+            speak_fn(spoken)
+        except Exception:
+            pass  # TTS is best-effort; the digest still surfaces as the message
     return CommandResult(True, spoken)
 
 
@@ -1151,7 +1228,7 @@ def _exec_read(cmd: Command, registry, config, io, *, capture_fn=None,
     if err is not None:
         return CommandResult(False, err)
     pane_id, label = target
-    capture_fn = capture_fn or tmuxio.capture_pane
+    capture_fn = capture_fn or tmuxio.capture_scrollback
     title_fn = title_fn or tmuxio.pane_title
     if summarize_fn is None and config.tts_stream:
         return _exec_read_stream(pane_id, label, config, capture_fn, title_fn,
@@ -1316,7 +1393,8 @@ def execute_command(cmd: Command, registry, config, *,
                     io=tmuxio, inject_fn=inject,
                     capture_fn=None, summarize_fn=None,
                     speak_fn=None, title_fn=None, statuses_fn=None,
-                    stream_fn=None, cancel=None, hosts=None) -> CommandResult:
+                    stream_fn=None, cancel=None, hosts=None,
+                    collect_fn=None, render_fn=None) -> CommandResult:
     # capture_fn/summarize_fn/speak_fn/title_fn/statuses_fn/stream_fn are read-command
     # seams (None -> built from config); only the read path consumes them. Mirrors the
     # inject_fn seam, which only the slash/broadcast paths consume.
@@ -1343,6 +1421,8 @@ def execute_command(cmd: Command, registry, config, *,
             return _exec_layout(cmd, registry, config, io)
         if cmd.kind == "board":
             return _exec_board(cmd, registry, config, io)
+        if cmd.kind == "review":
+            return _exec_review(cmd, registry, config, io)
         if cmd.kind == "talkback":
             # The runtime mute flag lives on the daemon (it survives across
             # utterances); this just reports the toggle. "on" confirms aloud, "off"
@@ -1366,6 +1446,10 @@ def execute_command(cmd: Command, registry, config, *,
                               summarize_fn=summarize_fn, speak_fn=speak_fn,
                               title_fn=title_fn, statuses_fn=statuses_fn,
                               stream_fn=stream_fn, cancel=cancel)
+        if cmd.kind == "activity":
+            return _exec_activity(registry, config, io, collect_fn=collect_fn,
+                                  render_fn=render_fn, speak_fn=speak_fn,
+                                  cancel=cancel)
         if cmd.kind == "slash":
             return _exec_slash(cmd, registry, config, inject_fn)
         if cmd.kind == "broadcast":
